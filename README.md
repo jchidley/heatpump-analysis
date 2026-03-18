@@ -1,6 +1,59 @@
 # heatpump-analysis
 
-[Your project description here]
+Analyse heat pump performance from [emoncms.org](https://emoncms.org) monitoring data. Downloads data to a local SQLite database, classifies operating states (heating, DHW, defrost), and produces COP breakdowns, temperature correlations, and energy summaries.
+
+Built for a **Vaillant Arotherm Plus 5kW** with emonHP monitoring bundle.
+
+## Quick Start
+
+```bash
+# Build
+cargo build --release
+
+# Download all data (first time — takes a few minutes)
+cargo run -- --apikey YOUR_EMONCMS_READ_KEY sync
+
+# Analyse last 30 days
+cargo run -- --days 30 summary
+
+# Run everything
+cargo run -- --days 365 all
+```
+
+Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time. The API key is only needed for `feeds` and `sync` commands — all analysis runs from the local database.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `feeds` | List available emoncms feeds (requires API key) |
+| `sync` | Download/update data to local SQLite database |
+| `db-status` | Show database contents and date range |
+| `summary` | Overall stats and breakdown by operating state |
+| `cop-by-temp` | COP vs outside temperature bands (heating only) |
+| `hourly` | Average profile by hour of day |
+| `daily` | Daily energy totals and COP from cumulative meters |
+| `gaps` | Report data gaps and their fill status |
+| `fill-gaps` | Fill gaps with modelled data (energy-scaled to match meters) |
+| `data` | Show raw enriched data table |
+| `all` | Run summary + cop-by-temp + hourly + daily |
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--days N` | 7 | How many days of history to analyse |
+| `--db PATH` | `heatpump.db` | SQLite database path |
+| `--include-simulated` | off | Include gap-filled data in analysis |
+
+## How It Works
+
+→ [docs/explanation.md](docs/explanation.md)
+
+## Documentation
+
+- **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
+- **[docs/explanation.md](docs/explanation.md)** — How the operating model works and why
 
 ## About This Code
 
