@@ -95,12 +95,12 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 
 | Component | Details |
 |-----------|---------|
-| **Panels** | 9× Trina Vertex S+ 440W (TSM-440NEG9RC.27), N-Type Mono, dual glass |
-| **Array** | 3.96 kWp, 2 strings (5 + 4), pitched roof above-roof mount (ValkPitched) |
-| **Inverter** | Fox ESS F3600, 3.6kW single phase, dual MPPT |
+| **Panels** | 7× Trina Vertex S+ 440W (TSM-440NEG9RC.27), N-Type Mono, dual glass |
+| **Array** | 3.08 kWp, single string, pitched roof above-roof mount (ValkPitched) |
+| **Inverter** | Fox ESS F3600, 3.6kW single phase, dual MPPT (one input used) |
 | **Battery** | Tesla Powerwall 2, 13.5 kWh, with Gateway |
 | **Generation meter** | Emlite M24 (serial: Eml2405204845) |
-| **Estimated annual** | 3,711 kWh |
+| **Estimated annual** | ~2,900 kWh (pro-rata from MCS 3,711 for 9 panels) |
 | **Installer** | Nanopro-Tech Ltd (MCS NAP66233) |
 
 ### What it would give us

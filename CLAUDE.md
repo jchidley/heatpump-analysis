@@ -64,10 +64,9 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 - `503093` (outside_temp) = Met Office hourly, not Arotherm OAT sensor
 - `512889` (DHW_flag) = dead since Dec 2024
 - Solar PV + battery system installed (not yet integrated):
-    - 9× Trina 440W panels (TSM-440NEG9RC.27), 3.96 kWp, 2 strings (5+4)
-    - Fox ESS F3600 inverter (3.6kW, dual MPPT)
+    - 7× Trina 440W panels (TSM-440NEG9RC.27), 3.08 kWp, single string
+    - Fox ESS F3600 inverter (3.6kW, dual MPPT — one MPPT input used)
     - Tesla Powerwall 2 (13.5 kWh) + Gateway
-    - Estimated annual generation: 3,711 kWh
     - Commissioned: 19/04/2024, Emlite M24 generation meter
 
 ## Planned Enhancements
