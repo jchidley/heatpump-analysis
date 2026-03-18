@@ -63,7 +63,12 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 - `503101` (indoor_temp) = emonth2 sensor in **Leather room only**, not whole-house
 - `503093` (outside_temp) = Met Office hourly, not Arotherm OAT sensor
 - `512889` (DHW_flag) = dead since Dec 2024
-- Solar PV + battery system installed — details TBD, not yet integrated
+- Solar PV + battery system installed (not yet integrated):
+    - 9× Trina 440W panels (TSM-440NEG9RC.27), 3.96 kWp, 2 strings (5+4)
+    - Fox ESS F3600 inverter (3.6kW, dual MPPT)
+    - Tesla Powerwall 2 (13.5 kWh) + Gateway
+    - Estimated annual generation: 3,711 kWh
+    - Commissioned: 19/04/2024, Emlite M24 generation meter
 
 ## Planned Enhancements
 

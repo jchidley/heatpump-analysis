@@ -89,7 +89,19 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 
 ## Solar PV + Battery Integration
 
-**Status:** System installed, details to be provided later.
+**Status:** System installed and commissioned 19/04/2024. Not yet integrated into analysis.
+
+### Installed system
+
+| Component | Details |
+|-----------|---------|
+| **Panels** | 9× Trina Vertex S+ 440W (TSM-440NEG9RC.27), N-Type Mono, dual glass |
+| **Array** | 3.96 kWp, 2 strings (5 + 4), pitched roof above-roof mount (ValkPitched) |
+| **Inverter** | Fox ESS F3600, 3.6kW single phase, dual MPPT |
+| **Battery** | Tesla Powerwall 2, 13.5 kWh, with Gateway |
+| **Generation meter** | Emlite M24 (serial: Eml2405204845) |
+| **Estimated annual** | 3,711 kWh |
+| **Installer** | Nanopro-Tech Ltd (MCS NAP66233) |
 
 ### What it would give us
 
@@ -97,15 +109,17 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 |------|---------------|
 | **Generation profile** | When is solar available vs when does the HP run? |
 | **Self-consumption** | How much HP electricity comes from solar vs grid? |
-| **Battery state** | When is the battery charging/discharging vs HP running? |
-| **Effective COP** | "Free" solar kWh changes the economics of COP vs cost |
+| **Battery state** | When is the Powerwall charging/discharging vs HP running? |
+| **Effective COP** | Solar kWh at £0 changes the economics — cost-weighted COP |
 | **DHW scheduling** | Should DHW shift to solar-peak hours (midday) instead of 05:05? |
 
 ### Implementation notes
 
-- System details and API access TBD
+- Tesla Powerwall Gateway provides local API for battery state, solar generation, grid import/export
+- Fox ESS inverter may have its own monitoring portal/API
+- Generation meter reading provides ground truth for total solar production
 - Key analysis: overlay HP consumption on solar generation + battery state timeline
-- Marginal cost analysis: what tariff rate was electricity at for each kWh consumed?
+- With Octopus data: marginal cost per kWh consumed (grid vs solar vs battery)
 
 ## Other Data Sources
 
