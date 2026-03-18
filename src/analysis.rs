@@ -85,8 +85,10 @@ pub fn enrich(df: &DataFrame) -> Result<DataFrame> {
                 .alias("cop"),
             // Delta T
             (col("flow_t") - col("return_t")).alias("delta_t"),
-            // DHW flag: flow temp > 38°C suggests domestic hot water
-            when(col("flow_t").gt(lit(38.0)))
+            // DHW flag: flow rate > 14.5 l/m indicates DHW mode
+            // Heating clusters at 14.3 l/m, DHW jumps to 16.5-17.0 l/m
+            // The gap between 14.5 and 16.0 is near-empty (transitions only)
+            when(col("flow_rate").gt(lit(14.5)))
                 .then(lit(true))
                 .otherwise(lit(false))
                 .alias("is_dhw"),
