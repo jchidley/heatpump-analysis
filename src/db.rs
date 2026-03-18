@@ -448,6 +448,43 @@ pub fn load_daily_energy(
     Ok((elec, heat))
 }
 
+/// Load daily outside temperature statistics from the database.
+///
+/// Returns (date_string, mean_temp, min_temp, max_temp) for each day.
+pub fn load_daily_outside_temp(
+    conn: &Connection,
+    start: i64,
+    end: i64,
+) -> Result<Vec<(String, f64, f64, f64)>> {
+    let start_ms = start * 1000;
+    let end_ms = end * 1000;
+
+    let mut stmt = conn.prepare(
+        "SELECT date(timestamp/1000, 'unixepoch') AS day,
+                AVG(value) AS avg_t,
+                MIN(value) AS min_t,
+                MAX(value) AS max_t
+         FROM samples
+         WHERE feed_id = '503093'
+           AND timestamp >= ?1 AND timestamp < ?2
+         GROUP BY day
+         ORDER BY day",
+    )?;
+
+    let rows = stmt
+        .query_map(params![start_ms, end_ms], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
 fn format_ts(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())

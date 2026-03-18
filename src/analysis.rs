@@ -34,6 +34,11 @@ use anyhow::{Context, Result};
 use chrono::DateTime;
 use polars::prelude::*;
 
+/// UK standard base temperature for heating degree days.
+/// Tb = design indoor temp (18.5°C) − average internal gains (3°C) = 15.5°C.
+/// Below this outside temperature, heating is needed.
+const HDD_BASE_TEMP: f64 = 15.5;
+
 // --- Arotherm 5kW operating thresholds ---
 
 /// Minimum electrical power to consider the compressor running.
@@ -342,6 +347,212 @@ pub fn daily_energy(
 
     println!("\n=== Daily Energy & COP ===");
     println!("{}", df);
+
+    Ok(())
+}
+
+/// Degree day analysis combining outside temperature with energy consumption.
+///
+/// Uses UK standard base temperature of 15.5°C.
+/// HDD = max(0, base_temp − mean_daily_outside_temp)
+pub fn degree_days(
+    daily_temps: &[(String, f64, f64, f64)], // (date, mean, min, max)
+    elec_data: &[(i64, Option<f64>)],
+    heat_data: &[(i64, Option<f64>)],
+) -> Result<()> {
+    // Build energy lookup by date
+    let mut elec_by_date: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
+    let mut heat_by_date: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
+
+    for i in 1..elec_data.len().min(heat_data.len()) {
+        let ts = elec_data[i].0 / 1000;
+        let dt = DateTime::from_timestamp(ts, 0).unwrap_or_default();
+        let date = dt.format("%Y-%m-%d").to_string();
+
+        if let (Some(a), Some(b)) = (elec_data[i].1, elec_data[i - 1].1) {
+            if a >= b {
+                elec_by_date.insert(date.clone(), a - b);
+            }
+        }
+        if let (Some(a), Some(b)) = (heat_data[i].1, heat_data[i - 1].1) {
+            if a >= b {
+                heat_by_date.insert(date, a - b);
+            }
+        }
+    }
+
+    // Build daily degree day table
+    let mut dates: Vec<String> = Vec::new();
+    let mut hdd_vals: Vec<f64> = Vec::new();
+    let mut mean_temps: Vec<f64> = Vec::new();
+    let mut elec_kwh_vals: Vec<Option<f64>> = Vec::new();
+    let mut heat_kwh_vals: Vec<Option<f64>> = Vec::new();
+    let mut kwh_per_hdd: Vec<Option<f64>> = Vec::new();
+    let mut heat_per_hdd: Vec<Option<f64>> = Vec::new();
+    let mut cop_vals: Vec<Option<f64>> = Vec::new();
+
+    for (date, mean_t, _min_t, _max_t) in daily_temps {
+        let hdd = (HDD_BASE_TEMP - mean_t).max(0.0);
+        let elec = elec_by_date.get(date).copied();
+        let heat = heat_by_date.get(date).copied();
+
+        let cop = match (elec, heat) {
+            (Some(e), Some(h)) if e > 0.1 => Some(h / e),
+            _ => None,
+        };
+
+        let e_per_hdd = match elec {
+            Some(e) if hdd > 0.1 => Some(e / hdd),
+            _ => None,
+        };
+        let h_per_hdd = match heat {
+            Some(h) if hdd > 0.1 => Some(h / hdd),
+            _ => None,
+        };
+
+        dates.push(date.clone());
+        hdd_vals.push(hdd);
+        mean_temps.push(*mean_t);
+        elec_kwh_vals.push(elec);
+        heat_kwh_vals.push(heat);
+        kwh_per_hdd.push(e_per_hdd);
+        heat_per_hdd.push(h_per_hdd);
+        cop_vals.push(cop);
+    }
+
+    let df = DataFrame::new(vec![
+        Series::new("date".into(), &dates).into(),
+        Series::new("mean_°C".into(), &mean_temps).into(),
+        Series::new("HDD".into(), &hdd_vals).into(),
+        Series::new("elec_kWh".into(), &elec_kwh_vals).into(),
+        Series::new("heat_kWh".into(), &heat_kwh_vals).into(),
+        Series::new("COP".into(), &cop_vals).into(),
+        Series::new("elec/HDD".into(), &kwh_per_hdd).into(),
+        Series::new("heat/HDD".into(), &heat_per_hdd).into(),
+    ])?;
+
+    println!("\n=== Daily Degree Days (base {:.1}°C) ===", HDD_BASE_TEMP);
+    println!("{}", df);
+
+    // Weekly aggregates
+    let n = dates.len();
+    if n >= 7 {
+        let mut week_labels: Vec<String> = Vec::new();
+        let mut week_hdd: Vec<f64> = Vec::new();
+        let mut week_elec: Vec<Option<f64>> = Vec::new();
+        let mut week_heat: Vec<Option<f64>> = Vec::new();
+        let mut week_cop: Vec<Option<f64>> = Vec::new();
+        let mut week_elec_per_hdd: Vec<Option<f64>> = Vec::new();
+        let mut week_heat_per_hdd: Vec<Option<f64>> = Vec::new();
+
+        let chunks = n / 7;
+        for c in 0..chunks {
+            let start_idx = c * 7;
+            let end_idx = start_idx + 7;
+
+            let label = format!("{} → {}", &dates[start_idx], &dates[end_idx - 1]);
+            let sum_hdd: f64 = hdd_vals[start_idx..end_idx].iter().sum();
+            let sum_elec: f64 = elec_kwh_vals[start_idx..end_idx]
+                .iter()
+                .filter_map(|v| *v)
+                .sum();
+            let sum_heat: f64 = heat_kwh_vals[start_idx..end_idx]
+                .iter()
+                .filter_map(|v| *v)
+                .sum();
+
+            let has_elec = elec_kwh_vals[start_idx..end_idx].iter().any(|v| v.is_some());
+            let has_heat = heat_kwh_vals[start_idx..end_idx].iter().any(|v| v.is_some());
+
+            week_labels.push(label);
+            week_hdd.push(sum_hdd);
+            week_elec.push(if has_elec { Some(sum_elec) } else { None });
+            week_heat.push(if has_heat { Some(sum_heat) } else { None });
+            week_cop.push(if has_elec && sum_elec > 0.1 {
+                Some(sum_heat / sum_elec)
+            } else {
+                None
+            });
+            week_elec_per_hdd.push(if has_elec && sum_hdd > 0.5 {
+                Some(sum_elec / sum_hdd)
+            } else {
+                None
+            });
+            week_heat_per_hdd.push(if has_heat && sum_hdd > 0.5 {
+                Some(sum_heat / sum_hdd)
+            } else {
+                None
+            });
+        }
+
+        let wdf = DataFrame::new(vec![
+            Series::new("week".into(), &week_labels).into(),
+            Series::new("HDD".into(), &week_hdd).into(),
+            Series::new("elec_kWh".into(), &week_elec).into(),
+            Series::new("heat_kWh".into(), &week_heat).into(),
+            Series::new("COP".into(), &week_cop).into(),
+            Series::new("elec/HDD".into(), &week_elec_per_hdd).into(),
+            Series::new("heat/HDD".into(), &week_heat_per_hdd).into(),
+        ])?;
+
+        println!("\n=== Weekly Degree Day Summary ===");
+        println!("{}", wdf);
+    }
+
+    // Period totals
+    let total_hdd: f64 = hdd_vals.iter().sum();
+    let total_elec: f64 = elec_kwh_vals.iter().filter_map(|v| *v).sum();
+    let total_heat: f64 = heat_kwh_vals.iter().filter_map(|v| *v).sum();
+    let zero_hdd_days = hdd_vals.iter().filter(|h| **h < 0.01).count();
+
+    println!("\n=== Period Summary ===");
+    println!("Days:              {}", dates.len());
+    println!("Total HDD:         {:.1}", total_hdd);
+    println!("Zero-HDD days:     {} (no heating needed)", zero_hdd_days);
+    println!("Total elec:        {:.1} kWh", total_elec);
+    println!("Total heat:        {:.1} kWh", total_heat);
+    if total_elec > 0.1 {
+        println!("Period COP:        {:.2}", total_heat / total_elec);
+    }
+    if total_hdd > 0.5 {
+        println!("Elec per HDD:      {:.2} kWh/HDD", total_elec / total_hdd);
+        println!("Heat per HDD:      {:.2} kWh/HDD", total_heat / total_hdd);
+    }
+
+    // Estimate base temperature from data: find the outside temp above which
+    // daily electricity consumption drops to DHW-only levels
+    let mut temp_elec: Vec<(f64, f64)> = mean_temps
+        .iter()
+        .zip(elec_kwh_vals.iter())
+        .filter_map(|(t, e)| e.map(|e| (*t, e)))
+        .collect();
+    temp_elec.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+    if temp_elec.len() >= 10 {
+        // Find the "elbow" — the temperature above which consumption plateaus
+        // Use the warmest 20% of days as the baseline (DHW-only)
+        let warm_count = (temp_elec.len() as f64 * 0.2).max(5.0) as usize;
+        let warm_start = temp_elec.len() - warm_count;
+        let baseline_elec: f64 =
+            temp_elec[warm_start..].iter().map(|(_, e)| e).sum::<f64>() / warm_count as f64;
+
+        // Find the coldest temperature where consumption is within 20% of baseline
+        let threshold = baseline_elec * 1.2;
+        let mut estimated_base = HDD_BASE_TEMP;
+        for (t, e) in &temp_elec {
+            if *e <= threshold {
+                estimated_base = *t;
+                break;
+            }
+        }
+
+        println!(
+            "\n[ESTIMATED] Base temperature: ~{:.0}°C (consumption plateaus at {:.1} kWh/day above this)",
+            estimated_base, baseline_elec,
+        );
+    }
 
     Ok(())
 }

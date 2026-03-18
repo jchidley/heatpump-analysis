@@ -64,6 +64,8 @@ enum Commands {
     Gaps,
     /// Fill gaps with synthetic data (modelled from outside temp + real patterns)
     FillGaps,
+    /// Degree day analysis — energy normalised by heating demand
+    DegreeDays,
     /// Export data to CSV for the time period
     Export {
         /// Output file path (default: stdout)
@@ -250,6 +252,13 @@ fn main() -> Result<()> {
             );
         }
 
+        Commands::DegreeDays => {
+            let conn = cli.require_db()?;
+            let temps = db::load_daily_outside_temp(&conn, start, end)?;
+            let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
+            analysis::degree_days(&temps, &elec, &heat)?;
+        }
+
         Commands::Export { ref output } => {
             let df = load_dataframe(&cli, start, end)?;
             let mut df = analysis::enrich(&df)?;
@@ -308,6 +317,9 @@ fn main() -> Result<()> {
             let conn = cli.require_db()?;
             let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
             analysis::daily_energy(&elec, &heat)?;
+
+            let temps = db::load_daily_outside_temp(&conn, start, end)?;
+            analysis::degree_days(&temps, &elec, &heat)?;
         }
     }
 
