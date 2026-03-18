@@ -63,14 +63,14 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 - `503101` (indoor_temp) = emonth2 sensor in **Leather room only**, not whole-house
 - `503093` (outside_temp) = Met Office hourly, not Arotherm OAT sensor
 - `512889` (DHW_flag) = dead since Dec 2024
-- Solar PV system exists (Enphase IQ8, Longi 435W) — not yet integrated
+- Solar PV + battery system installed — details TBD, not yet integrated
 
 ## Planned Enhancements
 
 See [docs/roadmap.md](docs/roadmap.md) for full details:
 - **eBUS** — adapter is physically connected but not configured. Would give real-time OAT, compressor speed, defrost status, cylinder temp
 - **Octopus Energy** — API integration for electricity cost analysis, cost-weighted COP
-- **Solar PV** — Enphase system, self-consumption analysis, DHW scheduling to solar peak
+- **Solar PV + battery** — system installed, details to be provided. Self-consumption analysis, DHW scheduling to solar peak
 - Other data in `C:\Users\jackc\OneDrive\Documents\House\`: degree day CSVs (EGWU), utility bills, Octopus Agile rates, weekly consumption
 
 ## Boundaries

@@ -87,9 +87,9 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 - Key use: overlay design expectations on actual performance charts
 - Need to understand the workbook structure before designing the import
 
-## Solar PV Integration
+## Solar PV + Battery Integration
 
-**Status:** System installed (Enphase IQ8, Longi 435W panels), not yet integrated.
+**Status:** System installed, details to be provided later.
 
 ### What it would give us
 
@@ -97,14 +97,14 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 |------|---------------|
 | **Generation profile** | When is solar available vs when does the HP run? |
 | **Self-consumption** | How much HP electricity comes from solar vs grid? |
+| **Battery state** | When is the battery charging/discharging vs HP running? |
 | **Effective COP** | "Free" solar kWh changes the economics of COP vs cost |
 | **DHW scheduling** | Should DHW shift to solar-peak hours (midday) instead of 05:05? |
 
 ### Implementation notes
 
-- Enphase Envoy has a local API for real-time data
-- Enphase Enlighten cloud API for historical
-- Key analysis: overlay HP consumption on solar generation timeline
+- System details and API access TBD
+- Key analysis: overlay HP consumption on solar generation + battery state timeline
 - Marginal cost analysis: what tariff rate was electricity at for each kWh consumed?
 
 ## Other Data Sources
