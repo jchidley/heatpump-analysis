@@ -117,9 +117,14 @@ pub mod radiators {
 
     /// Correction factor for radiator output at a given delta T vs rated ΔT50.
     /// Formula: (actual_dt / 50) ^ 1.3
-    pub fn correction_factor(flow_temp: f64, room_temp: f64) -> f64 {
-        let mean_rad_temp = flow_temp; // simplified: mean water temp ≈ flow for low DT systems
-        let actual_dt = mean_rad_temp - room_temp;
+    /// where actual_dt = mean_water_temp - room_temp
+    ///       mean_water_temp = (flow + return) / 2
+    ///
+    /// For Arotherm 5kW at 860 L/h, DT ≈ heat_output / (flow_rate × SHC).
+    /// At typical conditions: DT ~2.5-5°C, so mean water temp is ~2°C below flow.
+    pub fn correction_factor(flow_temp: f64, return_temp: f64, room_temp: f64) -> f64 {
+        let mean_water_temp = (flow_temp + return_temp) / 2.0;
+        let actual_dt = mean_water_temp - room_temp;
         if actual_dt <= 0.0 {
             return 0.0;
         }
@@ -127,10 +132,18 @@ pub mod radiators {
     }
 
     /// Calculate total radiator output at a given flow temperature.
+    /// Uses the Arotherm 5kW typical DT (flow - return) to estimate return temp.
+    /// DT varies with load but ~3°C is typical at moderate output.
     pub fn total_output_at_flow_temp(flow_temp: f64) -> f64 {
+        // Estimate return temp from typical DT at this flow temp.
+        // Higher flow temps → larger DT (more heat extracted).
+        // From real data: DT ~2.5 at 25°C flow, ~3.5 at 30°C, ~5 at 35°C.
+        let estimated_dt = 1.5 + (flow_temp - 20.0) * 0.15;
+        let return_temp = flow_temp - estimated_dt.max(1.0);
+
         ALL.iter()
             .map(|r| {
-                let cf = correction_factor(flow_temp, r.target_room_temp);
+                let cf = correction_factor(flow_temp, return_temp, r.target_room_temp);
                 r.t50_watts as f64 * cf
             })
             .sum()

@@ -80,7 +80,7 @@ The emoncms feeds come from an **emonHP** monitoring bundle:
 | `electric_Power/Energy` | SDM120 MID meter (Modbus) | Inline on AC circuit |
 | `heatmeter_*` | M-Bus heat meter | Flow, return, flow rate, cumulative kWh |
 | `outside_temperature` | Met Office feed | Updates less frequently than HP feeds (~hourly vs ~10s) |
-| `temperature/humidity` | emonth2 (node 23) | Wireless room sensor. Battery at 2.4V (feed 503103) |
+| `temperature/humidity` | emonth2 (node 23) | Wireless sensor in **Leather room only** — not whole-house. Battery at 2.4V (feed 503103) |
 | `DHW_flag` | emonTxV5 | Only has data until Dec 2024 — not used for classification |
 
 The outside temperature feed's lower resolution matters for gap-filling: the temperature-bin model can only be as granular as the Met Office updates.

@@ -49,7 +49,7 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 
 ## Degree Day Analysis
 
-**Status:** Blocked on eBUS (for high-resolution OAT) but can start with Met Office data.
+**Status:** ✅ Done — implemented with Met Office data. Monthly aggregation and gas-era comparison included.
 
 ### What it would give us
 
@@ -69,7 +69,7 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 
 ## Excel Planning Data Import
 
-**Status:** Workbook exists with detailed planning data.
+**Status:** ✅ Done — key reference data encoded in `reference.rs`.
 
 ### What it would give us
 
@@ -86,6 +86,41 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 - Or a separate config file (TOML/YAML) loaded at analysis time
 - Key use: overlay design expectations on actual performance charts
 - Need to understand the workbook structure before designing the import
+
+## Solar PV Integration
+
+**Status:** System installed (Enphase IQ8, Longi 435W panels), not yet integrated.
+
+### What it would give us
+
+| Data | Why it matters |
+|------|---------------|
+| **Generation profile** | When is solar available vs when does the HP run? |
+| **Self-consumption** | How much HP electricity comes from solar vs grid? |
+| **Effective COP** | "Free" solar kWh changes the economics of COP vs cost |
+| **DHW scheduling** | Should DHW shift to solar-peak hours (midday) instead of 05:05? |
+
+### Implementation notes
+
+- Enphase Envoy has a local API for real-time data
+- Enphase Enlighten cloud API for historical
+- Key analysis: overlay HP consumption on solar generation timeline
+- Marginal cost analysis: what tariff rate was electricity at for each kWh consumed?
+
+## Other Data Sources
+
+Files in `C:\Users\jackc\OneDrive\Documents\House\` that could be imported:
+
+| File | Potential Use |
+|------|--------------|
+| `EGWU_HDD_17C.csv` | Historical degree days for longer comparison |
+| `ILONDONL9_HDD_18C-DegreeDaysData.csv` | Alternative weather station |
+| `Regressions_EGWU_*.csv` | Pre-computed regression analysis |
+| `Utility - Gas Electric v2.xlsx` | Detailed utility bills |
+| `agile_rates_2019.xlsx` | Historical Octopus Agile rates |
+| `weekly.xlsx` | Weekly gas consumption data |
+| `Cost_data_summary.xlsx` | Cost analysis |
+| `DHDG sizing spreadsheet @ 19&21 v1.1 finish.xlsx` | DHW sizing calculations |
 
 ## Other Potential Enhancements
 

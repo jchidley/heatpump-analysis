@@ -27,6 +27,10 @@ struct Cli {
     #[arg(long, default_value = "7")]
     days: u32,
 
+    /// Analyse all available data (overrides --days)
+    #[arg(long)]
+    all_data: bool,
+
     /// Start date for analysis (YYYY-MM-DD). Overrides --days.
     #[arg(long)]
     from: Option<String>,
@@ -67,6 +71,10 @@ enum Commands {
     FillGaps,
     /// Degree day analysis — energy normalised by heating demand
     DegreeDays,
+    /// Indoor temperature analysis (Leather room sensor)
+    IndoorTemp,
+    /// DHW analysis vs design expectations
+    Dhw,
     /// Compare actual COP against Arotherm manufacturer spec
     CopVsSpec,
     /// Compare actual performance against design calculations and gas-era data
@@ -257,6 +265,18 @@ fn main() -> Result<()> {
             );
         }
 
+        Commands::IndoorTemp => {
+            let df = load_dataframe(&cli, start, end)?;
+            let df = analysis::enrich(&df)?;
+            analysis::indoor_temp(&df)?;
+        }
+
+        Commands::Dhw => {
+            let df = load_dataframe(&cli, start, end)?;
+            let df = analysis::enrich(&df)?;
+            analysis::dhw_analysis(&df)?;
+        }
+
         Commands::CopVsSpec => {
             let df = load_dataframe(&cli, start, end)?;
             let df = analysis::enrich(&df)?;
@@ -366,7 +386,7 @@ fn load_dataframe(
     }
 }
 
-/// Parse --from/--to dates or fall back to --days.
+/// Parse --from/--to dates, --all-data, or fall back to --days.
 fn resolve_time_range(cli: &Cli) -> Result<(i64, i64)> {
     let end = match &cli.to {
         Some(s) => {
@@ -379,16 +399,21 @@ fn resolve_time_range(cli: &Cli) -> Result<(i64, i64)> {
         }
         None => Utc::now().timestamp(),
     };
-    let start = match &cli.from {
-        Some(s) => {
-            let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .map_err(|e| anyhow::anyhow!("Invalid --from date '{}': {}", s, e))?;
-            d.and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
-                .timestamp()
+    let start = if cli.all_data {
+        // Oct 22 2024 — earliest data
+        1_729_555_200
+    } else {
+        match &cli.from {
+            Some(s) => {
+                let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|e| anyhow::anyhow!("Invalid --from date '{}': {}", s, e))?;
+                d.and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .timestamp()
+            }
+            None => end - (cli.days as i64 * 86400),
         }
-        None => end - (cli.days as i64 * 86400),
     };
     Ok((start, end))
 }

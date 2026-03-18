@@ -556,6 +556,199 @@ pub fn degree_days(
         );
     }
 
+    // Monthly aggregation for comparison with gas-era data
+    println!("\n=== Monthly Degree Day Summary ===");
+    println!(
+        "{:>8} {:>7} {:>10} {:>10} {:>7} {:>10} {:>10}",
+        "Month", "HDD", "Elec kWh", "Heat kWh", "COP", "Elec/HDD", "Heat/HDD"
+    );
+    println!("{}", "-".repeat(70));
+
+    let mut month_data: std::collections::BTreeMap<
+        String,
+        (f64, f64, f64), // (hdd, elec, heat)
+    > = std::collections::BTreeMap::new();
+
+    for (date, mean_t, _, _) in daily_temps {
+        let month = &date[..7]; // "YYYY-MM"
+        let hdd = (HDD_BASE_TEMP - mean_t).max(0.0);
+        let elec = elec_by_date.get(date.as_str()).copied().unwrap_or(0.0);
+        let heat = heat_by_date.get(date.as_str()).copied().unwrap_or(0.0);
+
+        let entry = month_data.entry(month.to_string()).or_default();
+        entry.0 += hdd;
+        entry.1 += elec;
+        entry.2 += heat;
+    }
+
+    for (month, (hdd, elec, heat)) in &month_data {
+        let cop = if *elec > 0.1 { heat / elec } else { 0.0 };
+        let e_per_hdd = if *hdd > 0.5 {
+            format!("{:.2}", elec / hdd)
+        } else {
+            "-".to_string()
+        };
+        let h_per_hdd = if *hdd > 0.5 {
+            format!("{:.1}", heat / hdd)
+        } else {
+            "-".to_string()
+        };
+        println!(
+            "{:>8} {:>7.1} {:>10.1} {:>10.0} {:>7.2} {:>10} {:>10}",
+            month, hdd, elec, heat, cop, e_per_hdd, h_per_hdd
+        );
+    }
+
+    // Compare with gas-era monthly data
+    println!("\n=== Month-on-Month: Gas Era vs Heat Pump ===");
+    println!(
+        "{:>8} {:>8} {:>10} {:>10} {:>8} {:>10} {:>10}",
+        "Month", "Gas HDD", "Gas kWh", "Gas Heat*", "HP HDD", "HP Elec", "HP Heat"
+    );
+    println!("{}", "-".repeat(72));
+
+    for (gas_month, gas_hdd, gas_kwh, gas_hw, _days) in reference::gas_era::MONTHLY {
+        let _month_key = gas_month.to_string();
+        // Find matching HP month (any year)
+        let mm = &gas_month[5..7]; // extract "01", "02", etc.
+        let hp_matches: Vec<_> = month_data
+            .iter()
+            .filter(|(k, _)| &k[5..7] == mm)
+            .collect();
+
+        let gas_heating = (gas_kwh - gas_hw) * reference::gas_era::BOILER_EFFICIENCY;
+
+        if let Some((_hp_month, (hp_hdd, hp_elec, hp_heat))) = hp_matches.first() {
+            println!(
+                "{:>8} {:>8.0} {:>10.0} {:>10.0} {:>8.1} {:>10.1} {:>10.0}",
+                mm, gas_hdd, gas_kwh, gas_heating, hp_hdd, hp_elec, hp_heat
+            );
+        } else {
+            println!(
+                "{:>8} {:>8.0} {:>10.0} {:>10.0} {:>8} {:>10} {:>10}",
+                mm, gas_hdd, gas_kwh, gas_heating, "-", "-", "-"
+            );
+        }
+    }
+    println!("  * Gas Heat = (Gas kWh - Hot Water) × {:.0}% boiler efficiency",
+        reference::gas_era::BOILER_EFFICIENCY * 100.0);
+
+    Ok(())
+}
+
+/// Indoor temperature analysis (Leather room — emonth2 sensor).
+pub fn indoor_temp(df: &DataFrame) -> Result<()> {
+    let design_temp = reference::house::DESIGN_INDOOR_TEMP;
+
+    // Overall indoor temp stats
+    let stats = df
+        .clone()
+        .lazy()
+        .filter(col("indoor_t").is_not_null())
+        .select([
+            col("indoor_t").mean().alias("mean"),
+            col("indoor_t").min().alias("min"),
+            col("indoor_t").max().alias("max"),
+            col("indoor_t").std(1).alias("std_dev"),
+            len().alias("samples"),
+        ])
+        .collect()?;
+
+    println!("\n=== Indoor Temperature — Leather Room (emonth2) ===");
+    println!("Design target: {:.1}°C", design_temp);
+    println!("{}", stats);
+
+    // Indoor temp by hour of day
+    let hourly = df
+        .clone()
+        .lazy()
+        .filter(col("indoor_t").is_not_null())
+        .with_column(col("timestamp").dt().hour().alias("hour"))
+        .group_by([col("hour")])
+        .agg([
+            col("indoor_t").mean().alias("mean_indoor"),
+            col("outside_t").mean().alias("mean_outside"),
+        ])
+        .sort(["hour"], Default::default())
+        .collect()?;
+
+    println!("\n=== Indoor/Outdoor Temperature by Hour ===");
+    println!("{}", hourly);
+
+    // Indoor temp vs outside temp — comfort correlation
+    let comfort = df
+        .clone()
+        .lazy()
+        .filter(col("indoor_t").is_not_null().and(col("state").eq(lit("heating"))))
+        .with_column(
+            ((col("outside_t") / lit(2.0))
+                .floor()
+                .cast(DataType::Int32)
+                * lit(2))
+            .alias("outside_band"),
+        )
+        .group_by([col("outside_band")])
+        .agg([
+            col("indoor_t").mean().alias("mean_indoor"),
+            col("indoor_t").min().alias("min_indoor"),
+            len().alias("samples"),
+        ])
+        .sort(["outside_band"], Default::default())
+        .collect()?;
+
+    println!("\n=== Indoor Temp vs Outside Temp (during heating) ===");
+    println!("{}", comfort);
+
+    Ok(())
+}
+
+/// DHW analysis — compare actual against design expectations.
+pub fn dhw_analysis(df: &DataFrame) -> Result<()> {
+    let design_dhw_kwh_per_day = 11.82; // from workbook
+
+    // Filter to DHW state only
+    let dhw_stats = df
+        .clone()
+        .lazy()
+        .filter(col("state").eq(lit("dhw")))
+        .select([
+            col("elec_w").mean().alias("avg_elec_w"),
+            col("heat_w").mean().alias("avg_heat_w"),
+            col("cop").mean().alias("avg_cop"),
+            col("flow_t").mean().alias("avg_flow_t"),
+            col("flow_rate").mean().alias("avg_flow_rate"),
+            col("delta_t").mean().alias("avg_dt"),
+            len().alias("total_minutes"),
+        ])
+        .collect()?;
+
+    println!("\n=== DHW Analysis ===");
+    println!("Design hot water: {:.1} kWh/day (from workbook, gas era)", design_dhw_kwh_per_day);
+    println!("{}", dhw_stats);
+
+    // Estimate daily DHW energy from total minutes and avg power
+    let total_mins = dhw_stats.column("total_minutes")?.u32()?.get(0).unwrap_or(0) as f64;
+    let avg_heat = dhw_stats.column("avg_heat_w")?.f64()?.get(0).unwrap_or(0.0);
+
+    // Count distinct days with DHW
+    let dhw_days = df
+        .clone()
+        .lazy()
+        .filter(col("state").eq(lit("dhw")))
+        .with_column(col("timestamp").dt().date().alias("date"))
+        .select([col("date").n_unique().alias("days")])
+        .collect()?;
+
+    let n_days = dhw_days.column("days")?.u32()?.get(0).unwrap_or(1) as f64;
+    let total_dhw_kwh = avg_heat * total_mins / 60.0 / 1000.0;
+    let dhw_kwh_per_day = total_dhw_kwh / n_days;
+
+    println!("\nDHW days in period:     {:.0}", n_days);
+    println!("Total DHW heat:         {:.0} kWh", total_dhw_kwh);
+    println!("Actual DHW per day:     {:.1} kWh/day", dhw_kwh_per_day);
+    println!("Design DHW per day:     {:.1} kWh/day (gas era estimate)", design_dhw_kwh_per_day);
+    println!("Ratio actual/design:    {:.0}%", dhw_kwh_per_day / design_dhw_kwh_per_day * 100.0);
+
     Ok(())
 }
 

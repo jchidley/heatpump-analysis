@@ -4,6 +4,11 @@
 
 CLI tool that syncs heat pump data from emoncms.org to local SQLite, then analyses it with Polars. Vaillant Arotherm Plus 5kW.
 
+## Data Access
+
+- emoncms dashboard: `https://emoncms.org/app/view?name=MyHeatpump&readkey=1b00410c57d5df343ede7c09e6aab34f`
+- Read API key (read-only, safe to share): `1b00410c57d5df343ede7c09e6aab34f`
+
 ## Commands
 
 | Task | Command |
@@ -53,13 +58,20 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 - Outside temp feed (Met Office) is lower resolution (~hourly) than HP feeds (~10s)
 - Thresholds are 5kW-specific — 7kW model would need different values (its heating rate = 20 L/min overlaps 5kW DHW rate)
 
+## Feed Notes
+
+- `503101` (indoor_temp) = emonth2 sensor in **Leather room only**, not whole-house
+- `503093` (outside_temp) = Met Office hourly, not Arotherm OAT sensor
+- `512889` (DHW_flag) = dead since Dec 2024
+- Solar PV system exists (Enphase IQ8, Longi 435W) — not yet integrated
+
 ## Planned Enhancements
 
 See [docs/roadmap.md](docs/roadmap.md) for full details:
 - **eBUS** — adapter is physically connected but not configured. Would give real-time OAT, compressor speed, defrost status, cylinder temp
 - **Octopus Energy** — API integration for electricity cost analysis, cost-weighted COP
-- **Degree days** — HDD analysis for weather-normalised efficiency tracking
-- **Excel import** — planning/design data (heat loss, emitter sizing, cylinder spec)
+- **Solar PV** — Enphase system, self-consumption analysis, DHW scheduling to solar peak
+- Other data in `C:\Users\jackc\OneDrive\Documents\House\`: degree day CSVs (EGWU), utility bills, Octopus Agile rates, weekly consumption
 
 ## Boundaries
 
