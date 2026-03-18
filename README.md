@@ -1,6 +1,6 @@
 # heatpump-analysis
 
-Analyse heat pump performance from [emoncms.org](https://emoncms.org) monitoring data. Downloads data to a local SQLite database, classifies operating states (heating, DHW, defrost), and produces COP breakdowns, temperature correlations, and energy summaries.
+Analyse heat pump performance from [emoncms.org](https://emoncms.org) monitoring data. Downloads data to a local SQLite database, classifies operating states (heating, DHW, defrost), and produces COP breakdowns, temperature correlations, degree day analysis, and comparisons against manufacturer spec and pre-HP gas consumption.
 
 Built for a **Vaillant Arotherm Plus 5kW** with emonHP monitoring bundle.
 
@@ -16,8 +16,8 @@ cargo run -- --apikey YOUR_EMONCMS_READ_KEY sync
 # Analyse last 30 days
 cargo run -- --days 30 summary
 
-# Run everything
-cargo run -- --days 365 all
+# Run everything on all data
+cargo run -- --all-data all
 ```
 
 Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time. The API key is only needed for `feeds` and `sync` commands — all analysis runs from the local database.
@@ -33,17 +33,23 @@ Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time.
 | `cop-by-temp` | COP vs outside temperature bands (heating only) |
 | `hourly` | Average profile by hour of day |
 | `daily` | Daily energy totals and COP from cumulative meters |
+| `degree-days` | HDD analysis — energy normalised by weather, monthly, gas-era comparison |
+| `indoor-temp` | Indoor temperature analysis (Leather room sensor) |
+| `dhw` | DHW analysis vs design expectations |
+| `cop-vs-spec` | Actual COP vs Arotherm manufacturer spec curve |
+| `design-comparison` | Full design comparison: radiators, gas era, HDD-normalised savings |
 | `gaps` | Report data gaps and their fill status |
 | `fill-gaps` | Fill gaps with modelled data (energy-scaled to match meters) |
 | `export` | Export enriched data to CSV (`-o file.csv` or stdout) |
 | `data` | Show raw enriched data table |
-| `all` | Run summary + cop-by-temp + hourly + daily |
+| `all` | Run summary + cop-by-temp + hourly + daily + degree-days |
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--days N` | 7 | How many days of history to analyse |
+| `--all-data` | | Analyse all available data (overrides `--days`) |
 | `--from YYYY-MM-DD` | | Start date (overrides `--days`) |
 | `--to YYYY-MM-DD` | now | End date |
 | `--db PATH` | `heatpump.db` | SQLite database path |
@@ -59,7 +65,10 @@ cargo run -- --from 2024-12-01 --to 2025-02-28 summary
 cargo run -- --from 2025-01-01 --to 2025-01-31 export -o january.csv
 
 # All data with gap-filled samples
-cargo run -- --days 500 --include-simulated all
+cargo run -- --all-data --include-simulated all
+
+# Full design comparison
+cargo run -- --all-data design-comparison
 ```
 
 ## How It Works
@@ -70,7 +79,7 @@ cargo run -- --days 500 --include-simulated all
 
 - **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
 - **[docs/explanation.md](docs/explanation.md)** — How the operating model works and why
-- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements (eBUS, Octopus, degree days, Excel import)
+- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements (eBUS, Octopus, solar PV+battery, degree days ✅, design comparison ✅)
 
 ## About This Code
 

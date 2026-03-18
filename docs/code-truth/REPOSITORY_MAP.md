@@ -1,22 +1,38 @@
-<!-- code-truth: 07b9b7f -->
+<!-- code-truth: db2c2ce -->
 
 # Repository Map
 
 ```
-Cargo.toml                # Dependencies: polars, rusqlite, reqwest, clap, chrono, anyhow
-Cargo.lock                # Pinned dependency versions (322 packages)
+Cargo.toml                # Dependencies: polars, rusqlite, reqwest, clap, chrono, anyhow, serde
+Cargo.lock                # Pinned dependency versions
 .gitignore                # Excludes target/ and heatpump.db
 LICENSE-MIT               # Dual license
 LICENSE-APACHE            # Dual license
-README.md                 # Auto-generated from license_template repo
+CLAUDE.md                 # LLM agent context — commands, architecture, gotchas
+README.md                 # Human-facing: quick start, command reference, links to docs
 
 src/
-  main.rs                 # CLI definition (clap) + command routing. No business logic.
-  emoncms.rs              # Emoncms REST API client: list_feeds, feed_data. ~80 lines.
-  db.rs                   # SQLite schema, sync, DataFrame loading. Single source of feed IDs.
+  main.rs                 # CLI definition (clap) + command routing. 17 subcommands.
+                          # Date range parsing (--from/--to/--all-data/--days).
+  emoncms.rs              # Emoncms REST API client: list_feeds, feed_data. ~81 lines.
+  db.rs                   # SQLite schema, sync, DataFrame loading, daily energy/temp queries.
+                          # Single source of truth for feed IDs (FEED_IDS constant).
   analysis.rs             # State machine (classify_states) + all Polars analysis queries.
                           # Module doc comment is the Arotherm operating model reference.
+                          # Degree days, COP vs spec, design comparison, indoor temp, DHW.
+  reference.rs            # Static data from planning workbook:
+                          #   house:: — HTC, U-values, design heat loss, construction notes
+                          #   arotherm:: — manufacturer COP curve at -3°C
+                          #   radiators:: — 15 Stelrad units with T50 ratings, output calculator
+                          #   gas_era:: — monthly Octopus data, boiler efficiency, hot water
   gaps.rs                 # Gap detection, TempBinModel, gap-filling with energy scaling.
+                          # Accesses SQLite directly (not through db.rs).
+
+docs/
+  explanation.md          # Diátaxis explanation: operating model, Arotherm flow rates,
+                          #   hysteresis, defrost, gap-filling, monitoring setup, DHW scheduling
+  roadmap.md              # Planned: eBUS, Octopus, solar PV+battery integration
+  code-truth/             # This directory — derived-from-code documentation
 
 heatpump.db               # SQLite database (gitignored). Created by 'sync' command.
                           # Tables: feeds, samples, sync_state, simulated_samples, gap_log
@@ -26,24 +42,32 @@ heatpump.db               # SQLite database (gitignored). Created by 'sync' comm
 
 | To change... | Look at... |
 |-------------|-----------|
-| CLI commands or flags | `src/main.rs` — `Commands` enum and `Cli` struct. Date range parsing in `resolve_time_range()` |
-| Operating state thresholds (DHW/defrost) | `src/analysis.rs` — constants at top of file |
-| Which feeds are synced | `src/db.rs` — `FEED_IDS` constant |
-| How data is loaded into Polars | `src/db.rs` — `load_dataframe_inner()` |
-| Analysis queries (summary, COP, hourly) | `src/analysis.rs` — individual `pub fn` functions |
-| Gap-filling model or strategy | `src/gaps.rs` — `TempBinModel` and `fill_gap()` |
-| Emoncms API interaction | `src/emoncms.rs` — `Client` struct |
-| Database schema | `src/db.rs` — `open()` function |
-| Simulated data schema | `src/gaps.rs` — `ensure_schema()` |
+| CLI commands or flags | `main.rs` — `Commands` enum, `Cli` struct, `resolve_time_range()` |
+| Operating state thresholds (DHW/defrost) | `analysis.rs` — constants at top of file |
+| Which feeds are synced | `db.rs` — `FEED_IDS` constant |
+| How data is loaded into Polars | `db.rs` — `load_dataframe_inner()` |
+| Analysis queries (summary, COP, hourly, etc.) | `analysis.rs` — individual `pub fn` functions |
+| Degree day calculations | `analysis.rs` — `degree_days()`, `HDD_BASE_TEMP` |
+| Design comparison / COP vs spec | `analysis.rs` — `cop_vs_spec()`, `design_comparison()` |
+| House thermal properties | `reference.rs` — `house::` module |
+| Radiator data | `reference.rs` — `radiators::` module |
+| Manufacturer spec curve | `reference.rs` — `arotherm::` module |
+| Gas-era consumption data | `reference.rs` — `gas_era::` module |
+| Gap-filling model or strategy | `gaps.rs` — `TempBinModel` and `fill_gap()` |
+| Emoncms API interaction | `emoncms.rs` — `Client` struct |
+| Database schema | `db.rs` — `open()` function |
+| Simulated data schema | `gaps.rs` — `ensure_schema()` |
 
 ## Feed ID Mapping
 
-Feed IDs are hardcoded in two places:
+Feed IDs are hardcoded in two files:
 
 | Location | Feed IDs | Purpose |
 |----------|----------|---------|
 | `db.rs: FEED_IDS` | All 12 feeds | Which feeds to download during sync |
 | `db.rs: load_dataframe_inner()` | 7 analysis feeds | Which feeds to load into DataFrames |
+| `db.rs: load_daily_outside_temp()` | Feed `503093` | Daily outside temp for degree days |
+| `db.rs: load_daily_energy()` | Feeds `503095`, `503097` | Cumulative energy for daily/degree day |
 | `gaps.rs: TempBinModel::from_db()` | 6 feeds (hardcoded in SQL) | Model building |
 | `gaps.rs: find_gaps()` | Feed `503094` | Gap detection reference feed |
 | `gaps.rs: fill_gap()` | 5 feeds + `503093` | Gap-filling writes + outside temp lookups |
@@ -55,5 +79,5 @@ Feed IDs are hardcoded in two places:
 ## Generated / External
 
 - `heatpump.db` — generated by `sync`, not checked in
-- `LICENSE-*` and `README.md` — generated by GitHub skill from `license_template` repo
+- `LICENSE-*` and base `README.md` template — generated by GitHub skill from `license_template` repo
 - `Cargo.lock` — auto-generated, checked in

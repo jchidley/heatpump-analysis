@@ -1,4 +1,4 @@
-<!-- code-truth: 07b9b7f -->
+<!-- code-truth: db2c2ce -->
 
 # Decisions
 
@@ -26,7 +26,7 @@
 
 **Where:** `analysis.rs` — constants `DHW_ENTER_FLOW_RATE` (16.0), `DHW_EXIT_FLOW_RATE` (15.0), `DEFROST_DT_THRESHOLD` (-0.5), and `classify_states()` function.
 
-**Consequences:** The thresholds are specific to the 5kW Arotherm. A different model (7kW at 20.0 L/min, or 10kW at 33.3 L/min) would need different values. Defrost detection relies on negative heat output or negative delta-T, which works because defrost reverses the refrigerant cycle and extracts heat from the water.
+**Consequences:** The thresholds are specific to the 5kW Arotherm. A different model (7kW at 20.0 L/min, or 10kW at 33.3 L/min) would need different values. Defrost detection relies on negative heat output or negative delta-T.
 
 ---
 
@@ -50,11 +50,11 @@
 
 **What:** Gap-filled power estimates are linearly scaled so their time-integrated energy matches the cumulative meter readings (feeds `503095` elec_energy and `503097` heat_energy) at the gap boundaries.
 
-**Why:** The cumulative meters run continuously even when the monitoring logger drops out. They provide a ground-truth constraint on total energy consumed/produced during each gap. Without scaling, the model's average power estimates would not integrate to the correct total.
+**Why:** The cumulative meters run continuously even when the monitoring logger drops out. They provide a ground-truth constraint on total energy consumed/produced during each gap.
 
 **Where:** `gaps.rs` — `fill_gap()`, variables `elec_scale` and `heat_scale`.
 
-**Consequences:** The minute-by-minute power profile during gaps is approximate (based on outside temperature bins), but the total energy is exact. COP during gaps inherits the scaling ratio, which is correct for aggregate COP but the instantaneous values are modelled.
+**Consequences:** The minute-by-minute power profile during gaps is approximate (based on outside temperature bins), but the total energy is exact. COP during gaps inherits the scaling ratio.
 
 ---
 
@@ -62,7 +62,7 @@
 
 **Status:** active
 
-**What:** Emoncms feed IDs (e.g. `503094` for electric power) are hardcoded as string constants in `db.rs`, `analysis.rs` (removed), and `gaps.rs`.
+**What:** Emoncms feed IDs (e.g. `503094` for electric power) are hardcoded as string constants in `db.rs` and `gaps.rs`.
 
 **Why:** This is a single-installation tool. The feed IDs are stable identifiers assigned by emoncms.org.
 
@@ -72,17 +72,17 @@
 
 ---
 
-### No Tests
+### Reference Data as Compile-Time Constants
 
 **Status:** active
 
-**What:** There are no automated tests of any kind.
+**What:** House thermal properties, radiator inventory, Arotherm manufacturer spec, and gas-era consumption are hardcoded in `reference.rs` rather than loaded from a config file or database.
 
-**Why:** The project evolved through rapid experimentation with an LLM agent, validating against live data output rather than unit tests. [INFERRED]
+**Why:** These are static planning values that change rarely if ever. Encoding them in Rust gives compile-time type checking and makes the tool self-contained.
 
-**Where:** No `#[cfg(test)]` modules anywhere in `src/`.
+**Where:** `reference.rs` — four nested modules (`house::`, `arotherm::`, `radiators::`, `gas_era::`).
 
-**Consequences:** Refactoring carries risk. The state machine logic and gap-filling model are the most complex and most likely to regress. The operating model was validated empirically against 448k real samples but has no regression tests.
+**Consequences:** Changing any reference value requires recompilation. If the house undergoes solid wall insulation (planned), the HTC, U-values, and heat loss figures will need updating.
 
 ---
 
@@ -92,11 +92,11 @@
 
 **What:** `Cargo.toml` pins `polars = "0.46"` despite 0.53 being available.
 
-**Why:** The project was built iteratively with an LLM agent. The Polars API changes significantly between minor versions (renamed methods, changed trait bounds, different feature flags). Upgrading requires testing all DataFrame operations. [INFERRED]
+**Why:** The Polars API changes significantly between minor versions. The project was built iteratively and upgrading requires testing all DataFrame operations. [INFERRED]
 
 **Where:** `Cargo.toml`.
 
-**Consequences:** Missing newer Polars features and performance improvements. The `mul` workaround in `analysis.rs` (using `* lit(2)` instead of `.mul(lit(2))`) was needed due to trait bound issues in 0.46 — this may be fixed in newer versions.
+**Consequences:** Missing newer Polars features and performance improvements.
 
 ---
 
@@ -110,14 +110,44 @@
 
 **Where:** `analysis.rs` constants, `gaps.rs` hardcoded `flow_rate >= 16.0`.
 
-**Consequences:** Cannot be used with a different Arotherm size without changing thresholds. A 7kW adaptation would need an entirely different classification approach since the flow rate bimodal gap doesn't exist in the same way.
+**Consequences:** Cannot be used with a different Arotherm size without changing thresholds. A 7kW adaptation would need an entirely different classification approach.
+
+---
+
+### UK Standard Degree Day Base Temperature
+
+**Status:** active
+
+**What:** HDD calculated at 15.5°C base (UK standard: 18.5°C design indoor − 3°C internal gains). A separate 17°C base from gas-era regression is used for gas comparison.
+
+**Why:** 15.5°C is the conventional UK base. The gas-era analysis used 17°C because regression on actual gas consumption suggested higher base — possibly due to higher boiler-era heat losses.
+
+**Where:** `analysis.rs` — `HDD_BASE_TEMP` (15.5°C). `reference.rs` — `house::BASE_TEMP_GAS_ERA` (17°C).
+
+**Consequences:** The estimated base temperature from HP data (~12°C) differs from both values, suggesting the house performs better than either standard assumes.
+
+---
+
+### No Tests
+
+**Status:** active
+
+**What:** There are no automated tests of any kind.
+
+**Why:** The project evolved through rapid experimentation with an LLM agent, validating against live data output. [INFERRED]
+
+**Where:** No `#[cfg(test)]` modules anywhere in `src/`.
+
+**Consequences:** Refactoring carries risk. The state machine logic and gap-filling model are the most complex and most likely to regress.
 
 ---
 
 ## Open Questions
 
-- The `gaps.rs` module accesses SQLite tables directly rather than going through `db.rs` functions. It's unclear whether this is intentional (performance, avoiding circular dependencies) or just organic growth. If adding new tables or queries, it's ambiguous which pattern to follow. [UNCERTAIN]
+- The `gaps.rs` module accesses SQLite tables directly rather than going through `db.rs` functions. It's unclear whether this is intentional (performance, avoiding circular dependencies) or just organic growth. [UNCERTAIN]
 
 - The `BinStats` struct in `gaps.rs` has a `_count` field (renamed from `count` to suppress a warning). The field is populated but never read. It may have been intended for confidence weighting or model diagnostics. [UNCERTAIN]
 
 - Feed IDs are duplicated across `db.rs` and `gaps.rs`. A change to feed IDs requires updating both files, and there's no compile-time check that they're consistent. [INFERRED]
+
+- The indoor temperature sensor (emonth2, feed 503101) is in the Leather room only. Analysis treats it as representative of whole-house temperature, which may over- or under-estimate comfort in other rooms. [INFERRED]
