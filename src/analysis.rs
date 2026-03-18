@@ -34,6 +34,8 @@ use anyhow::{Context, Result};
 use chrono::DateTime;
 use polars::prelude::*;
 
+use crate::reference;
+
 /// UK standard base temperature for heating degree days.
 /// Tb = design indoor temp (18.5°C) − average internal gains (3°C) = 15.5°C.
 /// Below this outside temperature, heating is needed.
@@ -552,6 +554,217 @@ pub fn degree_days(
             "\n[ESTIMATED] Base temperature: ~{:.0}°C (consumption plateaus at {:.1} kWh/day above this)",
             estimated_base, baseline_elec,
         );
+    }
+
+    Ok(())
+}
+
+/// Compare actual COP against Arotherm manufacturer spec at different flow temps.
+pub fn cop_vs_spec(df: &DataFrame) -> Result<()> {
+    use reference::arotherm;
+
+    // Print the manufacturer reference curve
+    println!("\n=== Arotherm 5kW Manufacturer Spec (at -3°C outside) ===");
+    println!("{:>10} {:>12} {:>8}", "Flow °C", "Heat Output", "COP");
+    println!("{}", "-".repeat(32));
+    for (ft, heat, cop) in arotherm::SPEC_AT_MINUS3 {
+        println!("{:>10.0} {:>10.0}W {:>8.2}", ft, heat, cop);
+    }
+
+    // Group actual data by 5°C flow temp bands, heating only
+    let result = df
+        .clone()
+        .lazy()
+        .filter(col("state").eq(lit("heating")))
+        .with_column(
+            ((col("flow_t") / lit(5.0)).floor().cast(DataType::Int32) * lit(5))
+                .alias("flow_band"),
+        )
+        .group_by([col("flow_band")])
+        .agg([
+            col("cop").mean().alias("actual_cop"),
+            col("elec_w").mean().alias("avg_elec"),
+            col("heat_w").mean().alias("avg_heat"),
+            col("outside_t").mean().alias("avg_outside_t"),
+            len().alias("samples"),
+        ])
+        .sort(["flow_band"], Default::default())
+        .collect()?;
+
+    println!("\n=== Actual COP by Flow Temperature Band (Heating Only) ===");
+    println!("{}", result);
+
+    // Compare at each spec flow temp
+    println!("\n=== Actual vs Manufacturer COP ===");
+    println!(
+        "{:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Flow °C", "Spec COP", "Actual COP", "Ratio", "Samples"
+    );
+    println!("{}", "-".repeat(55));
+
+    let heating = df
+        .clone()
+        .lazy()
+        .filter(col("state").eq(lit("heating")))
+        .collect()?;
+
+    let flow_t_arr = heating.column("flow_t")?.f64()?;
+    let cop_arr = heating.column("cop")?.f64()?;
+
+    for (spec_ft, _spec_heat, spec_cop) in arotherm::SPEC_AT_MINUS3 {
+        // Find samples within ±2.5°C of this flow temp
+        let mut cops: Vec<f64> = Vec::new();
+        for i in 0..flow_t_arr.len() {
+            if let (Some(ft), Some(cop)) = (flow_t_arr.get(i), cop_arr.get(i)) {
+                if (ft - spec_ft).abs() < 2.5 && cop > 0.0 {
+                    cops.push(cop);
+                }
+            }
+        }
+        if !cops.is_empty() {
+            let avg_cop = cops.iter().sum::<f64>() / cops.len() as f64;
+            let ratio = avg_cop / spec_cop;
+            println!(
+                "{:>10.0} {:>10.2} {:>10.2} {:>9.0}% {:>10}",
+                spec_ft,
+                spec_cop,
+                avg_cop,
+                ratio * 100.0,
+                cops.len()
+            );
+        } else {
+            println!(
+                "{:>10.0} {:>10.2} {:>10} {:>10} {:>10}",
+                spec_ft, spec_cop, "-", "-", "0"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Compare actual heat demand against design calculations and gas-era data.
+pub fn design_comparison(
+    daily_temps: &[(String, f64, f64, f64)],
+    elec_data: &[(i64, Option<f64>)],
+    heat_data: &[(i64, Option<f64>)],
+) -> Result<()> {
+    use reference::{gas_era, house, radiators};
+
+    println!("\n=== House Design Reference ===");
+    println!("Construction:     {}", house::CONSTRUCTION);
+    println!("Floor area:       {} m²", house::FLOOR_AREA_M2);
+    println!("HTC:              {} W/°C", house::HTC_W_PER_C);
+    println!("Design heat loss: {} W (at {}°C outside, {}°C inside)",
+        house::DESIGN_HEAT_LOSS_W, house::DESIGN_OUTDOOR_TEMP, house::DESIGN_INDOOR_TEMP);
+
+    // Radiator capacity at different flow temps
+    println!("\n=== Radiator Output vs Flow Temperature ===");
+    println!("{:>10} {:>15} {:>15}", "Flow °C", "Total Output W", "vs Design Loss");
+    println!("{}", "-".repeat(45));
+    for ft in &[30.0, 32.0, 35.0, 38.0, 40.0, 45.0, 50.0] {
+        let output = radiators::total_output_at_flow_temp(*ft);
+        let ratio = output / house::DESIGN_HEAT_LOSS_W * 100.0;
+        println!("{:>10.0} {:>13.0}W {:>13.0}%", ft, output, ratio);
+    }
+    println!("\nTotal T50 rating:  {} W (15 radiators)",
+        radiators::ALL.iter().map(|r| r.t50_watts as u32).sum::<u32>());
+
+    // Gas era comparison
+    println!("\n=== Gas Era vs Heat Pump Comparison ===");
+
+    // Calculate HP annual energy from the data we have
+    let mut hp_elec_total = 0.0f64;
+    let mut hp_heat_total = 0.0f64;
+    let mut hp_days = 0u32;
+
+    let mut elec_by_date: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
+    let mut heat_by_date: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
+
+    for i in 1..elec_data.len().min(heat_data.len()) {
+        let ts = elec_data[i].0 / 1000;
+        let dt = DateTime::from_timestamp(ts, 0).unwrap_or_default();
+        let date = dt.format("%Y-%m-%d").to_string();
+
+        if let (Some(a), Some(b)) = (elec_data[i].1, elec_data[i - 1].1) {
+            if a >= b {
+                let de = a - b;
+                elec_by_date.insert(date.clone(), de);
+                hp_elec_total += de;
+            }
+        }
+        if let (Some(a), Some(b)) = (heat_data[i].1, heat_data[i - 1].1) {
+            if a >= b {
+                let dh = a - b;
+                heat_by_date.insert(date.clone(), dh);
+                hp_heat_total += dh;
+                hp_days += 1;
+            }
+        }
+    }
+
+    // Calculate HDD for the HP period (base 17°C for comparison with gas)
+    let mut hp_hdd_17 = 0.0f64;
+    for (_date, mean_t, _, _) in daily_temps {
+        let hdd = (house::BASE_TEMP_GAS_ERA - mean_t).max(0.0);
+        hp_hdd_17 += hdd;
+    }
+
+    let hp_cop = if hp_elec_total > 0.1 { hp_heat_total / hp_elec_total } else { 0.0 };
+
+    // Estimate what gas would have cost for the same period
+    let gas_equiv_heating_kwh = hp_hdd_17 * house::KWH_PER_HDD;
+    let gas_equiv_total_kwh = gas_equiv_heating_kwh / gas_era::BOILER_EFFICIENCY;
+
+    println!(
+        "{:<35} {:>15} {:>15}",
+        "", "Gas Boiler", "Heat Pump"
+    );
+    println!("{}", "-".repeat(67));
+    println!(
+        "{:<35} {:>15} {:>15}",
+        "Period", "Annual (est)", format!("{} days", hp_days)
+    );
+    println!(
+        "{:<35} {:>14.0} {:>14.0}",
+        "HDD (base 17°C)", gas_era::MONTHLY.iter().map(|m| m.1).sum::<f64>(), hp_hdd_17
+    );
+    println!(
+        "{:<35} {:>13.0}* {:>14.0}",
+        "Heat delivered (kWh)", gas_era::ANNUAL_HEATING_DELIVERED_KWH, hp_heat_total
+    );
+    println!(
+        "{:<35} {:>14.0} {:>14.0}",
+        "Energy consumed (kWh)", gas_era::ANNUAL_GAS_KWH, hp_elec_total
+    );
+    println!(
+        "{:<35} {:>14.0}% {:>13.1}x",
+        "Efficiency / COP", gas_era::BOILER_EFFICIENCY * 100.0, hp_cop
+    );
+    println!(
+        "{:<35} {:>14.1} {:>14.1}",
+        "kWh consumed per HDD",
+        gas_era::ANNUAL_HEATING_GAS_KWH / gas_era::MONTHLY.iter().map(|m| m.1).sum::<f64>(),
+        hp_elec_total / hp_hdd_17
+    );
+    println!("\n  * Gas heating estimated: annual {:.0} kWh gas × {:.0}% efficiency = {:.0} kWh delivered",
+        gas_era::ANNUAL_GAS_KWH, gas_era::BOILER_EFFICIENCY * 100.0, gas_era::ANNUAL_HEATING_DELIVERED_KWH);
+    println!("  * Gas figure includes hot water ({:.1} kWh/day), HP figure includes DHW too", 11.82);
+
+    // For same HDD, how much gas vs electricity would be used?
+    if hp_hdd_17 > 10.0 {
+        println!("\n=== Same-Weather Comparison (HDD-normalised) ===");
+        println!("If this HP period's weather had been heated by gas boiler:");
+        println!("  Gas consumed:    {:.0} kWh (at {:.1} kWh/HDD × {:.0} HDD)",
+            gas_equiv_total_kwh,
+            house::KWH_PER_HDD / gas_era::BOILER_EFFICIENCY,
+            hp_hdd_17);
+        println!("  HP consumed:     {:.0} kWh electricity", hp_elec_total);
+        println!("  Energy saving:   {:.0} kWh ({:.0}%)",
+            gas_equiv_total_kwh - hp_elec_total,
+            (1.0 - hp_elec_total / gas_equiv_total_kwh) * 100.0);
     }
 
     Ok(())

@@ -2,6 +2,7 @@ mod analysis;
 mod db;
 mod emoncms;
 mod gaps;
+mod reference;
 
 use std::path::PathBuf;
 
@@ -66,6 +67,10 @@ enum Commands {
     FillGaps,
     /// Degree day analysis — energy normalised by heating demand
     DegreeDays,
+    /// Compare actual COP against Arotherm manufacturer spec
+    CopVsSpec,
+    /// Compare actual performance against design calculations and gas-era data
+    DesignComparison,
     /// Export data to CSV for the time period
     Export {
         /// Output file path (default: stdout)
@@ -250,6 +255,22 @@ fn main() -> Result<()> {
                 gap_list.len(),
                 total_samples,
             );
+        }
+
+        Commands::CopVsSpec => {
+            let df = load_dataframe(&cli, start, end)?;
+            let df = analysis::enrich(&df)?;
+            analysis::cop_vs_spec(&df)?;
+        }
+
+        Commands::DesignComparison => {
+            let conn = cli.require_db()?;
+            let temps = db::load_daily_outside_temp(&conn, start, end)?;
+            let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
+            let df = load_dataframe(&cli, start, end)?;
+            let df = analysis::enrich(&df)?;
+            analysis::cop_vs_spec(&df)?;
+            analysis::design_comparison(&temps, &elec, &heat)?;
         }
 
         Commands::DegreeDays => {
