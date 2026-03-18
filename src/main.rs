@@ -5,7 +5,7 @@ mod gaps;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 
@@ -13,26 +13,17 @@ use clap::{Parser, Subcommand};
 #[command(name = "heatpump-analysis")]
 #[command(about = "Fetch and analyse heat pump data from emoncms.org")]
 struct Cli {
-    /// Emoncms read API key
-    #[arg(long, env = "EMONCMS_APIKEY")]
+    /// Emoncms read API key (required for 'feeds' and 'sync' commands)
+    #[arg(long, env = "EMONCMS_APIKEY", default_value = "")]
     apikey: String,
 
-    /// SQLite database path (default: heatpump.db in current directory)
+    /// SQLite database path
     #[arg(long, default_value = "heatpump.db")]
     db: PathBuf,
 
     /// How many days of history to analyse (default 7)
     #[arg(long, default_value = "7")]
     days: u32,
-
-    /// Data interval in seconds — only used for API mode, ignored with local DB
-    /// (local DB always stores at 1-minute resolution)
-    #[arg(long, default_value = "300")]
-    interval: u32,
-
-    /// Force fetching from API instead of local database
-    #[arg(long)]
-    api: bool,
 
     /// Include simulated (gap-filled) data in analysis
     #[arg(long)]
@@ -44,9 +35,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// List all available feeds
+    /// List all available feeds from emoncms API
     Feeds,
-    /// Download all data from emoncms to local SQLite database
+    /// Download/update data from emoncms to local SQLite database
     Sync,
     /// Show database status (row counts, date range, size)
     DbStatus,
@@ -68,15 +59,33 @@ enum Commands {
     All,
 }
 
+impl Cli {
+    /// Get the API client, failing if no key was provided.
+    fn require_client(&self) -> Result<emoncms::Client> {
+        anyhow::ensure!(!self.apikey.is_empty(), "This command requires --apikey or EMONCMS_APIKEY");
+        Ok(emoncms::Client::new(&self.apikey))
+    }
+
+    /// Open the local database, failing if it doesn't exist.
+    fn require_db(&self) -> Result<rusqlite::Connection> {
+        anyhow::ensure!(
+            self.db.exists(),
+            "Database not found: {}. Run 'sync' first to download data.",
+            self.db.display()
+        );
+        db::open(&self.db)
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let client = emoncms::Client::new(&cli.apikey);
 
     let end = Utc::now().timestamp();
     let start = end - (cli.days as i64 * 86400);
 
     match cli.command {
         Commands::Feeds => {
+            let client = cli.require_client()?;
             let feeds = client.list_feeds()?;
             println!(
                 "{:<10} {:<25} {:<15} {:<8} {}",
@@ -90,13 +99,13 @@ fn main() -> Result<()> {
                     f.name,
                     f.tag,
                     f.unit,
-                    f.value
-                        .map_or("-".to_string(), |v| format!("{:.1}", v))
+                    f.value.map_or("-".to_string(), |v| format!("{:.1}", v))
                 );
             }
         }
 
         Commands::Sync => {
+            let client = cli.require_client()?;
             eprintln!("Opening database: {}", cli.db.display());
             let conn = db::open(&cli.db)?;
 
@@ -110,22 +119,21 @@ fn main() -> Result<()> {
         }
 
         Commands::DbStatus => {
-            let conn = db::open(&cli.db)?;
+            let conn = cli.require_db()?;
 
-            // Total samples
             let total: u64 =
                 conn.query_row("SELECT COUNT(*) FROM samples", [], |r| r.get(0))?;
 
-            // Date range
             let (min_ts, max_ts): (i64, i64) = conn.query_row(
                 "SELECT COALESCE(MIN(timestamp), 0), COALESCE(MAX(timestamp), 0) FROM samples",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
 
-            // Per-feed counts
-            println!("{:<15} {:<25} {:>10} {:>22} {:>22}",
-                "Feed ID", "Name", "Samples", "First", "Last");
+            println!(
+                "{:<15} {:<25} {:>10} {:>22} {:>22}",
+                "Feed ID", "Name", "Samples", "First", "Last"
+            );
             println!("{}", "-".repeat(100));
 
             let mut stmt = conn.prepare(
@@ -134,7 +142,7 @@ fn main() -> Result<()> {
                  FROM samples s
                  LEFT JOIN feeds f ON f.id = s.feed_id
                  GROUP BY s.feed_id
-                 ORDER BY s.feed_id"
+                 ORDER BY s.feed_id",
             )?;
 
             let rows = stmt.query_map([], |row| {
@@ -155,11 +163,12 @@ fn main() -> Result<()> {
                 let last_dt = chrono::DateTime::from_timestamp_millis(last)
                     .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
                     .unwrap_or_default();
-                println!("{:<15} {:<25} {:>10} {:>22} {:>22}",
-                    id, name, count, first_dt, last_dt);
+                println!(
+                    "{:<15} {:<25} {:>10} {:>22} {:>22}",
+                    id, name, count, first_dt, last_dt
+                );
             }
 
-            // DB file size
             let db_size: u64 = conn
                 .query_row(
                     "SELECT page_count * page_size FROM pragma_page_count, pragma_page_size",
@@ -168,26 +177,33 @@ fn main() -> Result<()> {
                 )
                 .unwrap_or(0);
 
-            println!("\nTotal: {} samples, {:.1} MB",
-                total, db_size as f64 / 1_048_576.0);
+            println!(
+                "\nTotal: {} samples, {:.1} MB",
+                total,
+                db_size as f64 / 1_048_576.0
+            );
 
             if min_ts > 0 && max_ts > 0 {
                 let min_dt = chrono::DateTime::from_timestamp_millis(min_ts).unwrap();
                 let max_dt = chrono::DateTime::from_timestamp_millis(max_ts).unwrap();
                 let days = (max_ts - min_ts) as f64 / 86_400_000.0;
-                println!("Range: {} to {} ({:.0} days)",
-                    min_dt.format("%Y-%m-%d"), max_dt.format("%Y-%m-%d"), days);
+                println!(
+                    "Range: {} to {} ({:.0} days)",
+                    min_dt.format("%Y-%m-%d"),
+                    max_dt.format("%Y-%m-%d"),
+                    days
+                );
             }
         }
 
         Commands::Gaps => {
-            let conn = db::open(&cli.db)?;
+            let conn = cli.require_db()?;
             gaps::ensure_schema(&conn)?;
             gaps::print_gap_report(&conn)?;
         }
 
         Commands::FillGaps => {
-            let conn = db::open(&cli.db)?;
+            let conn = cli.require_db()?;
             gaps::ensure_schema(&conn)?;
 
             eprintln!("Building model from real data...");
@@ -203,21 +219,14 @@ fn main() -> Result<()> {
 
             let mut total_samples = 0u64;
             for gap in &gap_list {
-                let dur = if gap.duration_min > 1440.0 {
-                    format!("{:.1}d", gap.duration_min / 1440.0)
-                } else if gap.duration_min > 60.0 {
-                    format!("{:.1}h", gap.duration_min / 60.0)
-                } else {
-                    format!("{:.0}m", gap.duration_min)
-                };
-
-                let start = chrono::DateTime::from_timestamp_millis(gap.start_ts)
+                let dur = format_duration(gap.duration_min);
+                let start_str = chrono::DateTime::from_timestamp_millis(gap.start_ts)
                     .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
                     .unwrap_or_default();
 
                 let n = gaps::fill_gap(&conn, gap, &model)?;
                 total_samples += n;
-                eprintln!("  {} ({}) → {} samples", start, dur, n);
+                eprintln!("  {} ({}) → {} samples", start_str, dur, n);
             }
 
             println!(
@@ -228,79 +237,76 @@ fn main() -> Result<()> {
         }
 
         Commands::Data => {
-            let df = load_or_fetch(&cli, &client, start, end)?;
+            let df = load_dataframe(&cli, start, end)?;
             let df = analysis::enrich(&df)?;
             println!("{}", df);
         }
 
         Commands::Summary => {
-            let df = load_or_fetch(&cli, &client, start, end)?;
+            let df = load_dataframe(&cli, start, end)?;
             let df = analysis::enrich(&df)?;
             analysis::summary(&df)?;
         }
 
         Commands::CopByTemp => {
-            let df = load_or_fetch(&cli, &client, start, end)?;
+            let df = load_dataframe(&cli, start, end)?;
             let df = analysis::enrich(&df)?;
             analysis::cop_by_outside_temp(&df)?;
         }
 
         Commands::Hourly => {
-            let df = load_or_fetch(&cli, &client, start, end)?;
+            let df = load_dataframe(&cli, start, end)?;
             let df = analysis::enrich(&df)?;
             analysis::hourly_profile(&df)?;
         }
 
         Commands::Daily => {
-            if !cli.api && cli.db.exists() {
-                let conn = db::open(&cli.db)?;
-                let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
-                analysis::daily_energy_from_data(&elec, &heat)?;
-            } else {
-                analysis::daily_energy(&client, start, end)?;
-            }
+            let conn = cli.require_db()?;
+            let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
+            analysis::daily_energy(&elec, &heat)?;
         }
 
         Commands::All => {
-            let df = load_or_fetch(&cli, &client, start, end)?;
+            let df = load_dataframe(&cli, start, end)?;
             let df = analysis::enrich(&df)?;
             analysis::summary(&df)?;
             analysis::cop_by_outside_temp(&df)?;
             analysis::hourly_profile(&df)?;
 
-            if !cli.api && cli.db.exists() {
-                let conn = db::open(&cli.db)?;
-                let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
-                analysis::daily_energy_from_data(&elec, &heat)?;
-            } else {
-                analysis::daily_energy(&client, start, end)?;
-            }
+            let conn = cli.require_db()?;
+            let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
+            analysis::daily_energy(&elec, &heat)?;
         }
     }
 
     Ok(())
 }
 
-/// Load data from local DB if available, otherwise fetch from API.
-fn load_or_fetch(
+/// Load a DataFrame from the local database.
+fn load_dataframe(
     cli: &Cli,
-    client: &emoncms::Client,
     start: i64,
     end: i64,
 ) -> Result<polars::prelude::DataFrame> {
-    if !cli.api && cli.db.exists() {
-        let conn = db::open(&cli.db)?;
-        if cli.include_simulated {
-            eprintln!("Loading from local database (including simulated): {}", cli.db.display());
-            db::load_dataframe_with_simulated(&conn, start, end)
-        } else {
-            eprintln!("Loading from local database: {}", cli.db.display());
-            db::load_dataframe(&conn, start, end)
-        }
+    let conn = cli.require_db()?;
+    if cli.include_simulated {
+        eprintln!(
+            "Loading from {} (including simulated)",
+            cli.db.display()
+        );
+        db::load_dataframe_with_simulated(&conn, start, end)
     } else {
-        if !cli.api {
-            eprintln!("No local database found, fetching from API (run 'sync' first for faster queries)");
-        }
-        analysis::fetch_dataframe(client, start, end, cli.interval)
+        eprintln!("Loading from {}", cli.db.display());
+        db::load_dataframe(&conn, start, end)
+    }
+}
+
+fn format_duration(minutes: f64) -> String {
+    if minutes > 1440.0 {
+        format!("{:.1}d", minutes / 1440.0)
+    } else if minutes > 60.0 {
+        format!("{:.1}h", minutes / 60.0)
+    } else {
+        format!("{:.0}m", minutes)
     }
 }

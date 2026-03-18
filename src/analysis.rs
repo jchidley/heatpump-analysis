@@ -1,4 +1,4 @@
-//! Build Polars DataFrames from emoncms data and run analyses.
+//! Polars-based analysis of heat pump data.
 //!
 //! # Vaillant Arotherm Plus 5kW Operating Model
 //!
@@ -34,33 +34,6 @@ use anyhow::{Context, Result};
 use chrono::DateTime;
 use polars::prelude::*;
 
-use crate::emoncms::Client;
-
-/// Known feed IDs for this heat pump installation.
-pub struct FeedIds {
-    pub outside_temp: &'static str,
-    pub electric_power: &'static str,
-    pub electric_energy: &'static str,
-    pub heat_power: &'static str,
-    pub heat_energy: &'static str,
-    pub flow_temp: &'static str,
-    pub return_temp: &'static str,
-    pub flow_rate: &'static str,
-    pub indoor_temp: &'static str,
-}
-
-pub const FEEDS: FeedIds = FeedIds {
-    outside_temp: "503093",
-    electric_power: "503094",
-    electric_energy: "503095",
-    heat_power: "503096",
-    heat_energy: "503097",
-    flow_temp: "503098",
-    return_temp: "503099",
-    flow_rate: "503100",
-    indoor_temp: "503101",
-};
-
 // --- Arotherm 5kW operating thresholds ---
 
 /// Minimum electrical power to consider the compressor running.
@@ -80,7 +53,7 @@ const DEFROST_DT_THRESHOLD: f64 = -0.5;
 
 /// Operating state of the heat pump at a given moment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HpState {
+enum HpState {
     Idle,
     Heating,
     Dhw,
@@ -88,7 +61,7 @@ pub enum HpState {
 }
 
 impl HpState {
-    pub fn as_str(&self) -> &'static str {
+    fn as_str(&self) -> &'static str {
         match self {
             HpState::Idle => "idle",
             HpState::Heating => "heating",
@@ -111,7 +84,6 @@ fn classify_states(
     let n = elec.len();
     let mut states = Vec::with_capacity(n);
     let mut current = HpState::Idle;
-    // Track which productive state to return to after defrost ends
     let mut pre_defrost = HpState::Heating;
 
     for i in 0..n {
@@ -121,11 +93,8 @@ fn classify_states(
         let dt = delta_t[i];
 
         let next = if e <= ELEC_RUNNING_W {
-            // Compressor not running
             HpState::Idle
         } else if h <= 0.0 || dt < DEFROST_DT_THRESHOLD {
-            // Defrost: heat being extracted from water to melt outdoor coil ice.
-            // Can happen at ANY flow rate (depends on diverter valve position).
             if current != HpState::Defrost {
                 pre_defrost = match current {
                     HpState::Dhw => HpState::Dhw,
@@ -134,7 +103,6 @@ fn classify_states(
             }
             HpState::Defrost
         } else {
-            // Productive operation — use flow rate + hysteresis
             match current {
                 HpState::Idle | HpState::Heating => {
                     if fr >= DHW_ENTER_FLOW_RATE {
@@ -151,14 +119,11 @@ fn classify_states(
                     }
                 }
                 HpState::Defrost => {
-                    // Returning from defrost — go back to previous productive state,
-                    // but re-check flow rate in case diverter moved during defrost.
                     if fr >= DHW_ENTER_FLOW_RATE {
                         HpState::Dhw
                     } else if fr < DHW_EXIT_FLOW_RATE {
                         HpState::Heating
                     } else {
-                        // In the transition zone — use pre-defrost state
                         pre_defrost
                     }
                 }
@@ -172,49 +137,9 @@ fn classify_states(
     states
 }
 
-/// Fetch all key feeds for a time range and merge into a single DataFrame.
-pub fn fetch_dataframe(client: &Client, start: i64, end: i64, interval: u32) -> Result<DataFrame> {
-    let feeds: Vec<(&str, &str)> = vec![
-        (FEEDS.electric_power, "elec_w"),
-        (FEEDS.heat_power, "heat_w"),
-        (FEEDS.flow_temp, "flow_t"),
-        (FEEDS.return_temp, "return_t"),
-        (FEEDS.flow_rate, "flow_rate"),
-        (FEEDS.outside_temp, "outside_t"),
-        (FEEDS.indoor_temp, "indoor_t"),
-    ];
-
-    // Fetch first feed to get timestamps
-    let first_data = client.feed_data(feeds[0].0, start, end, interval)?;
-    let timestamps: Vec<i64> = first_data.iter().map(|(ts, _)| *ts).collect();
-    let first_values: Vec<Option<f64>> = first_data.iter().map(|(_, v)| *v).collect();
-
-    // Build datetime column
-    let dt_series = Series::new("timestamp".into(), &timestamps)
-        .cast(&DataType::Datetime(TimeUnit::Milliseconds, Some("UTC".into())))
-        .context("Failed to create datetime column")?;
-
-    let mut columns: Vec<Column> = vec![dt_series.into()];
-
-    // Add first feed
-    columns.push(Series::new(feeds[0].1.into(), &first_values).into());
-
-    // Fetch remaining feeds
-    for (id, name) in &feeds[1..] {
-        let data = client.feed_data(id, start, end, interval)?;
-        let values: Vec<Option<f64>> = data.iter().map(|(_, v)| *v).collect();
-        let mut aligned = values;
-        aligned.resize(timestamps.len(), None);
-        columns.push(Series::new((*name).into(), &aligned).into());
-    }
-
-    let df = DataFrame::new(columns).context("Failed to build DataFrame")?;
-    Ok(df)
-}
-
 /// Add computed columns: COP, delta_T, and operating state.
 pub fn enrich(df: &DataFrame) -> Result<DataFrame> {
-    // First pass: compute delta_t eagerly (needed for state machine)
+    // Compute delta_t eagerly (needed for state machine)
     let flow_t = df.column("flow_t")?.f64()?;
     let return_t = df.column("return_t")?.f64()?;
     let delta_t: Vec<f64> = flow_t
@@ -234,16 +159,15 @@ pub fn enrich(df: &DataFrame) -> Result<DataFrame> {
     // Run state machine
     let states = classify_states(&elec, &heat, &flow_rate, &delta_t);
 
-    // Build enriched DataFrame with lazy API for COP
-    let lf = df.clone().lazy();
-    let enriched = lf
+    // Add COP and delta_t columns
+    let enriched = df
+        .clone()
+        .lazy()
         .with_columns([
-            // COP (only meaningful when actively heating/DHW, not during defrost)
             when(col("elec_w").gt(lit(ELEC_RUNNING_W)))
                 .then(col("heat_w") / col("elec_w"))
                 .otherwise(lit(NULL))
                 .alias("cop"),
-            // Delta T
             (col("flow_t") - col("return_t")).alias("delta_t"),
         ])
         .collect()
@@ -260,7 +184,6 @@ pub fn enrich(df: &DataFrame) -> Result<DataFrame> {
 
 /// Summary statistics for a time period, broken down by operating state.
 pub fn summary(df: &DataFrame) -> Result<()> {
-    // Overall stats (heating + DHW, excluding defrost and idle)
     let stats = df
         .clone()
         .lazy()
@@ -283,7 +206,6 @@ pub fn summary(df: &DataFrame) -> Result<()> {
     println!("\n=== Summary (heating + DHW, excluding defrost) ===");
     println!("{}", stats);
 
-    // Breakdown by state
     let by_state = df
         .clone()
         .lazy()
@@ -304,7 +226,6 @@ pub fn summary(df: &DataFrame) -> Result<()> {
     println!("\n=== Breakdown by Operating State ===");
     println!("{}", by_state);
 
-    // State distribution (including idle)
     let dist = df
         .clone()
         .lazy()
@@ -319,7 +240,7 @@ pub fn summary(df: &DataFrame) -> Result<()> {
     Ok(())
 }
 
-/// COP by outside temperature bands, for heating only (excluding DHW and defrost).
+/// COP by outside temperature bands, for heating only.
 pub fn cop_by_outside_temp(df: &DataFrame) -> Result<()> {
     let result = df
         .clone()
@@ -372,15 +293,8 @@ pub fn hourly_profile(df: &DataFrame) -> Result<()> {
     Ok(())
 }
 
-/// Daily totals using cumulative energy feeds (from API).
-pub fn daily_energy(client: &Client, start: i64, end: i64) -> Result<()> {
-    let elec_data = client.feed_data(FEEDS.electric_energy, start, end, 86400)?;
-    let heat_data = client.feed_data(FEEDS.heat_energy, start, end, 86400)?;
-    daily_energy_from_data(&elec_data, &heat_data)
-}
-
-/// Daily totals from pre-loaded cumulative energy data.
-pub fn daily_energy_from_data(
+/// Daily totals from cumulative energy data.
+pub fn daily_energy(
     elec_data: &[(i64, Option<f64>)],
     heat_data: &[(i64, Option<f64>)],
 ) -> Result<()> {

@@ -16,7 +16,9 @@ pub struct Feed {
     pub value: Option<f64>,
 }
 
-fn de_option_f64<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<f64>, D::Error> {
+fn de_option_f64<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<f64>, D::Error> {
     let s: Option<String> = Option::deserialize(d)?;
     match s {
         Some(v) => Ok(v.parse::<f64>().ok()),
@@ -55,7 +57,13 @@ impl Client {
     /// - `id`: feed ID
     /// - `start` / `end`: unix timestamps in **seconds**
     /// - `interval`: seconds between data points
-    pub fn feed_data(&self, id: &str, start: i64, end: i64, interval: u32) -> Result<Vec<DataPoint>> {
+    pub fn feed_data(
+        &self,
+        id: &str,
+        start: i64,
+        end: i64,
+        interval: u32,
+    ) -> Result<Vec<DataPoint>> {
         let url = format!(
             "{}/feed/data.json?apikey={}&id={}&start={}&end={}&interval={}",
             BASE_URL,
@@ -69,15 +77,5 @@ impl Client {
         let data: Vec<DataPoint> =
             serde_json::from_str(&resp).context("Failed to parse feed data")?;
         Ok(data)
-    }
-
-    /// Get latest value of a feed.
-    pub fn feed_value(&self, id: &str) -> Result<Option<f64>> {
-        let url = format!(
-            "{}/feed/value.json?apikey={}&id={}",
-            BASE_URL, self.apikey, id
-        );
-        let resp = self.http.get(&url).send()?.text()?;
-        Ok(resp.trim().trim_matches('"').parse::<f64>().ok())
     }
 }

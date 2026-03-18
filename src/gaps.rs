@@ -23,7 +23,7 @@
 //! All synthetic data is stored with `is_simulated = 1` in the database.
 //! Analysis functions can choose to include or exclude it.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::{params, Connection};
 
 /// Gap in a feed's data.
@@ -150,7 +150,7 @@ pub struct BinStats {
     pub avg_return_t: f64,
     pub avg_flow_rate: f64,
     pub fraction_running: f64,
-    pub count: u64,
+    pub _count: u64,
 }
 
 impl TempBinModel {
@@ -249,7 +249,7 @@ impl TempBinModel {
                                 avg_return_t: rt.iter().sum::<f64>() / n,
                                 avg_flow_rate: fr.iter().sum::<f64>() / n,
                                 fraction_running: n / total_n,
-                                count: e.len() as u64,
+                                _count: e.len() as u64,
                             },
                         )
                     })
@@ -277,34 +277,6 @@ impl TempBinModel {
     /// Estimate values for a given outside temperature and hour.
     /// Returns (elec_w, heat_w, flow_t, return_t, flow_rate, is_dhw)
     /// or None if the system would likely be idle.
-    pub fn estimate(&self, outside_t: f64, hour: usize) -> Option<(f64, f64, f64, f64, f64, bool)> {
-        let temp_bin = outside_t.round() as i32;
-
-        // Decide if this minute is DHW or heating based on hourly DHW fraction
-        // Use a deterministic pattern rather than random — DHW fraction tells us
-        // how many minutes per hour are DHW
-        let dhw_frac = self.dhw_fraction_by_hour[hour];
-        // We'll let the caller decide per-minute; just provide both options
-        // For now, give heating stats (caller scales)
-
-        let heating = self.get_heating(temp_bin)?;
-
-        // If outside temp is very warm and heating fraction is very low,
-        // the system might be idle
-        if heating.fraction_running < 0.05 {
-            return None;
-        }
-
-        Some((
-            heating.avg_elec,
-            heating.avg_heat,
-            heating.avg_flow_t,
-            heating.avg_return_t,
-            heating.avg_flow_rate,
-            false,
-        ))
-    }
-
     fn get_heating(&self, temp_bin: i32) -> Option<&BinStats> {
         // Try exact, then ±1, ±2
         self.heating_bins
@@ -453,14 +425,6 @@ pub fn fill_gap(conn: &Connection, gap: &Gap, model: &TempBinModel) -> Result<u6
     let tx = conn.unchecked_transaction()?;
     let mut count = 0u64;
     {
-        let feeds = [
-            ("503094", "elec"),
-            ("503096", "heat"),
-            ("503098", "flow_t"),
-            ("503099", "return_t"),
-            ("503100", "flow_rate"),
-        ];
-
         let mut stmt = tx.prepare_cached(
             "INSERT OR IGNORE INTO simulated_samples
              (feed_id, timestamp, value, gap_start_ts)
