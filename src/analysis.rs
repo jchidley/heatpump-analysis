@@ -372,11 +372,18 @@ pub fn hourly_profile(df: &DataFrame) -> Result<()> {
     Ok(())
 }
 
-/// Daily totals using cumulative energy feeds.
+/// Daily totals using cumulative energy feeds (from API).
 pub fn daily_energy(client: &Client, start: i64, end: i64) -> Result<()> {
     let elec_data = client.feed_data(FEEDS.electric_energy, start, end, 86400)?;
     let heat_data = client.feed_data(FEEDS.heat_energy, start, end, 86400)?;
+    daily_energy_from_data(&elec_data, &heat_data)
+}
 
+/// Daily totals from pre-loaded cumulative energy data.
+pub fn daily_energy_from_data(
+    elec_data: &[(i64, Option<f64>)],
+    heat_data: &[(i64, Option<f64>)],
+) -> Result<()> {
     let n = elec_data.len().min(heat_data.len());
     if n < 2 {
         println!("Not enough daily data points");
