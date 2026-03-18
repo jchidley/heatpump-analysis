@@ -28,7 +28,7 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 
 ## Octopus Energy Integration
 
-**Status:** Account exists, API access available.
+**Status:** Account exists, API access available. Two existing repos with historical data.
 
 ### What it would give us
 
@@ -39,13 +39,42 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 | **Tariff rates by time slot** | Agile/Cosy/Go rate structure for optimisation analysis |
 | **Gas consumption** (if any backup) | Total heating cost including any gas top-up |
 
+### Existing data
+
+Two repos under `~/github/`:
+
+**`~/github/octopus/`** (active, REST-based):
+- `octopus_rest_usage.py` — fetches half-hourly electricity and gas via Octopus REST API
+- `electricity_365d.csv` — daily electricity, Feb 2025 → Jan 2026 (365 rows)
+- SPA dashboard in `dist/` with degree-day views
+- `data/heat_context.example.toml` — has cutover dates (gas→HP transition Oct–Nov 2024)
+- Env vars needed: `OCTOPUS_API_KEY`, `OCTOPUS_ACCOUNT_NUMBER`, `OCTOPUS_MPAN`, `OCTOPUS_E_SERIAL`, `OCTOPUS_MPRN`, `OCTOPUS_G_SERIAL`
+
+**`~/github/OctopusEnergyMonitor/`** (legacy, parquet files):
+- `e_consumption.parquet` — 64,129 rows, half-hourly electricity, Apr 2020 → Dec 2023
+- `g_consumption.parquet` — 61,868 rows, half-hourly gas, Apr 2020 → Dec 2023
+- `electricity_consumption.parquet` — 25,000 rows, half-hourly, Jun 2021 → Nov 2022
+- `gas_consumption.parquet` — 25,000 rows, half-hourly gas, Jun 2021 → Nov 2022
+- `agile_tariff_rates.parquet` — 100 rows of Agile rates (Nov 2022, small sample)
+- Jupyter notebooks (`octopus.ipynb`, `arrow-octopus.ipynb`)
+
+### Data coverage timeline
+
+```
+2020-04 ──── gas+elec half-hourly (parquet) ──── 2023-12
+                                         2024-10 ── HP monitoring (emoncms) ── present
+                              2025-02 ── daily elec (CSV) ── 2026-01
+```
+
 ### Implementation notes
 
-- Octopus API: `https://api.octopus.energy/v1/` — well-documented REST API
-- Need: account number, API key, MPAN/MPRN, meter serial
-- Data is half-hourly, so joins with minute-resolution HP data need careful alignment
+- Octopus API: `https://api.octopus.energy/v1/` — REST, half-hourly consumption
+- Half-hourly data joins with minute-resolution HP data need alignment (aggregate HP to 30-min bins)
 - Key analysis: "what did each kWh of heat actually cost?" broken down by tariff period, operating state (heating vs DHW), and time of day
-- Could identify optimal DHW scheduling (shift to cheapest slots)
+- Total house electricity − HP electricity = rest-of-house baseload
+- Could identify optimal DHW scheduling (shift to cheapest tariff slots)
+- Gas-era half-hourly data is much more granular than the monthly totals in `reference.rs` — could replace them for better gas-era comparison
+- The `heat_context.toml` already defines the gas→HP cutover dates
 
 ## Degree Day Analysis
 

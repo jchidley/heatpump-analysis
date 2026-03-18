@@ -88,7 +88,10 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 
 See [docs/roadmap.md](docs/roadmap.md) for full details:
 - **eBUS** — adapter is physically connected but not configured. Would give real-time OAT, compressor speed, defrost status, cylinder temp
-- **Octopus Energy** — API integration for electricity cost analysis, cost-weighted COP
+- **Octopus Energy** — two existing repos with data:
+    - `~/github/octopus/` — REST script + daily CSV (Feb 2025–Jan 2026) + SPA dashboard
+    - `~/github/OctopusEnergyMonitor/` — half-hourly parquet files (Apr 2020–Dec 2023, elec+gas)
+    - Env vars: OCTOPUS_API_KEY, OCTOPUS_ACCOUNT_NUMBER, OCTOPUS_MPAN, OCTOPUS_E_SERIAL, etc.
 - **Solar PV + battery** — system installed, details above. Self-consumption analysis, DHW scheduling to solar peak
 - Other data in `C:\Users\jackc\OneDrive\Documents\House\`: degree day CSVs (EGWU), utility bills, Octopus Agile rates, weekly consumption
 
