@@ -35,6 +35,7 @@ Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time.
 | `daily` | Daily energy totals and COP from cumulative meters |
 | `gaps` | Report data gaps and their fill status |
 | `fill-gaps` | Fill gaps with modelled data (energy-scaled to match meters) |
+| `export` | Export enriched data to CSV (`-o file.csv` or stdout) |
 | `data` | Show raw enriched data table |
 | `all` | Run summary + cop-by-temp + hourly + daily |
 
@@ -43,8 +44,23 @@ Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--days N` | 7 | How many days of history to analyse |
+| `--from YYYY-MM-DD` | | Start date (overrides `--days`) |
+| `--to YYYY-MM-DD` | now | End date |
 | `--db PATH` | `heatpump.db` | SQLite database path |
 | `--include-simulated` | off | Include gap-filled data in analysis |
+
+### Examples
+
+```bash
+# Last winter
+cargo run -- --from 2024-12-01 --to 2025-02-28 summary
+
+# Export January data to CSV for spreadsheet analysis
+cargo run -- --from 2025-01-01 --to 2025-01-31 export -o january.csv
+
+# All data with gap-filled samples
+cargo run -- --days 500 --include-simulated all
+```
 
 ## How It Works
 

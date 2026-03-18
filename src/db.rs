@@ -99,6 +99,9 @@ fn update_sync_state(conn: &Connection, feed_id: &str, last_ts: i64) -> Result<(
     Ok(())
 }
 
+/// Default sync start: 2024-10-22 00:00 UTC (when this installation began logging).
+const DEFAULT_SYNC_START_MS: i64 = 1_729_555_200_000;
+
 /// Download all data for all feeds, storing in SQLite.
 ///
 /// - Fetches in 7-day chunks at 1-minute (60s) resolution.
@@ -112,12 +115,10 @@ pub fn sync_all(conn: &Connection, client: &Client) -> Result<SyncStats> {
         let last_ts = last_synced(conn, feed_id)?;
 
         // Start from last synced point (or from the beginning if never synced).
-        // The data starts around 2024-10-22.
         let start_ms = if last_ts > 0 {
             last_ts
         } else {
-            // Oct 22 2024 00:00 UTC
-            1_729_555_200_000
+            DEFAULT_SYNC_START_MS
         };
 
         if start_ms >= now_ms {

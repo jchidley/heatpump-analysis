@@ -65,10 +65,14 @@ Short gaps (< 10 min) use linear interpolation instead.
 
 clap derive macros with `#[command]` and `#[arg]` attributes. Subcommands in a `Commands` enum. Helper methods on `Cli` struct (`require_client()`, `require_db()`) for validation.
 
+## CSV Export
+
+The `export` command uses `polars::prelude::CsvWriter` with the `SerWriter` trait. Outputs all enriched columns (including `cop`, `delta_t`, `state`) to a file or stdout.
+
 ## Notable Absences
 
 - **No tests** — no `#[cfg(test)]`, no test helpers, no fixtures
 - **No logging** — all diagnostic output uses `eprintln!`
 - **No configuration file** — all config via CLI args and env vars
 - **No async** — blocking reqwest, single-threaded SQLite
-- **No custom serialisation** — Polars `println!` for output, no JSON/CSV export
+- **No JSON export** — CSV only via `export` command

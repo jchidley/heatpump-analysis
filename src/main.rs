@@ -6,7 +6,8 @@ mod gaps;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use chrono::Utc;
+use polars::prelude::SerWriter;
+use chrono::{NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -24,6 +25,14 @@ struct Cli {
     /// How many days of history to analyse (default 7)
     #[arg(long, default_value = "7")]
     days: u32,
+
+    /// Start date for analysis (YYYY-MM-DD). Overrides --days.
+    #[arg(long)]
+    from: Option<String>,
+
+    /// End date for analysis (YYYY-MM-DD). Defaults to now.
+    #[arg(long)]
+    to: Option<String>,
 
     /// Include simulated (gap-filled) data in analysis
     #[arg(long)]
@@ -55,6 +64,12 @@ enum Commands {
     Gaps,
     /// Fill gaps with synthetic data (modelled from outside temp + real patterns)
     FillGaps,
+    /// Export data to CSV for the time period
+    Export {
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
     /// Run all analyses
     All,
 }
@@ -80,8 +95,7 @@ impl Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let end = Utc::now().timestamp();
-    let start = end - (cli.days as i64 * 86400);
+    let (start, end) = resolve_time_range(&cli)?;
 
     match cli.command {
         Commands::Feeds => {
@@ -236,6 +250,24 @@ fn main() -> Result<()> {
             );
         }
 
+        Commands::Export { ref output } => {
+            let df = load_dataframe(&cli, start, end)?;
+            let mut df = analysis::enrich(&df)?;
+            match output {
+                Some(path) => {
+                    let mut file = std::fs::File::create(&path)?;
+                    polars::prelude::CsvWriter::new(&mut file)
+                        .finish(&mut df)?;
+                    eprintln!("Wrote {} rows to {}", df.height(), path);
+                }
+                None => {
+                    let mut stdout = std::io::stdout();
+                    polars::prelude::CsvWriter::new(&mut stdout)
+                        .finish(&mut df)?;
+                }
+            }
+        }
+
         Commands::Data => {
             let df = load_dataframe(&cli, start, end)?;
             let df = analysis::enrich(&df)?;
@@ -299,6 +331,33 @@ fn load_dataframe(
         eprintln!("Loading from {}", cli.db.display());
         db::load_dataframe(&conn, start, end)
     }
+}
+
+/// Parse --from/--to dates or fall back to --days.
+fn resolve_time_range(cli: &Cli) -> Result<(i64, i64)> {
+    let end = match &cli.to {
+        Some(s) => {
+            let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| anyhow::anyhow!("Invalid --to date '{}': {}", s, e))?;
+            d.and_hms_opt(23, 59, 59)
+                .unwrap()
+                .and_utc()
+                .timestamp()
+        }
+        None => Utc::now().timestamp(),
+    };
+    let start = match &cli.from {
+        Some(s) => {
+            let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| anyhow::anyhow!("Invalid --from date '{}': {}", s, e))?;
+            d.and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp()
+        }
+        None => end - (cli.days as i64 * 86400),
+    };
+    Ok((start, end))
 }
 
 fn format_duration(minutes: f64) -> String {

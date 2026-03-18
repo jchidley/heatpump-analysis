@@ -12,8 +12,10 @@ CLI tool that syncs heat pump data from emoncms.org to local SQLite, then analys
 | Run | `cargo run -- <subcommand>` |
 | Sync data | `cargo run -- --apikey KEY sync` |
 | Analyse (7 days) | `cargo run -- --days 7 summary` |
+| Analyse (date range) | `cargo run -- --from 2025-01-01 --to 2025-01-31 summary` |
 | Analyse (all data) | `cargo run -- --days 500 all` |
 | With simulated | `cargo run -- --days 500 --include-simulated summary` |
+| Export CSV | `cargo run -- --days 30 export -o output.csv` |
 | Gap report | `cargo run -- gaps` |
 | Fill gaps | `cargo run -- fill-gaps` |
 
@@ -46,6 +48,10 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 - No tests — validate changes against real data output
 - Simulated data in separate table (`simulated_samples`) — never mixed unless `--include-simulated`
 - DB schema is `CREATE TABLE IF NOT EXISTS` — no migrations
+- Sync start date hardcoded as `DEFAULT_SYNC_START_MS` in `db.rs` (2024-10-22)
+- Polars pinned to 0.46 (0.53 available) — untested on newer versions
+- Outside temp feed (Met Office) is lower resolution (~hourly) than HP feeds (~10s)
+- Thresholds are 5kW-specific — 7kW model would need different values (its heating rate = 20 L/min overlaps 5kW DHW rate)
 
 ## Boundaries
 

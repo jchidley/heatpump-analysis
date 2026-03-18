@@ -86,6 +86,34 @@
 
 ---
 
+### Polars Pinned to 0.46
+
+**Status:** active
+
+**What:** `Cargo.toml` pins `polars = "0.46"` despite 0.53 being available.
+
+**Why:** The project was built iteratively with an LLM agent. The Polars API changes significantly between minor versions (renamed methods, changed trait bounds, different feature flags). Upgrading requires testing all DataFrame operations. [INFERRED]
+
+**Where:** `Cargo.toml`.
+
+**Consequences:** Missing newer Polars features and performance improvements. The `mul` workaround in `analysis.rs` (using `* lit(2)` instead of `.mul(lit(2))`) was needed due to trait bound issues in 0.46 — this may be fixed in newer versions.
+
+---
+
+### 5kW-Specific Thresholds
+
+**Status:** active
+
+**What:** All operating state thresholds assume a 5kW Arotherm (fixed pump at 14.3 L/min). The 7kW model runs at 20.0 L/min for heating — which overlaps with the 5kW's DHW flow rate range.
+
+**Why:** Single-installation tool, no need for multi-model support.
+
+**Where:** `analysis.rs` constants, `gaps.rs` hardcoded `flow_rate >= 16.0`.
+
+**Consequences:** Cannot be used with a different Arotherm size without changing thresholds. A 7kW adaptation would need an entirely different classification approach since the flow rate bimodal gap doesn't exist in the same way.
+
+---
+
 ## Open Questions
 
 - The `gaps.rs` module accesses SQLite tables directly rather than going through `db.rs` functions. It's unclear whether this is intentional (performance, avoiding circular dependencies) or just organic growth. If adding new tables or queries, it's ambiguous which pattern to follow. [UNCERTAIN]

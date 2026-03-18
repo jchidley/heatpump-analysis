@@ -2,10 +2,10 @@
 name = "heatpump-analysis"
 version = "0.1.0"
 edition = "2021"
-description = "Fetch and analyse heat pump data from emoncms.org using Polars"
+description = "Analyse Vaillant Arotherm heat pump data from emoncms.org — state classification, COP analysis, gap-filling"
 
 [dependencies]
-polars = { version = "0.46", features = ["lazy", "pivot", "dtype-datetime", "fmt", "round_series", "temporal"] }
+polars = { version = "0.46", features = ["lazy", "pivot", "dtype-datetime", "fmt", "round_series", "temporal", "csv"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

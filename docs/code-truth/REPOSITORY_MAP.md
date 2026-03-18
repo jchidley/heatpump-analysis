@@ -26,7 +26,7 @@ heatpump.db               # SQLite database (gitignored). Created by 'sync' comm
 
 | To change... | Look at... |
 |-------------|-----------|
-| CLI commands or flags | `src/main.rs` — `Commands` enum and `Cli` struct |
+| CLI commands or flags | `src/main.rs` — `Commands` enum and `Cli` struct. Date range parsing in `resolve_time_range()` |
 | Operating state thresholds (DHW/defrost) | `src/analysis.rs` — constants at top of file |
 | Which feeds are synced | `src/db.rs` — `FEED_IDS` constant |
 | How data is loaded into Polars | `src/db.rs` — `load_dataframe_inner()` |

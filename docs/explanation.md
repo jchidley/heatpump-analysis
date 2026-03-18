@@ -2,14 +2,21 @@
 
 This document explains how the tool classifies heat pump operating states and why the approach was chosen.
 
-## The Vaillant Arotherm 5kW
+## The Vaillant Arotherm Plus
 
-The Arotherm Plus 5kW has a **fixed internal pump speed** of ~860 L/h (14.3 L/min). Unlike some heat pumps that modulate flow rate, the Arotherm keeps it constant. The only thing that changes the measured flow rate is the **diverter valve** switching between two circuits:
+The Arotherm Plus has a **fixed internal pump speed** per unit size. Unlike some heat pumps that modulate flow rate, the Arotherm keeps it constant. The only thing that changes the measured flow rate is the **diverter valve** switching between the heating circuit and the DHW cylinder coil (which has lower flow resistance).
 
-- **Heating circuit** (radiators/underfloor): flow rate ~14.3 L/min
-- **DHW cylinder coil**: lower flow resistance → flow rate jumps to ~20.7 L/min
+### Flow rates by model
 
-This produces a clear bimodal distribution in the flow rate data, with a near-empty gap between 14.5 and 16.0 L/min.
+| Model | Heating Flow Rate | Source |
+|-------|------------------|--------|
+| 3.5 / 5 kW | ~860 L/h = **14.3 L/min** | [Energy Stats UK](https://energy-stats.uk/mass-flow-rate/) |
+| 7 kW | ~1,200 L/h = **20.0 L/min** | |
+| 10 / 12 kW | ~2,000 L/h = **33.3 L/min** | |
+
+This tool is configured for the **5kW model**. The thresholds in the code would need adjusting for other sizes — in particular, the 7kW model's heating flow rate (20.0 L/min) overlaps with the 5kW's DHW flow rate, so a different classification strategy would be needed.
+
+For the 5kW, the diverter valve switching produces a clear bimodal distribution: heating at 14.3–14.4 L/min, DHW peaking at ~20.7 L/min, with a near-empty gap between 14.5 and 16.0 L/min.
 
 ## Four Operating States
 
@@ -63,6 +70,24 @@ Gap filling works by:
 3. **Scaling** the power estimates so their time-integral matches the cumulative meter readings
 
 This means the total energy during gaps is exact (from the meters), but the minute-by-minute profile is approximate. All synthetic data is stored in a separate database table and only included in analysis when explicitly requested with `--include-simulated`.
+
+## Monitoring Setup
+
+The emoncms feeds come from an **emonHP** monitoring bundle:
+
+| Feed | Source | Notes |
+|------|--------|-------|
+| `electric_Power/Energy` | SDM120 MID meter (Modbus) | Inline on AC circuit |
+| `heatmeter_*` | M-Bus heat meter | Flow, return, flow rate, cumulative kWh |
+| `outside_temperature` | Met Office feed | Updates less frequently than HP feeds (~hourly vs ~10s) |
+| `temperature/humidity` | emonth2 (node 23) | Wireless room sensor. Battery at 2.4V (feed 503103) |
+| `DHW_flag` | emonTxV5 | Only has data until Dec 2024 — not used for classification |
+
+The outside temperature feed's lower resolution matters for gap-filling: the temperature-bin model can only be as granular as the Met Office updates.
+
+### DHW scheduling
+
+From the data, DHW runs are consistently triggered at **~05:05** and **~13:05** daily, with occasional evening runs. This is controlled by the SensoCOMFORT schedule, not by the monitoring system.
 
 ## Validation
 
