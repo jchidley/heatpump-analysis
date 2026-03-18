@@ -53,6 +53,14 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 - Outside temp feed (Met Office) is lower resolution (~hourly) than HP feeds (~10s)
 - Thresholds are 5kW-specific — 7kW model would need different values (its heating rate = 20 L/min overlaps 5kW DHW rate)
 
+## Planned Enhancements
+
+See [docs/roadmap.md](docs/roadmap.md) for full details:
+- **eBUS** — adapter is physically connected but not configured. Would give real-time OAT, compressor speed, defrost status, cylinder temp
+- **Octopus Energy** — API integration for electricity cost analysis, cost-weighted COP
+- **Degree days** — HDD analysis for weather-normalised efficiency tracking
+- **Excel import** — planning/design data (heat loss, emitter sizing, cylinder spec)
+
 ## Boundaries
 
 - Don't change operating state thresholds without re-validating against the full dataset

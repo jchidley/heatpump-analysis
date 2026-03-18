@@ -70,6 +70,7 @@ cargo run -- --days 500 --include-simulated all
 
 - **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
 - **[docs/explanation.md](docs/explanation.md)** — How the operating model works and why
+- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements (eBUS, Octopus, degree days, Excel import)
 
 ## About This Code
 
