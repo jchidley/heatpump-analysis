@@ -1,112 +1,138 @@
-<!-- code-truth: 33e263a -->
+<!-- code-truth: 9d6d3e3 -->
 
 # Patterns
 
+## Configuration: TOML + Global Singleton
+
+All domain constants live in `config.toml` and are accessed via `config::config()`:
+
+```rust
+// In any module:
+use crate::config::config;
+
+let thresholds = &config().thresholds;
+let feed_id = config().emoncms.feed_id("elec_power");
+```
+
+The singleton is initialised once in `main()` via `config::load(&path)`. Attempting to access it before loading panics with a clear message. This pattern replaced hardcoded constants scattered across 6 source files.
+
+Feed IDs are always looked up by name, never by literal string:
+```rust
+// Good:
+config().emoncms.feed_id("outside_temp")
+
+// Bad (was everywhere before config.toml migration):
+"503093"
+```
+
+## Analysis Functions: DataFrame In, Stdout Out
+
+Every analysis function follows the same shape:
+
+```rust
+pub fn some_analysis(df: &DataFrame) -> Result<()> {
+    let result = df.clone().lazy()
+        .filter(...)
+        .group_by(...)
+        .agg(...)
+        .collect()?;
+    println!("{}", result);
+    Ok(())
+}
+```
+
+Key conventions:
+- Input is always a reference to an enriched DataFrame (already has `cop`, `delta_t`, `state` columns)
+- Functions never touch the database or API — they receive all data via parameters
+- Output goes directly to stdout via `println!`
+- No return values for display data — functions return `Result<()>`
+- Some functions take additional data (e.g. `degree_days` takes daily temp and energy vectors alongside the DataFrame)
+
+## Polars Usage Style
+
+- Always **lazy** evaluation: `.clone().lazy()...collect()?`
+- Column names are string literals: `col("elec_w")`, `col("state")`
+- Aggregations use inline expressions: `col("cop").mean().alias("avg_cop")`
+- Temperature banding via floor division: `(col("outside_t") / lit(2.0)).floor().cast(DataType::Int32) * lit(2)`
+- DataFrames are printed directly with `println!("{}", df)` — Polars' Display impl handles formatting
+
 ## Error Handling
 
-All functions return `anyhow::Result<T>`. Errors are propagated with `?` and contextualised with `.context()` at key boundaries (e.g. DataFrame construction, database opening, JSON parsing). No custom error types.
+- All public functions return `anyhow::Result<()>` or `anyhow::Result<T>`
+- `.context("message")` on fallible operations for chain
+- `anyhow::ensure!()` for preconditions (e.g. API key present, database exists)
+- SQLite queries use `.unwrap_or(default)` for optional values (e.g. missing temp readings default to 0.0 or 10.0)
+- The state machine never fails — it uses `.unwrap_or(0.0)` for missing values
 
-CLI validation uses helper methods on `Cli` (`require_client()`, `require_db()`) that return clear error messages before any work begins. For optional resources, `.ok()` converts `Result` to `Option` (e.g. `cli.require_db().ok()` in octopus commands where DB is needed but not fatal if missing).
+## SQL: Parameterised vs Format Strings
 
-## Module Organisation
+Two patterns coexist:
 
-- One file per concern, flat structure (no subdirectories under `src/`)
-- Module doc comments at the top of `analysis.rs` and `gaps.rs` serve as the operating model reference
-- Constants at the top of each module, public functions below, private helpers at the bottom
-- `reference.rs` uses nested `pub mod` for namespacing (`house::`, `arotherm::`, `radiators::`, `gas_era::`)
-- `octopus.rs` groups JSON schema structs (private), public loading functions, then analysis helpers
+**Parameterised** (for user/runtime values):
+```rust
+conn.prepare("SELECT ... WHERE feed_id = ?1 AND timestamp >= ?2")?
+stmt.query_map(params![feed_id, start_ms], ...)?
+```
 
-## Naming
+**Format strings** (for config-derived feed IDs in multi-join queries):
+```rust
+conn.prepare(&format!(
+    "SELECT ... FROM samples s_elec
+     JOIN samples s_heat ON s_heat.feed_id = '{}' ...",
+    feeds.feed_id("heat_power"),
+))?
+```
 
-- **Functions:** `snake_case`, verb-first for actions (`fill_gap`, `sync_all`), noun for queries (`summary`, `cop_by_outside_temp`, `degree_days`). Print functions prefixed `print_` (`print_summary`, `print_gas_vs_hp`, `print_baseload`).
-- **Constants:** `SCREAMING_SNAKE_CASE` (`ELEC_RUNNING_W`, `DHW_ENTER_FLOW_RATE`, `HDD_BASE_TEMP`, `ERA5_BIAS_CORRECTION_C`)
-- **Types:** `PascalCase` (`HpState`, `TempBinModel`, `BinStats`, `SyncStats`)
-- **CLI subcommands:** kebab-case in user-facing names (`cop-by-temp`, `fill-gaps`, `gas-vs-hp`), PascalCase in the `Commands` enum
-- **JSON structs:** `camelCase` serde rename for Octopus JSON (`ConsumptionRecord`, `WeatherRecord`)
+The format string pattern is used in `gaps.rs` where queries join 6+ feeds — building the join clauses dynamically from config. Feed IDs come from the trusted config file, not user input, so SQL injection is not a concern.
 
-## DataFrame Construction
+**Exception**: `fill_gap_interpolate()` in gaps.rs still uses hardcoded feed ID strings (`"503094"`, `"503096"`, etc.). This is a known inconsistency from the config migration.
 
-DataFrames are built manually from `Vec<Option<f64>>` columns in `db::load_dataframe_inner()`:
+## CLI Structure
 
-1. Collect timestamps from SQL into `Vec<i64>`
-2. Cast to `Datetime(Milliseconds, UTC)` series
-3. For each feed, allocate `vec![None; n]` and fill from SQL results
-4. Optionally merge simulated data (fills where real is `None`)
-5. Optionally add `is_simulated` boolean column
-6. Assemble with `DataFrame::new(columns)`
+Commands use clap's derive macro with subcommands:
 
-In `octopus.rs`, DataFrames are built from JSON via serde deserialization into `Vec<T>`, then assembled column-by-column with `Series::new()`.
+```rust
+#[derive(Subcommand)]
+enum Commands {
+    Summary,
+    CopByTemp,
+    // ...
+}
+```
 
-## Polars Usage
+Global flags (`--days`, `--all-data`, `--from`/`--to`, `--db`, `--include-simulated`) are on the parent `Cli` struct. Time range resolution happens once in `resolve_time_range()`, returning `(start_unix_s, end_unix_s)`.
 
-- **Lazy API** for all aggregations: `.lazy()` → `.filter()` → `.group_by()` → `.agg()` → `.collect()`
-- **Eager API** only for the state machine (needs row-by-row iteration over raw arrays)
-- **String operations** via `.str().head()` for date-to-month extraction (requires `strings` feature)
-- **strftime** for timestamp → date string: `.dt().strftime("%Y-%m-%d")`
-- Results printed directly with `println!("{}", df)` — no custom formatting for core analysis
-- `octopus.rs` prints with manual `println!` formatting (not Polars table display)
-- The `enrich()` function mixes eager (state machine) and lazy (COP/DT columns), then `hstack`s the state column
-- CSV export via `CsvWriter` with `SerWriter` trait
+The `require_client()` and `require_db()` helpers enforce preconditions — `require_client()` fails if no API key, `require_db()` fails if the database file doesn't exist.
 
-## State Machine
+## Data Loading: Real vs Simulated
 
-The `classify_states()` function in `analysis.rs` is a sequential state machine:
+Two separate loading paths keep simulated data strictly opt-in:
 
-- Takes 4 parallel arrays (elec, heat, flow_rate, delta_t)
-- Maintains `current: HpState` and `pre_defrost: HpState`
-- Returns `Vec<&'static str>` (for direct use as a Polars string column)
-- Hysteresis: different thresholds for entering vs exiting DHW (16.0 vs 15.0 l/m)
+```rust
+pub fn load_dataframe(conn, start, end) -> DataFrame        // real only
+pub fn load_dataframe_with_simulated(conn, start, end) -> DataFrame  // real + gap-filled
+```
 
-## Octopus Data Integration Pattern
+When simulated data is included, an `is_simulated` boolean column is added. Simulated samples never overwrite real data — they only fill timestamps where no real sample exists.
 
-`octopus.rs` follows a pattern of loading external data, optionally enriching with DB data, then printing:
+## Sync: Chunked with Polite Throttling
 
-1. `load_consumption(None)` — reads JSON, returns DataFrame
-2. `load_weather(None, conn.as_ref())` — reads JSON + optionally emoncms DB, returns hybrid DataFrame
-3. For `gas-vs-hp`: `main.rs` loads the full HP DataFrame via `db::load_dataframe()`, enriches it with `analysis::enrich()`, then passes it to `octopus::daily_hp_by_state()` which aggregates by state
-4. `print_gas_vs_hp()` receives Octopus consumption, hybrid weather, and HP state data — joins and compares
+Data download uses 7-day chunks with a 100ms sleep between API calls:
+```rust
+let chunk_ms: i64 = 7 * 86_400 * 1000;
+std::thread::sleep(std::time::Duration::from_millis(100));
+```
 
-The `daily_hp_by_state()` function converts 1-minute power samples to energy using a fixed `SAMPLE_HOURS = 1.0/60.0` constant, then filters by state column (`"heating"`, `"dhw"`) using `when/then/otherwise`.
+Values are `INSERT OR IGNORE` — re-syncing the same period is idempotent and only adds new timestamps.
 
-## Reference Data
+## Module Naming
 
-`reference.rs` encodes static planning data as compile-time constants:
-- House thermal properties (HTC, U-values, design conditions)
-- Radiator inventory with output correction factor calculator
-- Arotherm manufacturer COP curve
-- Gas-era monthly consumption for before/after comparison
+Modules match their concern directly:
+- `config` — configuration
+- `emoncms` — emoncms API
+- `db` — database
+- `analysis` — analysis
+- `gaps` — gap handling
+- `octopus` — Octopus Energy
 
-Some reference values are duplicated in `octopus.rs` as local constants: `GAS_DHW_KWH_PER_DAY` (11.82), `BOILER_EFFICIENCY` (0.9). These should track the values in `reference.rs`.
-
-## SQLite Access
-
-- Schema created via `CREATE TABLE IF NOT EXISTS` — no migration tool
-- WAL journal mode set on open
-- Batch inserts use `unchecked_transaction()` + `prepare_cached()`
-- `INSERT OR IGNORE` for idempotent data loading
-- `WITHOUT ROWID` tables for high-volume `samples` and `simulated_samples`
-- `gaps.rs` accesses SQLite directly (not through `db.rs` functions)
-- `octopus.rs` reads from SQLite via an optional `&Connection` parameter for emoncms temps
-- Sync start date: `DEFAULT_SYNC_START_MS` constant in `db.rs` (2024-10-22)
-
-## Gap-Filling
-
-The `TempBinModel` builds per-°C averages from a 6-way self-join on `samples`. Applied per-minute during gap-fill, then power estimates linearly scaled so integrated energy matches cumulative meter readings (hard constraint). Short gaps (< 10 min) use linear interpolation.
-
-## Date Range Handling
-
-`resolve_time_range()` in `main.rs` supports four modes (in priority order):
-1. `--all-data` — from hardcoded epoch (2024-10-22) to now
-2. `--from` / `--to` — explicit date range (YYYY-MM-DD)
-3. `--days N` — last N days from now (default 7)
-
-Octopus commands (`octopus`, `gas-vs-hp`, `baseload`) load their own date ranges from the JSON data. The `--all-data` flag is relevant for `gas-vs-hp` and `baseload` which also load HP data from the DB using the resolved range.
-
-## Notable Absences
-
-- **No tests** — no `#[cfg(test)]`, no test helpers, no fixtures
-- **No logging** — all diagnostic output uses `eprintln!`
-- **No configuration file** — all config via CLI args, env vars, and compile-time constants
-- **No async** — blocking reqwest, single-threaded SQLite
-- **No JSON export** — CSV only via `export` command
-- **No tariff rate storage** — Octopus tariff rates are not stored; cost analysis done via ad-hoc Python scripts
+No prefix/suffix conventions (`_service`, `_module`, etc.), no trait abstractions, no generic types. Each module is a flat collection of functions and structs.

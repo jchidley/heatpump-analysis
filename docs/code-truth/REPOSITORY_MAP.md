@@ -1,111 +1,101 @@
-<!-- code-truth: 33e263a -->
+<!-- code-truth: 9d6d3e3 -->
 
 # Repository Map
 
-```
-Cargo.toml                # Dependencies: polars, rusqlite, reqwest, clap, chrono, anyhow, serde, serde_json
-Cargo.lock                # Pinned dependency versions
-.gitignore                # Excludes target/ and heatpump.db
-LICENSE-MIT               # Dual license
-LICENSE-APACHE            # Dual license
-CLAUDE.md                 # LLM agent context — commands, architecture, measured performance, gotchas
-README.md                 # Human-facing: quick start, command reference, links to docs
+## Top-Level Files
 
-src/
-  main.rs                 # CLI definition (clap) + command routing. 20 subcommands.
-                          # Date range parsing (--from/--to/--all-data/--days).
-  emoncms.rs              # Emoncms REST API client: list_feeds, feed_data. ~81 lines.
-  db.rs                   # SQLite schema, sync, DataFrame loading, daily energy/temp queries.
-                          # Single source of truth for feed IDs (FEED_IDS constant).
-  analysis.rs             # State machine (classify_states) + all Polars analysis queries.
-                          # Module doc comment is the Arotherm operating model reference.
-                          # Degree days, COP vs spec, design comparison, indoor temp, DHW.
-  octopus.rs              # Octopus Energy integration:
-                          #   load_consumption()    — JSON → Polars DataFrame (half-hourly)
-                          #   load_weather()         — hybrid temp: emoncms + bias-corrected ERA5
-                          #   daily_totals()         — aggregate to daily elec/gas kWh
-                          #   daily_hp_by_state()    — aggregate enriched HP data by state
-                          #   print_summary()        — monthly breakdown with HDD
-                          #   print_gas_vs_hp()      — gas era vs HP era, heating/DHW separated
-                          #   print_baseload()       — whole-house minus HP electricity
-  reference.rs            # Static data from planning workbook:
-                          #   house:: — HTC, U-values, design heat loss, construction notes
-                          #   arotherm:: — manufacturer COP curve at -3°C
-                          #   radiators:: — 15 Stelrad units with T50 ratings, output calculator
-                          #   gas_era:: — monthly Octopus data, boiler efficiency, hot water
-  gaps.rs                 # Gap detection, TempBinModel, gap-filling with energy scaling.
-                          # Accesses SQLite directly (not through db.rs).
+| File | Concern |
+|------|---------|
+| `config.toml` | All domain constants, thresholds, feed IDs, house data, radiator inventory, Arotherm specs, gas-era history |
+| `Cargo.toml` | Dependencies and build configuration |
+| `AGENTS.md` | LLM agent context (canonical project documentation) |
+| `CLAUDE.md` | Points to AGENTS.md |
+| `README.md` | Human-facing quick start, command reference, project philosophy |
+| `heatpump.db` | SQLite database (gitignored, created by `sync`) |
 
-docs/
-  explanation.md          # Diátaxis explanation: operating model, Arotherm flow rates,
-                          #   hysteresis, defrost, gap-filling, monitoring setup, DHW scheduling
-  roadmap.md              # Status: eBUS (planned), Octopus (done), solar PV+battery (planned)
-  octopus-data-inventory.md # Full audit of Octopus data sources, coverage, tariff history
-  code-truth/             # This directory — derived-from-code documentation
+## Source Modules
 
-heatpump.db               # SQLite database (gitignored). Created by 'sync' command.
-                          # Tables: feeds, samples, sync_state, simulated_samples, gap_log
-```
+### `src/main.rs` — CLI entry point
 
-## External Data (not in this repo)
+- Loads `config.toml` at startup (tries next to executable, falls back to cwd)
+- Defines `Cli` struct with clap derive macros (20 subcommands)
+- Routes each subcommand to the appropriate module functions
+- Owns time-range resolution logic (`--days`, `--from`/`--to`, `--all-data`)
+- Helper: `load_dataframe()` abstracts real vs simulated data loading
 
-```
-~/github/octopus/dist/data/
-  consumption.json        # Half-hourly elec + gas, Apr 2020 → present. Gas in kWh (converted).
-  weather.json            # Daily mean temp + HDD (ERA5-Land). Some recent nulls.
-```
+### `src/config.rs` — Configuration layer
 
-Produced by the `~/github/octopus/` project's preload pipeline. Refresh with `cd ~/github/octopus && bash scripts/run_dashboard.sh`.
+- Deserializes `config.toml` into typed structs (`Config`, `Emoncms`, `Thresholds`, `House`, `Arotherm`, `Radiator`, `GasEra`)
+- Global singleton via `once_cell::OnceCell` — loaded once by `main()`, accessed via `config::config()` from any module
+- Contains computed helpers that moved from the deleted `reference.rs`:
+  - `Arotherm::expected_cop_at_flow_temp()` — linear interpolation on manufacturer COP curve
+  - `radiator_correction_factor()` — ΔT50 correction using `(actual_dt / 50)^1.3`
+  - `total_radiator_output_at_flow_temp()` — sum across all radiators with correction
+- `Emoncms::feed_id(&self, name)` — look up feed ID by name (replaces hardcoded string literals)
 
-## What Lives Where
+### `src/emoncms.rs` — API client
 
-| To change... | Look at... |
-|-------------|-----------|
-| CLI commands or flags | `main.rs` — `Commands` enum, `Cli` struct, `resolve_time_range()` |
-| Operating state thresholds (DHW/defrost) | `analysis.rs` — constants at top of file |
-| Which feeds are synced | `db.rs` — `FEED_IDS` constant |
-| How data is loaded into Polars | `db.rs` — `load_dataframe_inner()` |
-| Analysis queries (summary, COP, hourly, etc.) | `analysis.rs` — individual `pub fn` functions |
-| Degree day calculations | `analysis.rs` — `degree_days()`, `HDD_BASE_TEMP` |
-| Design comparison / COP vs spec | `analysis.rs` — `cop_vs_spec()`, `design_comparison()` |
-| House thermal properties | `reference.rs` — `house::` module |
-| Radiator data | `reference.rs` — `radiators::` module |
-| Manufacturer spec curve | `reference.rs` — `arotherm::` module |
-| Gas-era consumption data | `reference.rs` — `gas_era::` module |
-| Gap-filling model or strategy | `gaps.rs` — `TempBinModel` and `fill_gap()` |
-| Emoncms API interaction | `emoncms.rs` — `Client` struct |
-| Database schema | `db.rs` — `open()` function |
-| Simulated data schema | `gaps.rs` — `ensure_schema()` |
-| Octopus data loading / path | `octopus.rs` — `default_data_dir()`, `load_consumption()`, `load_weather()` |
-| Temperature bias correction | `octopus.rs` — `ERA5_BIAS_CORRECTION_C` constant |
-| Gas-vs-HP comparison logic | `octopus.rs` — `print_gas_vs_hp()`, `daily_hp_by_state()` |
-| Gas-era DHW estimate | `octopus.rs` — `GAS_DHW_KWH_PER_DAY` constant (from `reference.rs`) |
-| Boiler efficiency assumption | `octopus.rs` — `BOILER_EFFICIENCY` constant |
-| Baseload analysis | `octopus.rs` — `print_baseload()` |
-| Octopus data refresh | `~/github/octopus/scripts/run_dashboard.sh` (external) |
+- `Client` struct wrapping `reqwest::blocking::Client` with an API key
+- Two methods: `list_feeds()` and `feed_data(id, start, end, interval)`
+- Base URL read from `config().emoncms.base_url`
+- Returns `Vec<DataPoint>` where `DataPoint = (i64, Option<f64>)` (timestamp_ms, value)
 
-## Feed ID Mapping
+### `src/db.rs` — SQLite storage and DataFrame loading
 
-Feed IDs are hardcoded in two files:
+- **Schema**: three tables (`feeds`, `samples`, `sync_state`) + optional `simulated_samples` and `gap_log` (created by gaps.rs)
+- **Sync**: `sync_all()` iterates config feed definitions, fetches in 7-day chunks at 60s interval, stores non-null values. Tracks last sync timestamp per feed.
+- **DataFrame loading**: `load_dataframe()` / `load_dataframe_with_simulated()` builds a Polars DataFrame by:
+  1. Collecting all distinct timestamps in range
+  2. Creating a column per feed (using the `column` field from config feed definitions)
+  3. Optionally merging simulated samples (gap-filled data never overwrites real data)
+- **Daily helpers**: `load_daily_energy()` (cumulative meter deltas), `load_daily_outside_temp()` (daily avg/min/max)
 
-| Location | Feed IDs | Purpose |
-|----------|----------|---------|
-| `db.rs: FEED_IDS` | All 12 feeds | Which feeds to download during sync |
-| `db.rs: load_dataframe_inner()` | 7 analysis feeds | Which feeds to load into DataFrames |
-| `db.rs: load_daily_outside_temp()` | Feed `503093` | Daily outside temp for degree days |
-| `db.rs: load_daily_energy()` | Feeds `503095`, `503097` | Cumulative energy for daily/degree day |
-| `gaps.rs: TempBinModel::from_db()` | 6 feeds (hardcoded in SQL) | Model building |
-| `gaps.rs: find_gaps()` | Feed `503094` | Gap detection reference feed |
-| `gaps.rs: fill_gap()` | 5 feeds + `503093` | Gap-filling writes + outside temp lookups |
-| `octopus.rs: load_weather()` | Feed `503093` (via db.rs) | Emoncms outside temp for hybrid weather |
+### `src/analysis.rs` — State machine and Polars analysis
 
-## Tests
+This is the largest module (~950 lines). Two concerns:
 
-**None.** There are no `#[cfg(test)]` modules, no test files, no integration tests.
+**1. State classification** (`classify_states()`, `enrich()`)
+- Hysteresis state machine processing rows in time order
+- Uses `config().thresholds` for all transition boundaries
+- `enrich()` adds `cop`, `delta_t`, and `state` columns to any DataFrame
 
-## Generated / External
+**2. Analysis functions** (each prints directly to stdout)
+- `summary()` — overall stats + breakdown by state
+- `cop_by_outside_temp()` — COP in 2°C outside temp bands, heating only
+- `hourly_profile()` — averages by hour of day, heating only
+- `daily_energy()` — daily totals from cumulative meter deltas
+- `degree_days()` — HDD analysis with weekly/monthly/period summaries + gas-era comparison
+- `indoor_temp()` — Leather room sensor stats, hourly profile, comfort vs outside temp
+- `dhw_analysis()` — DHW energy vs gas-era design estimate
+- `cop_vs_spec()` — actual COP vs Arotherm manufacturer curve at each spec flow temp
+- `design_comparison()` — house properties, radiator output table, gas vs HP comparison
 
-- `heatpump.db` — generated by `sync`, not checked in
-- `~/github/octopus/dist/data/*.json` — generated by octopus project's preload pipeline, not in this repo
-- `LICENSE-*` and base `README.md` template — generated by GitHub skill
-- `Cargo.lock` — auto-generated, checked in
+### `src/gaps.rs` — Gap detection and synthetic data
+
+- `find_gaps()` — finds monitoring gaps > N minutes using windowed SQL on the elec_power feed
+- `TempBinModel` — builds per-°C-bin averages for heating and DHW from real data, plus DHW fraction by hour
+- `fill_gap()` — generates per-minute synthetic samples, scales power so integrated energy matches cumulative meters
+- `fill_gap_interpolate()` — linear interpolation for gaps < 10 minutes
+- `print_gap_report()` — lists all gaps with duration, energy, and fill status
+- **Note**: `fill_gap_interpolate()` still uses hardcoded feed IDs (`"503094"`, etc.) — this is a known inconsistency
+
+### `src/octopus.rs` — Octopus Energy integration
+
+- Loads pre-computed JSON files from `~/github/octopus/dist/data/` (consumption.json, weather.json)
+- **Temperature hierarchy**: emoncms (Met Office, Oct 2024+) preferred over ERA5-Land (bias-corrected +1.0°C)
+- `load_consumption()` → half-hourly Polars DataFrame
+- `load_weather()` → daily DataFrame with date, tmean, hdd, source
+- `daily_totals()` — aggregates to daily elec/gas kWh
+- `daily_hp_by_state()` — converts enriched DataFrame to daily heating/DHW energy split
+- `print_gas_vs_hp()` — dual-era comparison with state machine split
+- `print_baseload()` — whole-house minus HP electricity
+- **Note**: `ERA5_BIAS_CORRECTION_C` (1.0°C) remains a Rust constant — it's derived from data overlap analysis, not a domain parameter
+
+## Documentation
+
+| Path | Content |
+|------|---------|
+| `docs/explanation.md` | How the operating model works (Diátaxis explanation) |
+| `docs/roadmap.md` | Planned enhancements (eBUS, Octopus expansion, solar PV) |
+| `docs/octopus-data-inventory.md` | Audit of Octopus data across repos |
+| `docs/code-truth/` | This documentation set |

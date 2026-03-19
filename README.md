@@ -22,6 +22,8 @@ cargo run -- --all-data all
 
 Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time. The API key is only needed for `feeds` and `sync` commands — all analysis runs from the local database.
 
+All operating thresholds, feed IDs, house data, and reference data are in `config.toml` — edit that file to change parameters without recompiling.
+
 ## Commands
 
 | Command | Description |
@@ -42,6 +44,9 @@ Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time.
 | `fill-gaps` | Fill gaps with modelled data (energy-scaled to match meters) |
 | `export` | Export enriched data to CSV (`-o file.csv` or stdout) |
 | `data` | Show raw enriched data table |
+| `octopus` | Octopus Energy data summary (consumption + weather + monthly breakdown) |
+| `gas-vs-hp` | Compare gas-era vs heat-pump-era energy use (normalised by degree days) |
+| `baseload` | Whole-house electricity minus heat pump electricity |
 | `all` | Run summary + cop-by-temp + hourly + daily + degree-days |
 
 ### Options

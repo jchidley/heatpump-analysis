@@ -1,66 +1,81 @@
 # Repository Overview
 
 ```yaml
-commit: 33e263ae250612cb0b4287815a462b4e93e88161
-short_commit: 33e263a
+commit: 9d6d3e3bc9283a48be4d51fe7c6e0d4f37ca41ca
+short_commit: 9d6d3e3
 branch: main
-commit_date: 2026-03-18T20:25:01+00:00
-working_tree: modified_with_untracked
+commit_date: 2026-03-19 08:36:14 +0000
+working_tree: clean
 ```
 
-## Purpose
+## What This System Does
 
-A CLI tool that downloads heat pump monitoring data from [emoncms.org](https://emoncms.org) into a local SQLite database, then analyses it using Polars DataFrames. Also integrates Octopus Energy consumption and tariff data for gas-vs-HP cost comparison. Built for a **Vaillant Arotherm Plus 5kW** installation with an emonHP monitoring bundle at 6 Rhodes Avenue, London N22 7UT.
+A Rust CLI tool that syncs heat pump monitoring data from emoncms.org to a local SQLite database, then analyses it with Polars. It classifies the heat pump's operating state (heating, DHW, defrost, idle) using a hysteresis state machine driven by flow rate, and produces COP breakdowns, energy analysis, degree-day normalisation, and comparisons against both the manufacturer spec and pre-heat-pump gas consumption.
 
-The tool classifies each data sample into operating states (heating, DHW, defrost, idle) using a hysteresis state machine driven by flow rate and delta-T, then provides COP breakdowns, temperature correlations, degree day analysis, gas-era comparisons (with DHW separated from space heating), baseload analysis, and comparisons against manufacturer spec and pre-HP gas consumption.
+The system is built for a specific installation: a **Vaillant Arotherm Plus 5kW** air-source heat pump at a residential property in London, monitored via an emonHP bundle feeding emoncms.org.
 
 ## Key Technologies
 
-| Technology | Version | Role |
-|-----------|---------|------|
-| Rust | 2021 edition | Language |
-| Polars | 0.46 | DataFrame analysis (lazy eval, group_by, string ops, CSV export) |
-| rusqlite | 0.33 (bundled) | Local data storage — 7.4M samples at 1-min resolution |
-| reqwest | 0.12 (blocking) | HTTP client for emoncms API |
-| clap | 4 | CLI argument parsing with subcommands |
-| chrono | 0.4 | Timestamp and date range handling |
-| serde / serde_json | 1 | JSON deserialization (Octopus consumption + weather data) |
-| anyhow | 1 | Error handling |
+| Technology | Role |
+|-----------|------|
+| Rust (edition 2021) | All application code |
+| Polars 0.46 | DataFrame analysis (lazy evaluation, groupby, aggregation) |
+| SQLite (rusqlite, bundled) | Local data storage, WAL mode |
+| TOML (serde + toml crate) | External configuration for all domain constants |
+| clap 4 | CLI argument parsing (derive mode) |
+| reqwest (blocking) | HTTP client for emoncms REST API |
+| chrono | Date/time handling |
+| anyhow | Error propagation |
+| once_cell | Global config singleton |
 
-Polars features: `lazy`, `pivot`, `dtype-datetime`, `fmt`, `round_series`, `temporal`, `csv`, `strings`.
+## Data Flow
 
-## High-Level Organisation
+```
+emoncms.org REST API
+        │
+        ▼
+   emoncms.rs (HTTP client)
+        │
+        ▼
+   db.rs (SQLite: feeds, samples, sync_state tables)
+        │
+        ├──▶ analysis.rs (Polars DataFrames → state machine → reports)
+        │
+        ├──▶ gaps.rs (gap detection + synthetic data → simulated_samples table)
+        │
+        └──▶ octopus.rs (joins with ~/github/octopus/ JSON files)
+        
+   config.toml ──▶ config.rs (global singleton, read by all modules)
+```
 
-| Module | Lines | Responsibility |
-|--------|-------|---------------|
-| `analysis.rs` | 964 | Operating state classification (state machine), all Polars queries, degree days, COP vs spec, design comparison, indoor temp, DHW analysis |
-| `octopus.rs` | 649 | Octopus Energy integration: loads consumption + weather JSON, hybrid temperature (emoncms + bias-corrected ERA5), gas-vs-HP comparison with heating/DHW split, baseload analysis |
-| `gaps.rs` | 614 | Gap detection, temperature-bin modelling, synthetic data generation |
-| `db.rs` | 514 | SQLite storage, incremental sync, loading DataFrames and daily data |
-| `main.rs` | 490 | CLI definition (clap), command routing, date range parsing |
-| `reference.rs` | 204 | Static reference data from planning workbook (house, radiators, Arotherm spec, gas-era data) |
-| `emoncms.rs` | 81 | API client — list feeds, fetch time-series data. Used only by `sync` |
+## How It's Organised
 
-## Two Data Sources
+- **`config.toml`** — Single source of truth for all domain data: emoncms feed IDs, operating thresholds, house thermal properties, radiator inventory, Arotherm manufacturer specs, and gas-era consumption history. Loaded once at startup.
+- **`src/`** — Six Rust modules plus `main.rs`. No nested directories, no procedural macros, no build scripts. Each module has one clear responsibility.
+- **`docs/`** — Explanation and code-truth documentation. No generated API docs.
+- **`heatpump.db`** — SQLite database (gitignored). Created by `sync`, read by all analysis commands.
 
-The tool combines data from two independent systems:
+## 20 Subcommands
 
-1. **emoncms** (HP monitoring) — 10-second/1-minute resolution power, temperature, flow data from Oct 2024. Stored in local SQLite (`heatpump.db`).
+The CLI has 20 subcommands grouped by concern:
 
-2. **Octopus Energy** (billing data) — half-hourly electricity and gas consumption from Apr 2020. Pre-processed JSON at `~/github/octopus/dist/data/`. Gas era ends Jul 2024, electricity continues to present.
+- **Data acquisition**: `feeds`, `sync`
+- **Database inspection**: `db-status`, `data`, `export`
+- **Core analysis**: `summary`, `cop-by-temp`, `hourly`, `daily`
+- **Weather-normalised**: `degree-days`, `indoor-temp`
+- **Comparison**: `dhw`, `cop-vs-spec`, `design-comparison`
+- **Gap management**: `gaps`, `fill-gaps`
+- **Octopus Energy**: `octopus`, `gas-vs-hp`, `baseload`
+- **Batch**: `all` (runs a subset of analyses)
 
-The overlap period (Oct 2024 → present) enables: whole-house vs HP-only electricity comparison (baseload), and cross-validation of energy totals.
+## What Makes This System Unusual
 
-## Entrypoint
+1. **External TOML configuration** — All numeric constants (thresholds, feed IDs, house data, radiator specs, gas history) live in `config.toml`, not in Rust source. Changing a threshold or adding a feed doesn't require recompilation.
 
-`src/main.rs` — defines CLI with `clap::Parser`, routes 20 subcommands.
+2. **State machine from flow rate** — Operating state is classified from flow rate (a mechanical signal from the diverter valve) rather than temperature or flags. This gives a clean bimodal signal that works across the entire dataset.
 
-## Suggested Reading Order
+3. **Gap filling constrained by meters** — Synthetic data during monitoring gaps is scaled so its integrated energy exactly matches the cumulative energy meters, which run continuously even when the logger drops out.
 
-1. `src/main.rs` — understand the CLI commands and data flow
-2. `src/analysis.rs` — the operating model documentation (module doc comment) and state machine
-3. `src/octopus.rs` — Octopus Energy integration, temperature hierarchy, gas-vs-HP comparison
-4. `src/reference.rs` — house design data, radiator inventory, manufacturer spec
-5. `src/db.rs` — how data is stored and loaded
-6. `src/emoncms.rs` — the API client (simple, 81 lines)
-7. `src/gaps.rs` — gap-filling strategy (largest file, most complex)
+4. **Dual-era comparison** — Gas-era consumption data (Octopus billing) and heat-pump-era data are normalised by heating degree days with temperature from two sources (ERA5-Land for pre-HP, Met Office for HP era) with a measured bias correction.
+
+5. **No tests** — Validated against real data output rather than unit tests. Changes must be verified against the full dataset.

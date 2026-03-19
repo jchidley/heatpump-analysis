@@ -1,153 +1,143 @@
-<!-- code-truth: 33e263a -->
+<!-- code-truth: 9d6d3e3 -->
 
 # Architecture
 
-## Module Dependencies
+## Module Dependency Graph
 
 ```
 main.rs
-  ├── emoncms.rs        (feeds, sync only)
-  ├── db.rs             (all commands except feeds)
-  │     └── emoncms.rs    (sync_feeds, sync_all call Client)
-  ├── analysis.rs       (data, summary, cop-by-temp, hourly, degree-days,
-  │     └── reference.rs    indoor-temp, dhw, cop-vs-spec, design-comparison)
-  ├── octopus.rs        (octopus, gas-vs-hp, baseload)
-  │     ├── reads JSON from ~/github/octopus/dist/data/
-  │     ├── reads emoncms outside_temp via rusqlite (optional db conn)
-  │     └── receives enriched DataFrames from analysis::enrich() (via main.rs)
-  └── gaps.rs           (gaps, fill-gaps)
-        └── db.rs tables directly via rusqlite (no db.rs API)
+  ├── config.rs      (load at startup, global singleton)
+  ├── emoncms.rs     (reads config for base_url)
+  ├── db.rs          (reads config for feed IDs, sync start)
+  │     └── emoncms.rs (sync only)
+  ├── analysis.rs    (reads config for thresholds, house, gas_era, arotherm)
+  │     └── config.rs
+  ├── gaps.rs        (reads config for feed IDs, thresholds)
+  │     └── config.rs
+  └── octopus.rs     (reads config for thresholds, gas_era)
+        └── config.rs
 ```
 
-**Key boundary:** `analysis.rs` has no dependency on `emoncms.rs`, `db.rs`, or `octopus.rs`. It receives Polars DataFrames and pre-loaded data arrays, and outputs to stdout. Pure analysis layer.
+Key constraint: **analysis.rs has no dependency on db.rs or emoncms.rs**. It operates purely on Polars DataFrames passed in by main.rs. This separation means analysis functions can be called with any DataFrame that has the right columns.
 
-**`octopus.rs` bridges two data sources:** It loads Octopus JSON independently, but for `gas-vs-hp` it also receives an enriched DataFrame (with state machine classifications) from `analysis.rs` via `main.rs`. It reads emoncms outside temps directly from SQLite for hybrid temperature.
+## Data Flow Through the System
 
-**`reference.rs`** is a data-only module (constants and simple functions). Used by `analysis.rs` for design comparison, COP vs spec, and DHW comparison. Gas-era DHW estimate (11.82 kWh/day) is also used by `octopus.rs`.
-
-**`gaps.rs` bypasses `db.rs`:** The gap-filling module queries and writes to SQLite tables directly using raw SQL, rather than going through `db.rs` functions.
-
-## Data Flow
-
-### Sync (API → SQLite)
+### Sync path (online)
 
 ```
-emoncms.org API
-    ↓ (reqwest, 7-day chunks, 60s interval)
-emoncms::Client::feed_data()
-    ↓
-db::sync_all()
-    ↓ (INSERT OR IGNORE)
-SQLite: samples table (7.4M rows, 12 feeds)
+emoncms.org API → emoncms.rs::Client → db.rs::sync_all() → SQLite (samples table)
 ```
 
-### Core Analysis (SQLite → Polars → stdout)
+`sync_all()` iterates `config().emoncms.feeds`, fetches 7-day chunks at 60s resolution, and stores non-null values. Each feed tracks its last-synced timestamp independently.
+
+### Analysis path (offline)
 
 ```
-SQLite: samples (+ optional simulated_samples)
-    ↓
-db::load_dataframe_inner()   — builds DataFrame from SQL queries
-    ↓
-analysis::enrich()           — adds cop, delta_t, state columns
-    ↓                          (state machine runs over raw arrays)
-analysis::summary() etc.     — Polars lazy queries, prints results
-    ↓
-stdout
+SQLite → db.rs::load_dataframe() → Polars DataFrame
+                                          │
+                              analysis.rs::enrich()
+                                          │
+                              ┌────────────┼────────────┐
+                              ▼            ▼            ▼
+                          summary()    degree_days()  cop_vs_spec()
+                                       (+ daily temps  (+ config
+                                        + daily energy)  arotherm)
 ```
 
-### Octopus Comparison (JSON + SQLite → stdout)
+`enrich()` is the central transformation — it adds `cop`, `delta_t`, and `state` columns. All downstream analysis functions require an enriched DataFrame.
+
+### Gap-fill path (writes back to SQLite)
 
 ```
-~/github/octopus/dist/data/consumption.json     (half-hourly elec+gas, Apr 2020+)
-~/github/octopus/dist/data/weather.json          (daily ERA5 temps+HDD)
-    ↓
-octopus::load_consumption()   — JSON → Polars DataFrame
-octopus::load_weather()       — hybrid: emoncms feed 503093 for HP era,
-    ↓                           ERA5+1.0°C bias correction for gas era
-    ↓
-For gas-vs-hp:
-    SQLite → db::load_dataframe() → analysis::enrich()
-        ↓
-    octopus::daily_hp_by_state()  — 1-min power × state → daily kWh by state
-        ↓
-    octopus::print_gas_vs_hp()    — gas era: total gas − DHW estimate (11.82 kWh/day)
-                                    HP era: measured heating + DHW from state machine
-    ↓
-stdout
+db.rs::find_gaps() → gaps.rs::TempBinModel::from_db() → gaps.rs::fill_gap()
+                                                                │
+                                                     simulated_samples table
 ```
 
-### Degree Days / Design Comparison (SQLite → arrays → stdout)
+Gap filling bypasses `db.rs` — it writes directly to `simulated_samples` and `gap_log` tables via its own SQL. This is a deliberate design choice (gaps.rs manages its own schema) but means the two modules must agree on feed ID naming.
+
+### Octopus path (external JSON + SQLite)
 
 ```
-SQLite: samples
-    ↓
-db::load_daily_outside_temp()  — daily min/mean/max outside temp
-db::load_daily_energy()        — daily cumulative kWh (last value per day)
-    ↓
-analysis::degree_days()        — HDD, energy/HDD, monthly, gas-era comparison
-analysis::design_comparison()  — radiator output, HTC, gas vs HP savings
-    ↓
-stdout (+ reference::house, reference::gas_era, reference::radiators)
+~/github/octopus/dist/data/consumption.json → octopus.rs::load_consumption()
+~/github/octopus/dist/data/weather.json     → octopus.rs::load_weather()
+                                                  │
+                                          (optionally joins with
+                                           db.rs outside_temp for
+                                           emoncms temperatures)
 ```
 
-### Gap-Filling (SQLite → model → SQLite)
+The Octopus module is semi-independent — it reads its own JSON files and only optionally touches the SQLite database for temperature data.
+
+## Configuration Architecture
+
+`config.toml` is loaded once at startup by `main.rs` and stored in a `once_cell::OnceCell` static. All modules access it via `config::config()`, which returns `&'static Config`.
+
+The config has six sections:
+
+| Section | Consumers |
+|---------|-----------|
+| `emoncms` (feeds, base_url, sync start) | db.rs, emoncms.rs, gaps.rs |
+| `thresholds` (elec_running_w, dhw flow rates, defrost DT, HDD base) | analysis.rs, gaps.rs, octopus.rs |
+| `house` (HTC, floor area, design temps, construction) | analysis.rs |
+| `arotherm` (manufacturer spec curve) | analysis.rs |
+| `radiators` (15 radiators with room, dimensions, T50 watts) | analysis.rs |
+| `gas_era` (boiler efficiency, annual totals, monthly data) | analysis.rs, octopus.rs |
+
+Feed definitions include an optional `column` field that maps feed IDs to DataFrame column names. Feeds without a `column` (e.g. humidity, battery, dhw_flag) are synced to SQLite but not loaded into analysis DataFrames.
+
+## State Machine Design
+
+The operating state classifier in `analysis.rs::classify_states()` is a **deterministic hysteresis state machine** that processes rows strictly in time order.
 
 ```
-SQLite: samples table
-    ↓
-gaps::find_gaps()            — window function over elec_power feed
-    ↓
-gaps::TempBinModel::from_db() — 6-way JOIN, bins by outside temp
-    ↓
-gaps::fill_gap()             — per-minute estimates, energy-scaled
-    ↓
-SQLite: simulated_samples table + gap_log table
+          ┌───────────────────────────────────┐
+          │              IDLE                  │
+          │         elec ≤ 50W                 │
+          └──────┬────────────────┬────────────┘
+                 │ elec > 50W     │ elec > 50W
+                 │ h > 0, dt > 0  │ h ≤ 0 or dt < -0.5
+                 ▼                ▼
+          ┌──────────┐    ┌──────────┐
+          │ HEATING  │◄──►│ DEFROST  │
+          │ fr < 16  │    │ any fr   │
+          └────┬─────┘    └──────────┘
+               │ fr ≥ 16         ▲
+               ▼                 │
+          ┌──────────┐           │
+          │   DHW    │───────────┘
+          │ fr ≥ 15  │  h ≤ 0 or dt < -0.5
+          └──────────┘
 ```
 
-## Temperature Hierarchy
+The hysteresis zone (15.0–16.0 L/min) prevents rapid switching during the ~3-second diverter valve transition. The machine remembers the pre-defrost state to return correctly after defrost events that can happen at any flow rate.
 
-Two sources of outside temperature with different coverage and accuracy:
+## SQLite Schema
 
-| Source | Feed/File | Coverage | Resolution | Accuracy |
-|--------|-----------|----------|------------|----------|
-| emoncms 503093 | Met Office hourly | Oct 2024 → present | ~hourly | Best — local station |
-| ERA5-Land | weather.json | Apr 2020 → present | Daily mean | +1.0°C cold bias vs emoncms |
+Three core tables (created by `db.rs::open()`):
 
-`octopus.rs::load_weather()` builds a unified daily temperature series:
-- HP-era dates: uses emoncms (513 days)
-- Gas-era dates: uses ERA5 + 1.0°C correction (1,656 days)
-- Bias derived from 507-day overlap: mean +1.00°C, stdev 0.57°C
-- Without correction, ERA5 overstates HDD by ~14%
+```sql
+feeds (id TEXT PK, name, tag, unit)
+samples (feed_id TEXT, timestamp INTEGER, value REAL) WITHOUT ROWID  -- PK: (feed_id, timestamp)
+sync_state (feed_id TEXT PK, last_timestamp INTEGER)
+```
 
-## How Changes Propagate
+Two optional tables (created by `gaps.rs::ensure_schema()`):
 
-- **Adding a new feed to sync:** Add to `db::FEED_IDS`. If it should appear in analysis DataFrames, also add to the `feed_cols` array in `db::load_dataframe_inner()`.
+```sql
+simulated_samples (feed_id TEXT, timestamp INTEGER, value REAL, gap_start_ts INTEGER) WITHOUT ROWID
+gap_log (start_ts INTEGER PK, end_ts, duration_min, elec_kwh, heat_kwh, method, samples_generated)
+```
 
-- **Changing operating state thresholds:** Modify constants at top of `analysis.rs` (`DHW_ENTER_FLOW_RATE`, `DEFROST_DT_THRESHOLD`, etc.). Also update `gaps.rs` which has hardcoded `flow_rate >= 16.0` for DHW classification. Update the module doc comment in `analysis.rs`. This will change `daily_hp_by_state()` output in `octopus.rs`.
+WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE IF NOT EXISTS` — no migration system.
 
-- **Changing degree day base temperature:** Modify `HDD_BASE_TEMP` in `analysis.rs` AND `HDD_BASE_C` in `octopus.rs` — they must match. Note `reference::house::BASE_TEMP_GAS_ERA` (17°C) is a separate value.
+## Change Propagation
 
-- **Updating reference data (house, radiators, gas):** Edit `reference.rs`. These are compile-time constants. `octopus.rs` also has `GAS_DHW_KWH_PER_DAY` (11.82) and `BOILER_EFFICIENCY` (0.9) which should stay in sync with `reference.rs` values.
-
-- **Changing the database schema:** Modify `db::open()` for core tables, `gaps::ensure_schema()` for simulation tables. Existing databases get new tables via `CREATE TABLE IF NOT EXISTS` but won't migrate existing tables.
-
-- **Adding a new analysis command:** Add variant to `Commands` enum in `main.rs`, add a `pub fn` to `analysis.rs` or `octopus.rs`, route in `main()`.
-
-- **Updating Octopus data:** Run `cd ~/github/octopus && bash scripts/run_dashboard.sh`. No code changes needed — `octopus.rs` reads the JSON at runtime.
-
-- **Changing the ERA5 bias correction:** Modify `ERA5_BIAS_CORRECTION_C` in `octopus.rs`. Current value (+1.0°C) derived from 507-day overlap. Actual bias varies +0.6 to +1.8°C by month.
-
-- **Adding a new CLI flag:** Add to `Cli` struct in `main.rs`. If it affects date range, update `resolve_time_range()`. If it affects data loading, thread through `load_dataframe()`.
-
-## External Boundaries
-
-| System | Protocol | Where |
-|--------|----------|-------|
-| emoncms.org | HTTPS REST API, read-only via API key | `emoncms.rs` |
-| SQLite | File-based, WAL mode | `db.rs`, `gaps.rs`, `octopus.rs` (read-only) |
-| Octopus JSON files | Local filesystem (~/github/octopus/dist/data/) | `octopus.rs` |
-| stdout | Polars formatted tables, manual println | `analysis.rs`, `octopus.rs` |
-
-## Concurrency
-
-None. Everything is single-threaded, blocking. `reqwest` is used in blocking mode. SQLite is accessed single-connection.
+| If you change... | You must also... |
+|-----------------|------------------|
+| A feed ID in `config.toml` | Nothing — all modules resolve by name. But existing SQLite data uses old IDs. |
+| A threshold in `config.toml` | Re-run analysis. Existing simulated samples used old thresholds — consider `DELETE FROM simulated_samples` and re-running `fill-gaps`. |
+| A new feed in `config.toml` | Add `column` if it should appear in analysis DataFrames. Run `sync` to fetch data. |
+| DataFrame column names | Update `config.toml` feed `column` fields. Check analysis.rs and octopus.rs column references. |
+| Add a new analysis function | Add to `analysis.rs`, add `Commands` variant in `main.rs`, wire up in `match`. |
+| Arotherm model size | All thresholds are model-specific (especially flow rates). The 7kW heating rate overlaps the 5kW DHW rate. |
