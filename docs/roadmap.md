@@ -28,53 +28,51 @@ An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus pr
 
 ## Octopus Energy Integration
 
-**Status:** Account exists, API access available. Two existing repos with historical data.
+**Status:** ✅ Complete. Integrated into heatpump-analysis via `octopus.rs`.
 
-### What it would give us
+Full data audit: [octopus-data-inventory.md](octopus-data-inventory.md)
 
-| Data | Why it matters |
-|------|---------------|
-| **Half-hourly electricity consumption** | Independent cross-check against the SDM120 meter |
-| **Half-hourly electricity cost** | Cost per kWh of heat, cost-weighted COP |
-| **Tariff rates by time slot** | Agile/Cosy/Go rate structure for optimisation analysis |
-| **Gas consumption** (if any backup) | Total heating cost including any gas top-up |
+### What it gives us
 
-### Existing data
+| Analysis | Status |
+|----------|--------|
+| Gas vs HP comparison (heating-only, DHW separated) | ✅ `gas-vs-hp` subcommand |
+| Baseload (whole-house − HP) | ✅ `baseload` subcommand |
+| Monthly breakdown with HDD | ✅ `octopus` subcommand |
+| Cost per kWh of heat | ✅ Calculated (gas 6.29p, HP heating 3.60p) |
+| Annual saving | ✅ £565/yr (46%) at current tariffs |
+| Tariff history | ✅ Documented in CLAUDE.md |
 
-Two repos under `~/github/`:
-
-**`~/github/octopus/`** (active, REST-based):
-- `octopus_rest_usage.py` — fetches half-hourly electricity and gas via Octopus REST API
-- `electricity_365d.csv` — daily electricity, Feb 2025 → Jan 2026 (365 rows)
-- SPA dashboard in `dist/` with degree-day views
-- `data/heat_context.example.toml` — has cutover dates (gas→HP transition Oct–Nov 2024)
-- Env vars needed: `OCTOPUS_API_KEY`, `OCTOPUS_ACCOUNT_NUMBER`, `OCTOPUS_MPAN`, `OCTOPUS_E_SERIAL`, `OCTOPUS_MPRN`, `OCTOPUS_G_SERIAL`
-
-**`~/github/OctopusEnergyMonitor/`** (legacy, parquet files):
-- `e_consumption.parquet` — 64,129 rows, half-hourly electricity, Apr 2020 → Dec 2023
-- `g_consumption.parquet` — 61,868 rows, half-hourly gas, Apr 2020 → Dec 2023
-- `electricity_consumption.parquet` — 25,000 rows, half-hourly, Jun 2021 → Nov 2022
-- `gas_consumption.parquet` — 25,000 rows, half-hourly gas, Jun 2021 → Nov 2022
-- `agile_tariff_rates.parquet` — 100 rows of Agile rates (Nov 2022, small sample)
-- Jupyter notebooks (`octopus.ipynb`, `arrow-octopus.ipynb`)
-
-### Data coverage timeline
+### Data pipeline
 
 ```
-2020-04 ──── gas+elec half-hourly (parquet) ──── 2023-12
-                                         2024-10 ── HP monitoring (emoncms) ── present
-                              2025-02 ── daily elec (CSV) ── 2026-01
+~/github/octopus/ project:
+  Octopus REST API → usage CSVs → merge_consumption_csv.py → usage_merged.csv
+  Legacy parquet (OctopusEnergyMonitor) → legacy_usage.csv → merged in
+  npm run cli -- preload → dist/data/consumption.json + weather.json
+
+heatpump-analysis:
+  octopus.rs reads consumption.json + weather.json
+  + heatpump.db for HP state machine (heating/DHW/defrost classification)
+  + emoncms feed 503093 for accurate HP-era temperatures
 ```
 
-### Implementation notes
+### Refresh: `cd ~/github/octopus && bash scripts/run_dashboard.sh`
 
-- Octopus API: `https://api.octopus.energy/v1/` — REST, half-hourly consumption
-- Half-hourly data joins with minute-resolution HP data need alignment (aggregate HP to 30-min bins)
-- Key analysis: "what did each kWh of heat actually cost?" broken down by tariff period, operating state (heating vs DHW), and time of day
-- Total house electricity − HP electricity = rest-of-house baseload
-- Could identify optimal DHW scheduling (shift to cheapest tariff slots)
-- Gas-era half-hourly data is much more granular than the monthly totals in `reference.rs` — could replace them for better gas-era comparison
-- The `heat_context.toml` already defines the gas→HP cutover dates
+### Key findings
+
+- **Heating heat/HDD**: gas era 9.2, HP era 8.8 (4% drop = insulation improvement)
+- **Heating COP**: 4.74 (state machine, heating-only days with HDD > 0.5)
+- **DHW COP**: 3.46 (state machine)
+- **Cost/kWh heat**: gas 6.29p (5.66p ÷ 90%), HP 3.60p (17.07p ÷ COP 4.74)
+- **Break-even gas price**: 2.92p/kWh (below current and recent rates)
+- **Remaining data gap**: 102 days Dec 2023 → Mar 2024 (unfillable — not in REST API)
+
+### Temperature data quality
+
+ERA5-Land (used for gas era) reads ~1.0°C colder than the emoncms Met Office sensor.
+`octopus.rs` applies a +1.0°C bias correction to ERA5 for gas-era dates, and uses emoncms
+directly for HP-era dates. Without this correction, ERA5 overstates HDD by ~14%.
 
 ## Degree Day Analysis
 

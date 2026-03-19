@@ -1,4 +1,4 @@
-<!-- code-truth: db2c2ce -->
+<!-- code-truth: 33e263a -->
 
 # Decisions
 
@@ -26,7 +26,7 @@
 
 **Where:** `analysis.rs` — constants `DHW_ENTER_FLOW_RATE` (16.0), `DHW_EXIT_FLOW_RATE` (15.0), `DEFROST_DT_THRESHOLD` (-0.5), and `classify_states()` function.
 
-**Consequences:** The thresholds are specific to the 5kW Arotherm. A different model (7kW at 20.0 L/min, or 10kW at 33.3 L/min) would need different values. Defrost detection relies on negative heat output or negative delta-T.
+**Consequences:** The thresholds are specific to the 5kW Arotherm. A different model (7kW at 20.0 L/min, or 10kW at 33.3 L/min) would need different values. Defrost detection relies on negative heat output or negative delta-T. The state machine output is now used by `octopus.rs::daily_hp_by_state()` for heating/DHW separation in cost analysis.
 
 ---
 
@@ -80,9 +80,51 @@
 
 **Why:** These are static planning values that change rarely if ever. Encoding them in Rust gives compile-time type checking and makes the tool self-contained.
 
-**Where:** `reference.rs` — four nested modules (`house::`, `arotherm::`, `radiators::`, `gas_era::`).
+**Where:** `reference.rs` — four nested modules (`house::`, `arotherm::`, `radiators::`, `gas_era::`). Some values duplicated in `octopus.rs` (`GAS_DHW_KWH_PER_DAY`, `BOILER_EFFICIENCY`).
 
-**Consequences:** Changing any reference value requires recompilation. If the house undergoes solid wall insulation (planned), the HTC, U-values, and heat loss figures will need updating.
+**Consequences:** Changing any reference value requires recompilation. Duplicated values in `octopus.rs` must be kept in sync manually. If the house undergoes solid wall insulation (planned), the HTC, U-values, and heat loss figures will need updating.
+
+---
+
+### Hybrid Temperature for Octopus Analysis
+
+**Status:** active
+
+**What:** `octopus.rs::load_weather()` builds a unified daily temperature series using emoncms feed 503093 (Met Office hourly) for HP-era dates and ERA5-Land + 1.0°C bias correction for gas-era dates.
+
+**Why:** ERA5-Land reads ~1.0°C colder than the emoncms Met Office sensor on average (measured over 507-day overlap, mean bias +1.00°C, stdev 0.57°C). Without correction, ERA5 overstates HDD by ~14%, distorting gas-vs-HP comparisons. Emoncms data only starts Oct 2024, so ERA5 is the only source for the gas era (Apr 2020 – Oct 2024).
+
+**Where:** `octopus.rs` — `ERA5_BIAS_CORRECTION_C` constant (1.0), `load_weather()` function. Weather DataFrame includes a `source` column ("emoncms" or "ERA5+1.0") for transparency.
+
+**Consequences:** A single +1.0°C constant is an approximation — actual monthly bias ranges from +0.6°C (autumn) to +1.8°C (March). Monthly correction would be more accurate but the constant is adequate for seasonal/annual analysis. If eBUS OAT becomes available, it would be the most accurate source for both eras.
+
+---
+
+### Octopus Data as External JSON
+
+**Status:** active
+
+**What:** Octopus Energy consumption and weather data are loaded from pre-processed JSON files at `~/github/octopus/dist/data/`, produced by the separate `~/github/octopus/` project.
+
+**Why:** The Octopus project already had a pipeline for fetching, merging, and converting consumption data (including legacy parquet, REST API, gas m³→kWh conversion, and weather from Open-Meteo). Rather than duplicate that work, `octopus.rs` reads the output.
+
+**Where:** `octopus.rs` — `default_data_dir()` returns the hardcoded path. `load_consumption()` and `load_weather()` accept an optional `data_dir` override.
+
+**Consequences:** The path `~/github/octopus/dist/data/` is hardcoded. Data must be refreshed externally (`cd ~/github/octopus && bash scripts/run_dashboard.sh`). There's no automatic staleness detection. If the JSON schema changes in the octopus project, `octopus.rs` deserialization will break.
+
+---
+
+### Heating/DHW Separation in Gas-vs-HP Comparison
+
+**Status:** active
+
+**What:** `gas-vs-hp` separates heating from DHW for a fair comparison. HP era uses measured state machine data. Gas era subtracts an estimated 11.82 kWh/day DHW from total gas consumption.
+
+**Why:** Without separating DHW, the heat/HDD metric conflates space heating (weather-dependent) with hot water (roughly constant). The HP state machine gives precise measured DHW for the HP era. For the gas era, the 11.82 kWh/day estimate comes from the planning workbook regression.
+
+**Where:** `octopus.rs` — `daily_hp_by_state()` uses the state machine; `print_gas_vs_hp()` applies the DHW estimate for gas era. `GAS_DHW_KWH_PER_DAY` constant.
+
+**Consequences:** The gas-era DHW estimate is approximate. If actual DHW varied seasonally (more in winter due to colder inlet water), the heating-only gas/HDD would be slightly wrong. The HP-era DHW is measured, giving 11.0 kWh/day — close to the 11.82 estimate, validating the assumption.
 
 ---
 
@@ -94,7 +136,7 @@
 
 **Why:** The Polars API changes significantly between minor versions. The project was built iteratively and upgrading requires testing all DataFrame operations. [INFERRED]
 
-**Where:** `Cargo.toml`.
+**Where:** `Cargo.toml`. The `strings` feature was added for `octopus.rs` string operations.
 
 **Consequences:** Missing newer Polars features and performance improvements.
 
@@ -118,13 +160,13 @@
 
 **Status:** active
 
-**What:** HDD calculated at 15.5°C base (UK standard: 18.5°C design indoor − 3°C internal gains). A separate 17°C base from gas-era regression is used for gas comparison.
+**What:** HDD calculated at 15.5°C base (UK standard: 18.5°C design indoor − 3°C internal gains). A separate 17°C base from gas-era regression is used for gas comparison. Both `analysis.rs` and `octopus.rs` use 15.5°C.
 
 **Why:** 15.5°C is the conventional UK base. The gas-era analysis used 17°C because regression on actual gas consumption suggested higher base — possibly due to higher boiler-era heat losses.
 
-**Where:** `analysis.rs` — `HDD_BASE_TEMP` (15.5°C). `reference.rs` — `house::BASE_TEMP_GAS_ERA` (17°C).
+**Where:** `analysis.rs` — `HDD_BASE_TEMP` (15.5°C). `octopus.rs` — `HDD_BASE_C` (15.5°C). `reference.rs` — `house::BASE_TEMP_GAS_ERA` (17°C).
 
-**Consequences:** The estimated base temperature from HP data (~12°C) differs from both values, suggesting the house performs better than either standard assumes.
+**Consequences:** Two HDD base constants must be kept in sync (`analysis.rs` and `octopus.rs`). The estimated base temperature from HP data (~12°C) differs from both values, suggesting the house performs better than either standard assumes.
 
 ---
 
@@ -138,7 +180,7 @@
 
 **Where:** No `#[cfg(test)]` modules anywhere in `src/`.
 
-**Consequences:** Refactoring carries risk. The state machine logic and gap-filling model are the most complex and most likely to regress.
+**Consequences:** Refactoring carries risk. The state machine logic, gap-filling model, and now the octopus integration are the most complex and most likely to regress.
 
 ---
 
@@ -151,3 +193,9 @@
 - Feed IDs are duplicated across `db.rs` and `gaps.rs`. A change to feed IDs requires updating both files, and there's no compile-time check that they're consistent. [INFERRED]
 
 - The indoor temperature sensor (emonth2, feed 503101) is in the Leather room only. Analysis treats it as representative of whole-house temperature, which may over- or under-estimate comfort in other rooms. [INFERRED]
+
+- `octopus.rs` duplicates constants from `reference.rs` (`GAS_DHW_KWH_PER_DAY = 11.82`, `BOILER_EFFICIENCY = 0.9`). These could be imported from `reference.rs` instead. [INFERRED]
+
+- The ERA5 bias correction (+1.0°C) is a single constant but the actual bias varies +0.6 to +1.8°C by month. A monthly correction table would improve accuracy for individual months but adds complexity. [INFERRED]
+
+- Tariff rates for cost analysis are not stored anywhere in this project — they were calculated via ad-hoc Python scripts against the Octopus API. A proper `cost` subcommand would need a tariff schedule, either hardcoded or fetched. [INFERRED]

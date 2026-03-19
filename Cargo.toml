@@ -5,7 +5,7 @@ edition = "2021"
 description = "Analyse Vaillant Arotherm heat pump data from emoncms.org — state classification, COP analysis, gap-filling"
 
 [dependencies]
-polars = { version = "0.46", features = ["lazy", "pivot", "dtype-datetime", "fmt", "round_series", "temporal", "csv"] }
+polars = { version = "0.46", features = ["lazy", "pivot", "dtype-datetime", "fmt", "round_series", "temporal", "csv", "strings"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

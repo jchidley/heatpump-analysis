@@ -2,6 +2,7 @@ mod analysis;
 mod db;
 mod emoncms;
 mod gaps;
+mod octopus;
 mod reference;
 
 use std::path::PathBuf;
@@ -85,6 +86,12 @@ enum Commands {
         #[arg(short, long)]
         output: Option<String>,
     },
+    /// Octopus Energy data summary (consumption + weather + monthly breakdown)
+    Octopus,
+    /// Compare gas-era vs heat-pump-era energy use (normalised by degree days)
+    GasVsHp,
+    /// Baseload analysis: whole-house electricity minus heat pump electricity
+    Baseload,
     /// Run all analyses
     All,
 }
@@ -346,6 +353,60 @@ fn main() -> Result<()> {
             let conn = cli.require_db()?;
             let (elec, heat) = db::load_daily_energy(&conn, start, end)?;
             analysis::daily_energy(&elec, &heat)?;
+        }
+
+        Commands::Octopus => {
+            let consumption = octopus::load_consumption(None)?;
+            let conn = cli.require_db().ok();
+            let weather = octopus::load_weather(None, conn.as_ref())?;
+            octopus::print_summary(&consumption, &weather)?;
+        }
+
+        Commands::GasVsHp => {
+            let consumption = octopus::load_consumption(None)?;
+            let conn = cli.require_db().ok();
+            let weather = octopus::load_weather(None, conn.as_ref())?;
+
+            // Load enriched HP data with state machine classification
+            let hp_by_state = if let Some(ref c) = conn {
+                let df = if cli.include_simulated {
+                    db::load_dataframe_with_simulated(c, start, end)?
+                } else {
+                    db::load_dataframe(c, start, end)?
+                };
+                let enriched = analysis::enrich(&df)?;
+                Some(octopus::daily_hp_by_state(&enriched)?)
+            } else {
+                None
+            };
+
+            octopus::print_gas_vs_hp(
+                &consumption,
+                &weather,
+                hp_by_state.as_deref(),
+            )?;
+        }
+
+        Commands::Baseload => {
+            let consumption = octopus::load_consumption(None)?;
+            let conn = cli.require_db()?;
+            let (elec_cum, _heat_cum) = db::load_daily_energy(&conn, start, end)?;
+
+            // Convert cumulative to daily deltas
+            let mut hp_daily: Vec<(String, f64)> = Vec::new();
+            for i in 1..elec_cum.len() {
+                if let (Some(v1), Some(v0)) = (elec_cum[i].1, elec_cum[i - 1].1) {
+                    let delta = v1 - v0;
+                    if delta >= 0.0 && delta < 200.0 {
+                        let date = chrono::DateTime::from_timestamp_millis(elec_cum[i].0)
+                            .map(|dt| dt.format("%Y-%m-%d").to_string())
+                            .unwrap_or_default();
+                        hp_daily.push((date, delta));
+                    }
+                }
+            }
+
+            octopus::print_baseload(&consumption, &hp_daily)?;
         }
 
         Commands::All => {
