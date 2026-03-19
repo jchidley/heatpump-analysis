@@ -1,9 +1,9 @@
 mod analysis;
+mod config;
 mod db;
 mod emoncms;
 mod gaps;
 mod octopus;
-mod reference;
 
 use std::path::PathBuf;
 
@@ -115,6 +115,14 @@ impl Cli {
 }
 
 fn main() -> Result<()> {
+    // Load config.toml from next to the executable, or fall back to cwd
+    let config_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("config.toml")))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| std::path::PathBuf::from("config.toml"));
+    config::load(&config_path)?;
+
     let cli = Cli::parse();
 
     let (start, end) = resolve_time_range(&cli)?;

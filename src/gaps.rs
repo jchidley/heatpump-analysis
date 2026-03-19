@@ -26,6 +26,8 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+use crate::config::config;
+
 /// Gap in a feed's data.
 #[derive(Debug)]
 pub struct Gap {
@@ -66,15 +68,20 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
 
 /// Find all gaps in the heat pump data feeds (> min_gap_minutes).
 pub fn find_gaps(conn: &Connection, min_gap_minutes: f64) -> Result<Vec<Gap>> {
+    let feeds = &config().emoncms;
+    let elec_power_id = feeds.feed_id("elec_power");
+    let elec_energy_id = feeds.feed_id("elec_energy");
+    let heat_energy_id = feeds.feed_id("heat_energy");
     let min_gap_ms = (min_gap_minutes * 60_000.0) as i64;
 
-    // Find gaps in elec_power feed (503094) as the primary indicator
-    let mut stmt = conn.prepare(
+    // Find gaps in elec_power feed as the primary indicator
+    let mut stmt = conn.prepare(&format!(
         "SELECT timestamp, value,
                 LEAD(timestamp) OVER (ORDER BY timestamp) AS next_ts,
                 LEAD(value) OVER (ORDER BY timestamp) AS next_val
-         FROM samples WHERE feed_id = '503094'",
-    )?;
+         FROM samples WHERE feed_id = '{}'",
+        elec_power_id
+    ))?;
 
     let mut gaps = Vec::new();
 
@@ -94,10 +101,10 @@ pub fn find_gaps(conn: &Connection, min_gap_minutes: f64) -> Result<Vec<Gap>> {
             let gap_ms = nts - ts;
             if gap_ms > min_gap_ms {
                 // Look up cumulative energy at boundaries
-                let elec_before = get_nearest_value(conn, "503095", *ts)?;
-                let elec_after = get_nearest_value(conn, "503095", *nts)?;
-                let heat_before = get_nearest_value(conn, "503097", *ts)?;
-                let heat_after = get_nearest_value(conn, "503097", *nts)?;
+                let elec_before = get_nearest_value(conn, elec_energy_id, *ts)?;
+                let elec_after = get_nearest_value(conn, elec_energy_id, *nts)?;
+                let heat_before = get_nearest_value(conn, heat_energy_id, *ts)?;
+                let heat_after = get_nearest_value(conn, heat_energy_id, *nts)?;
 
                 gaps.push(Gap {
                     start_ts: *ts,
@@ -158,6 +165,10 @@ impl TempBinModel {
     pub fn from_db(conn: &Connection) -> Result<Self> {
         use std::collections::HashMap;
 
+        let cfg = config();
+        let feeds = &cfg.emoncms;
+        let thresholds = &cfg.thresholds;
+
         let mut heating_accum: HashMap<i32, (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>)> =
             HashMap::new();
         let mut dhw_accum: HashMap<i32, (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>)> =
@@ -168,7 +179,7 @@ impl TempBinModel {
 
         // Query all real data with all feeds joined
         // This is a big query but SQLite handles it fine
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT
                 s_elec.timestamp,
                 s_elec.value AS elec_w,
@@ -178,16 +189,24 @@ impl TempBinModel {
                 s_fr.value AS flow_rate,
                 s_ot.value AS outside_t
              FROM samples s_elec
-             JOIN samples s_heat ON s_heat.feed_id = '503096' AND s_heat.timestamp = s_elec.timestamp
-             JOIN samples s_ft   ON s_ft.feed_id   = '503098' AND s_ft.timestamp   = s_elec.timestamp
-             JOIN samples s_rt   ON s_rt.feed_id   = '503099' AND s_rt.timestamp   = s_elec.timestamp
-             JOIN samples s_fr   ON s_fr.feed_id   = '503100' AND s_fr.timestamp   = s_elec.timestamp
-             JOIN samples s_ot   ON s_ot.feed_id   = '503093' AND s_ot.timestamp   = s_elec.timestamp
-             WHERE s_elec.feed_id = '503094'
-               AND s_elec.value > 50
+             JOIN samples s_heat ON s_heat.feed_id = '{}' AND s_heat.timestamp = s_elec.timestamp
+             JOIN samples s_ft   ON s_ft.feed_id   = '{}' AND s_ft.timestamp   = s_elec.timestamp
+             JOIN samples s_rt   ON s_rt.feed_id   = '{}' AND s_rt.timestamp   = s_elec.timestamp
+             JOIN samples s_fr   ON s_fr.feed_id   = '{}' AND s_fr.timestamp   = s_elec.timestamp
+             JOIN samples s_ot   ON s_ot.feed_id   = '{}' AND s_ot.timestamp   = s_elec.timestamp
+             WHERE s_elec.feed_id = '{}'
+               AND s_elec.value > {}
                AND s_heat.value > 0
-               AND (s_ft.value - s_rt.value) > -0.5",
-        )?;
+               AND (s_ft.value - s_rt.value) > {}",
+            feeds.feed_id("heat_power"),
+            feeds.feed_id("flow_temp"),
+            feeds.feed_id("return_temp"),
+            feeds.feed_id("flow_rate"),
+            feeds.feed_id("outside_temp"),
+            feeds.feed_id("elec_power"),
+            thresholds.elec_running_w,
+            thresholds.defrost_dt_threshold,
+        ))?;
 
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -205,7 +224,7 @@ impl TempBinModel {
             let (ts, elec, heat, flow_t, return_t, flow_rate, outside_t) = row?;
             let temp_bin = outside_t.round() as i32;
             let hour = ((ts / 1000 % 86400) / 3600) as usize;
-            let is_dhw = flow_rate >= 16.0;
+            let is_dhw = flow_rate >= thresholds.dhw_enter_flow_rate;
 
             let accum = if is_dhw {
                 &mut dhw_accum
@@ -321,15 +340,19 @@ pub fn fill_gap(conn: &Connection, gap: &Gap, model: &TempBinModel) -> Result<u6
     }
 
     // Get outside temperature for each minute in the gap
+    let outside_temp_id = config().emoncms.feed_id("outside_temp");
     let mut minutes: Vec<(i64, f64)> = Vec::new(); // (timestamp_ms, outside_t)
     let mut ts = gap.start_ts + 60_000; // skip the boundary sample
 
     while ts < gap.end_ts {
         let outside_t: f64 = conn
             .query_row(
-                "SELECT value FROM samples
-                 WHERE feed_id = '503093' AND timestamp <= ?1
-                 ORDER BY timestamp DESC LIMIT 1",
+                &format!(
+                    "SELECT value FROM samples
+                     WHERE feed_id = '{}' AND timestamp <= ?1
+                     ORDER BY timestamp DESC LIMIT 1",
+                    outside_temp_id
+                ),
                 params![ts],
                 |row| row.get(0),
             )
@@ -431,13 +454,14 @@ pub fn fill_gap(conn: &Connection, gap: &Gap, model: &TempBinModel) -> Result<u6
              VALUES (?1, ?2, ?3, ?4)",
         )?;
 
+        let sim_feeds = &config().emoncms;
         for est in &estimates {
             let values: [(&str, f64); 5] = [
-                ("503094", est.elec * elec_scale),
-                ("503096", est.heat * heat_scale),
-                ("503098", est.flow_t),
-                ("503099", est.return_t),
-                ("503100", est.flow_rate),
+                (sim_feeds.feed_id("elec_power"), est.elec * elec_scale),
+                (sim_feeds.feed_id("heat_power"), est.heat * heat_scale),
+                (sim_feeds.feed_id("flow_temp"), est.flow_t),
+                (sim_feeds.feed_id("return_temp"), est.return_t),
+                (sim_feeds.feed_id("flow_rate"), est.flow_rate),
             ];
 
             for (fid, val) in &values {

@@ -8,23 +8,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
+use crate::config;
 use crate::emoncms::{Client, Feed};
-
-/// All feed IDs we want to download.
-const FEED_IDS: &[(&str, &str)] = &[
-    ("503093", "outside_temp"),
-    ("503094", "elec_power"),
-    ("503095", "elec_energy"),
-    ("503096", "heat_power"),
-    ("503097", "heat_energy"),
-    ("503098", "flow_temp"),
-    ("503099", "return_temp"),
-    ("503100", "flow_rate"),
-    ("503101", "indoor_temp"),
-    ("503102", "humidity"),
-    ("503103", "battery"),
-    ("512889", "dhw_flag"),
-];
 
 /// Open (or create) the SQLite database and ensure schema exists.
 pub fn open(path: &Path) -> Result<Connection> {
@@ -99,26 +84,27 @@ fn update_sync_state(conn: &Connection, feed_id: &str, last_ts: i64) -> Result<(
     Ok(())
 }
 
-/// Default sync start: 2024-10-22 00:00 UTC (when this installation began logging).
-const DEFAULT_SYNC_START_MS: i64 = 1_729_555_200_000;
-
 /// Download all data for all feeds, storing in SQLite.
 ///
 /// - Fetches in 7-day chunks at 1-minute (60s) resolution.
 /// - Only fetches data newer than the last sync point.
 /// - Skips null values to save space.
 pub fn sync_all(conn: &Connection, client: &Client) -> Result<SyncStats> {
+    let cfg = config::config();
+    let default_sync_start_ms = cfg.emoncms.default_sync_start_ms;
     let now_ms = chrono::Utc::now().timestamp() * 1000;
     let mut stats = SyncStats::default();
 
-    for (feed_id, feed_name) in FEED_IDS {
+    for feed_def in &cfg.emoncms.feeds {
+        let feed_id = feed_def.id.as_str();
+        let feed_name = feed_def.name.as_str();
         let last_ts = last_synced(conn, feed_id)?;
 
         // Start from last synced point (or from the beginning if never synced).
         let start_ms = if last_ts > 0 {
             last_ts
         } else {
-            DEFAULT_SYNC_START_MS
+            default_sync_start_ms
         };
 
         if start_ms >= now_ms {
@@ -232,16 +218,13 @@ fn load_dataframe_inner(
     let start_ms = start * 1000;
     let end_ms = end * 1000;
 
-    // The feeds we need for analysis, mapped to column names
-    let feed_cols: &[(&str, &str)] = &[
-        ("503094", "elec_w"),
-        ("503096", "heat_w"),
-        ("503098", "flow_t"),
-        ("503099", "return_t"),
-        ("503100", "flow_rate"),
-        ("503093", "outside_t"),
-        ("503101", "indoor_t"),
-    ];
+    // The feeds we need for analysis, mapped to column names (from config)
+    let feed_cols: Vec<(&str, &str)> = config::config()
+        .emoncms
+        .feeds
+        .iter()
+        .filter_map(|f| f.column.as_deref().map(|col| (f.id.as_str(), col)))
+        .collect();
 
     // Get all timestamps in range from real data
     let mut stmt = conn.prepare(
@@ -270,12 +253,15 @@ fn load_dataframe_inner(
 
         if has_sim {
             let mut stmt = conn.prepare(
-                "SELECT DISTINCT timestamp FROM simulated_samples
-                 WHERE timestamp >= ?1 AND timestamp < ?2
-                   AND timestamp NOT IN (
-                       SELECT timestamp FROM samples
-                       WHERE feed_id = '503094' AND timestamp >= ?1 AND timestamp < ?2
-                   )",
+                &format!(
+                    "SELECT DISTINCT timestamp FROM simulated_samples
+                     WHERE timestamp >= ?1 AND timestamp < ?2
+                       AND timestamp NOT IN (
+                           SELECT timestamp FROM samples
+                           WHERE feed_id = '{}' AND timestamp >= ?1 AND timestamp < ?2
+                       )",
+                    config::config().emoncms.feed_id("elec_power")
+                ),
             )?;
             let sim_ts: Vec<i64> = stmt
                 .query_map(params![start_ms, end_ms], |row| row.get(0))?
@@ -442,8 +428,9 @@ pub fn load_daily_energy(
         Ok(daily)
     };
 
-    let elec = load_daily("503095")?;
-    let heat = load_daily("503097")?;
+    let cfg = config::config();
+    let elec = load_daily(cfg.emoncms.feed_id("elec_energy"))?;
+    let heat = load_daily(cfg.emoncms.feed_id("heat_energy"))?;
 
     Ok((elec, heat))
 }
@@ -459,17 +446,19 @@ pub fn load_daily_outside_temp(
     let start_ms = start * 1000;
     let end_ms = end * 1000;
 
-    let mut stmt = conn.prepare(
+    let outside_temp_id = config::config().emoncms.feed_id("outside_temp");
+    let mut stmt = conn.prepare(&format!(
         "SELECT date(timestamp/1000, 'unixepoch') AS day,
                 AVG(value) AS avg_t,
                 MIN(value) AS min_t,
                 MAX(value) AS max_t
          FROM samples
-         WHERE feed_id = '503093'
+         WHERE feed_id = '{}'
            AND timestamp >= ?1 AND timestamp < ?2
          GROUP BY day
          ORDER BY day",
-    )?;
+        outside_temp_id,
+    ))?;
 
     let rows = stmt
         .query_map(params![start_ms, end_ms], |row| {

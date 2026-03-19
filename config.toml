@@ -1,0 +1,459 @@
+# Heat pump analysis configuration
+# Vaillant Arotherm Plus 5kW at 6 Rhodes Avenue, London N22 7UT
+
+[emoncms]
+base_url = "https://emoncms.org"
+
+# Default sync start: 2024-10-22 00:00 UTC (when this installation began logging)
+default_sync_start_ms = 1_729_555_200_000
+
+## Feed definitions.
+## `column` is the analysis DataFrame column name (omit for feeds not used in analysis).
+[[emoncms.feeds]]
+id = "503093"
+name = "outside_temp"
+column = "outside_t"
+
+[[emoncms.feeds]]
+id = "503094"
+name = "elec_power"
+column = "elec_w"
+
+[[emoncms.feeds]]
+id = "503095"
+name = "elec_energy"
+
+[[emoncms.feeds]]
+id = "503096"
+name = "heat_power"
+column = "heat_w"
+
+[[emoncms.feeds]]
+id = "503097"
+name = "heat_energy"
+
+[[emoncms.feeds]]
+id = "503098"
+name = "flow_temp"
+column = "flow_t"
+
+[[emoncms.feeds]]
+id = "503099"
+name = "return_temp"
+column = "return_t"
+
+[[emoncms.feeds]]
+id = "503100"
+name = "flow_rate"
+column = "flow_rate"
+
+[[emoncms.feeds]]
+id = "503101"
+name = "indoor_temp"
+column = "indoor_t"
+
+[[emoncms.feeds]]
+id = "503102"
+name = "humidity"
+
+[[emoncms.feeds]]
+id = "503103"
+name = "battery"
+
+[[emoncms.feeds]]
+id = "512889"
+name = "dhw_flag"
+
+# --- Arotherm 5kW operating thresholds ---
+[thresholds]
+# UK standard base temperature for heating degree days.
+# Tb = design indoor temp (18.5°C) − average internal gains (3°C) = 15.5°C.
+hdd_base_temp_c = 15.5
+
+# Minimum electrical power (W) to consider the compressor running.
+elec_running_w = 50.0
+
+# Flow rate (L/min) above which we enter DHW state (diverter valve to cylinder).
+# The gap between heating (14.3–14.5) and steady DHW (16.5+) is near-empty.
+dhw_enter_flow_rate = 16.0
+
+# Flow rate (L/min) below which we exit DHW state back to heating.
+# Provides hysteresis across the 14.5–16.0 transition zone (diverter moving).
+dhw_exit_flow_rate = 15.0
+
+# DT threshold (°C) below which we consider the system to be in defrost.
+# During defrost the return is warmer than the flow (heat extracted from water).
+defrost_dt_threshold = -0.5
+
+# --- House thermal properties ---
+[house]
+# Heat Transfer Coefficient (W/°C) — total heat loss per degree of
+# temperature difference between inside and outside.
+# From regression on gas consumption data (EGWU weather station).
+htc_w_per_c = 261.0
+
+# Floor area in m².
+floor_area_m2 = 180.0
+
+# Design indoor temperature (°C) — whole-house average.
+design_indoor_temp_c = 17.0
+
+# Design outdoor temperature (°C) — coldest expected.
+design_outdoor_temp_c = -2.0
+
+# Base temperature (°C) from gas consumption regression.
+# Below this outside temp, heating is needed.
+# Note: HP data suggests effective base ~12°C — difference may be due to
+# boiler inefficiency inflating apparent gas-era demand, or heat pump
+# providing less waste heat than gas boiler.
+base_temp_gas_era_c = 17.0
+
+# Design heat loss at design conditions (W).
+# = HTC × (design_indoor - design_outdoor) = 261 × 19 = 4,959W
+design_heat_loss_w = 4962.0
+
+# Ventilation heat loss at design conditions (W).
+ventilation_loss_w = 3762.0
+
+# Figure of merit: kWh per m² per year (pre-insulation).
+# AECB retrofit standard target is < 50.
+kwh_per_m2_year = 70.3
+
+# kWh per heating degree day (from gas data, base 17°C).
+kwh_per_hdd = 6.27
+
+# Construction notes.
+construction = """\
+Solid brick construction including internal walls. \
+Top floor (Aldora, Elvina, Shower) built to 2010 standards. \
+Solid wall insulation not yet installed (planned)."""
+
+# U-values for building elements (W/m²K).
+[[house.u_values]]
+element = "New insulated wall"
+value = 0.15
+
+[[house.u_values]]
+element = "Old solid wall"
+value = 2.11
+
+[[house.u_values]]
+element = "Roof"
+value = 0.066
+
+[[house.u_values]]
+element = "Ceiling (internal)"
+value = 0.44
+
+[[house.u_values]]
+element = "Floor"
+value = 0.70
+
+[[house.u_values]]
+element = "Window (single)"
+value = 4.80
+
+[[house.u_values]]
+element = "Window (double, old)"
+value = 1.90
+
+[[house.u_values]]
+element = "Window (double, new)"
+value = 1.20
+
+[[house.u_values]]
+element = "Window (triple)"
+value = 1.00
+
+# --- Arotherm Plus 5kW manufacturer performance data ---
+# Source: arotherm-plus-spec-sheet-1892564.pdf, reproduced in workbook.
+# Conditions: outside air temp -3°C.
+[arotherm]
+# (flow_temp_°C, heat_output_W, COP) at -3°C outside.
+[[arotherm.spec_at_minus3]]
+flow_temp_c = 55.0
+heat_output_w = 5800.0
+cop = 3.06
+
+[[arotherm.spec_at_minus3]]
+flow_temp_c = 50.0
+heat_output_w = 5900.0
+cop = 3.41
+
+[[arotherm.spec_at_minus3]]
+flow_temp_c = 45.0
+heat_output_w = 6100.0
+cop = 3.77
+
+[[arotherm.spec_at_minus3]]
+flow_temp_c = 40.0
+heat_output_w = 6400.0
+cop = 4.13
+
+[[arotherm.spec_at_minus3]]
+flow_temp_c = 35.0
+heat_output_w = 6800.0
+cop = 4.48
+
+# --- Radiator inventory — all 15 radiators in the house ---
+[[radiators]]
+room = "Aldora"
+number = 1
+width_mm = 500
+height_mm = 900
+rad_type = "Towel"
+t50_watts = 376
+model = "Stelrad Classic Mini Towel Rail"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Bathroom"
+number = 2
+width_mm = 1200
+height_mm = 600
+rad_type = "Towel"
+t50_watts = 382
+model = "Stelrad Slimline Towelrail Chrome"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Bathroom"
+number = 1
+width_mm = 1800
+height_mm = 600
+rad_type = "Towel"
+t50_watts = 614
+model = "Stelrad Slimline Towelrail Chrome"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Carol & Jack"
+number = 1
+width_mm = 1200
+height_mm = 600
+rad_type = "DP DF"
+t50_watts = 1950
+model = "Stelrad Compact K2"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Conservatory"
+number = 2
+width_mm = 1200
+height_mm = 600
+rad_type = "TP TF"
+t50_watts = 2867
+model = "Stelrad Compact K3"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Conservatory"
+number = 1
+width_mm = 2000
+height_mm = 300
+rad_type = "TP TF"
+t50_watts = 2833
+model = "Stelrad Vita Compact K3"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Elvina"
+number = 1
+width_mm = 500
+height_mm = 600
+rad_type = "DP DF"
+t50_watts = 909
+model = "Stelrad Slimline K2"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Front"
+number = 1
+width_mm = 1400
+height_mm = 600
+rad_type = "DP DF"
+t50_watts = 2425
+model = "Stelrad Slimline K2"
+target_room_temp_c = 21.0
+
+[[radiators]]
+room = "Front"
+number = 2
+width_mm = 600
+height_mm = 1800
+rad_type = "DP DF"
+t50_watts = 2376
+model = "Stelrad Compact Vertical K2"
+target_room_temp_c = 21.0
+
+[[radiators]]
+room = "Hall"
+number = 1
+width_mm = 600
+height_mm = 1800
+rad_type = "DP DF"
+t50_watts = 2376
+model = "Stelrad Compact Vertical K2"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Leather"
+number = 1
+width_mm = 600
+height_mm = 1800
+rad_type = "DP DF"
+t50_watts = 2376
+model = "Stelrad Compact Vertical K2"
+target_room_temp_c = 21.0
+
+[[radiators]]
+room = "Leather"
+number = 2
+width_mm = 600
+height_mm = 1800
+rad_type = "DP DF"
+t50_watts = 2376
+model = "Stelrad Compact Vertical K2"
+target_room_temp_c = 21.0
+
+[[radiators]]
+room = "Office"
+number = 1
+width_mm = 1000
+height_mm = 600
+rad_type = "DP SF"
+t50_watts = 1345
+model = "Stelrad Slimline P+"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Shower"
+number = 1
+width_mm = 500
+height_mm = 900
+rad_type = "Towel"
+t50_watts = 752
+model = "Stelrad Classic Mini Towel Rail"
+target_room_temp_c = 18.0
+
+[[radiators]]
+room = "Sterling"
+number = 1
+width_mm = 1170
+height_mm = 620
+rad_type = "SP SF"
+t50_watts = 1176
+model = "Stelrad Slimline P+"
+target_room_temp_c = 18.0
+
+# --- Pre-heat-pump gas consumption data (Octopus billing) ---
+[gas_era]
+# Gas boiler efficiency estimate.
+boiler_efficiency = 0.90
+
+# Annual gas consumption estimate (kWh).
+annual_gas_kwh = 18_702.0
+
+# Annual heating-only gas consumption after subtracting hot water (kWh).
+annual_heating_gas_kwh = 14_052.0
+
+# Annual heating delivered (gas × efficiency) (kWh).
+annual_heating_delivered_kwh = 12_647.0
+
+# Daily hot water energy (kWh/day) — gas era estimate from workbook.
+dhw_kwh_per_day = 11.82
+
+# Monthly data: (month_start, hdd_17c, gas_kwh, hot_water_kwh, days)
+# Hot water estimated at 11.82 kWh/day.
+[[gas_era.monthly]]
+month = "2021-11"
+hdd_17c = 280.0
+gas_kwh = 2647.0
+hot_water_kwh = 354.6
+days = 30
+
+[[gas_era.monthly]]
+month = "2021-12"
+hdd_17c = 289.8
+gas_kwh = 2949.0
+hot_water_kwh = 366.4
+days = 31
+
+[[gas_era.monthly]]
+month = "2022-01"
+hdd_17c = 371.1
+gas_kwh = 2952.0
+hot_water_kwh = 366.4
+days = 31
+
+[[gas_era.monthly]]
+month = "2022-02"
+hdd_17c = 258.1
+gas_kwh = 2468.0
+hot_water_kwh = 331.0
+days = 28
+
+[[gas_era.monthly]]
+month = "2022-03"
+hdd_17c = 260.8
+gas_kwh = 2069.0
+hot_water_kwh = 366.4
+days = 31
+
+[[gas_era.monthly]]
+month = "2022-04"
+hdd_17c = 204.7
+gas_kwh = 1449.0
+hot_water_kwh = 354.6
+days = 30
+
+# Gap: May-Sep 2022 (summer, minimal heating)
+
+[[gas_era.monthly]]
+month = "2022-11"
+hdd_17c = 207.6
+gas_kwh = 1796.0
+hot_water_kwh = 354.6
+days = 30
+
+[[gas_era.monthly]]
+month = "2022-12"
+hdd_17c = 386.9
+gas_kwh = 3951.0
+hot_water_kwh = 366.4
+days = 31
+
+[[gas_era.monthly]]
+month = "2023-01"
+hdd_17c = 364.1
+gas_kwh = 3957.0
+hot_water_kwh = 366.4
+days = 31
+
+[[gas_era.monthly]]
+month = "2023-02"
+hdd_17c = 295.5
+gas_kwh = 2973.0
+hot_water_kwh = 331.0
+days = 28
+
+[[gas_era.monthly]]
+month = "2023-03"
+hdd_17c = 281.6
+gas_kwh = 3075.0
+hot_water_kwh = 366.4
+days = 31
+
+[[gas_era.monthly]]
+month = "2023-04"
+hdd_17c = 226.4
+gas_kwh = 1993.0
+hot_water_kwh = 354.6
+days = 30
+
+[[gas_era.monthly]]
+month = "2023-05"
+hdd_17c = 119.1
+gas_kwh = 1263.0
+hot_water_kwh = 366.4
+days = 31

@@ -15,8 +15,7 @@ use anyhow::{Context, Result};
 use polars::prelude::*;
 use serde::Deserialize;
 
-/// HDD base temperature (UK standard, matches analysis.rs).
-const HDD_BASE_C: f64 = 15.5;
+use crate::config::config;
 
 /// Mean bias: emoncms reads this much warmer than ERA5 (from 507-day overlap).
 /// Applied to ERA5 temps for gas-era days where no emoncms data exists.
@@ -129,13 +128,14 @@ pub fn load_weather(
     // 2. Load emoncms outside_temp if database available
     let mut emoncms: HashMap<String, f64> = HashMap::new();
     if let Some(conn) = db_conn {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT date(timestamp/1000, 'unixepoch') AS day, AVG(value) AS avg_t
              FROM samples
-             WHERE feed_id = '503093'
+             WHERE feed_id = '{}'
              GROUP BY day
              ORDER BY day",
-        )?;
+            config().emoncms.feed_id("outside_temp"),
+        ))?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
         })?;
@@ -169,7 +169,7 @@ pub fn load_weather(
             continue;
         };
 
-        let hdd = (HDD_BASE_C - temp).max(0.0);
+        let hdd = (config().thresholds.hdd_base_temp_c - temp).max(0.0);
         dates.push(date.clone());
         temps.push(temp);
         hdds.push(hdd);
@@ -289,7 +289,7 @@ pub fn print_summary(consumption: &DataFrame, weather: &DataFrame) -> Result<()>
     println!(
         "Degree days:  {:.0} HDD (base {:.1}°C) over {} days",
         hdd_total,
-        HDD_BASE_C,
+        config().thresholds.hdd_base_temp_c,
         weather.height()
     );
     for i in 0..source_counts.height() {
@@ -426,11 +426,7 @@ pub fn daily_hp_by_state(enriched_df: &DataFrame) -> Result<Vec<(String, f64, f6
     Ok(result)
 }
 
-/// Gas-era daily DHW estimate from reference.rs (11.82 kWh/day at boiler output).
-const GAS_DHW_KWH_PER_DAY: f64 = 11.82;
-
-/// Assumed gas boiler efficiency.
-const BOILER_EFFICIENCY: f64 = 0.9;
+// Gas-era constants are now in config().gas_era
 
 /// Print a comparison of gas-era vs heat-pump-era energy use,
 /// normalised by degree days, with heating and DHW separated.
@@ -451,7 +447,7 @@ pub fn print_gas_vs_hp(
     println!("Temperature sources:");
     println!("  Gas era:  ERA5-Land + {:.1}°C bias correction (derived from 507-day overlap)", ERA5_BIAS_CORRECTION_C);
     println!("  HP era:   emoncms feed 503093 (Met Office hourly) where available");
-    println!("  HDD base: {:.1}°C", HDD_BASE_C);
+    println!("  HDD base: {:.1}°C", config().thresholds.hdd_base_temp_c);
     println!("  HP data:  state machine (heating vs DHW vs defrost) from 10s samples");
     println!();
 
@@ -514,20 +510,20 @@ pub fn print_gas_vs_hp(
 
         if gas > 0.0 {
             // Gas era — estimate DHW and subtract
-            let total_gas_heat = gas * BOILER_EFFICIENCY;
-            let dhw_heat = GAS_DHW_KWH_PER_DAY * n as f64;
+            let total_gas_heat = gas * config().gas_era.boiler_efficiency;
+            let dhw_heat = config().gas_era.dhw_kwh_per_day * n as f64;
             let heating_heat = total_gas_heat - dhw_heat;
-            let dhw_gas = dhw_heat / BOILER_EFFICIENCY;
+            let dhw_gas = dhw_heat / config().gas_era.boiler_efficiency;
             let heating_gas = gas - dhw_gas;
 
             println!("  Whole-house elec:{:.0} kWh ({:.1}/day)", octopus_elec, octopus_elec / n as f64);
             println!("  Total gas:       {:.0} kWh ({:.1}/day)", gas, gas / n as f64);
-            println!("  Boiler eff:      {:.0}%%", BOILER_EFFICIENCY * 100.0);
+            println!("  Boiler eff:      {:.0}%%", config().gas_era.boiler_efficiency * 100.0);
             println!("  ── Heating ──");
             println!("    Gas input:     {:.0} kWh ({:.1}/day)", heating_gas, heating_gas / n as f64);
             println!("    Heat delivered:{:.0} kWh ({:.1}/day)", heating_heat, heating_heat / n as f64);
             println!("    Heat/HDD:      {:.1} kWh/HDD", heating_heat / hdd);
-            println!("  ── DHW (est. {:.1} kWh/day) ──", GAS_DHW_KWH_PER_DAY);
+            println!("  ── DHW (est. {:.1} kWh/day) ──", config().gas_era.dhw_kwh_per_day);
             println!("    Gas input:     {:.0} kWh ({:.1}/day)", dhw_gas, dhw_gas / n as f64);
             println!("    Heat delivered:{:.0} kWh ({:.1}/day)", dhw_heat, dhw_heat / n as f64);
         } else if !hp_map.is_empty() {
@@ -577,7 +573,7 @@ pub fn print_gas_vs_hp(
     // Summary comparison
     println!("── Like-for-like: heating only, per degree day ──\n");
     println!("  DHW stripped from both eras for fair comparison.");
-    println!("  Gas era: DHW estimated at {:.1} kWh/day (reference.rs).", GAS_DHW_KWH_PER_DAY);
+    println!("  Gas era: DHW estimated at {:.1} kWh/day (reference.rs).", config().gas_era.dhw_kwh_per_day);
     println!("  HP era:  DHW measured by state machine (flow rate threshold).");
     println!("  Any reduction in heat/HDD between eras reflects insulation");
     println!("  improvements (work overlapped both eras).");

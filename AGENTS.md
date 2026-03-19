@@ -39,10 +39,11 @@ Octopus commands read from `~/github/octopus/dist/data/` (consumption.json, weat
 ## Architecture
 
 ```
+config.toml   → All domain constants, thresholds, feed IDs, reference data (TOML)
+config.rs     → Deserializes config.toml into typed structs (global singleton)
 emoncms.rs    → API client (used only by sync)
-db.rs         → SQLite storage + DataFrame loading (source of truth for feed IDs)
+db.rs         → SQLite storage + DataFrame loading
 analysis.rs   → State machine + all Polars queries (no DB/API dependency)
-reference.rs  → Static planning data (house, radiators, Arotherm spec, gas era)
 gaps.rs       → Gap detection + synthetic data (accesses SQLite directly)
 octopus.rs    → Octopus Energy integration + gas-vs-HP comparison
 main.rs       → CLI routing (20 subcommands)
@@ -156,20 +157,20 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 
 ## Gotchas
 
-- Feed IDs hardcoded in both `db.rs` and `gaps.rs` — keep in sync
+- All domain constants, feed IDs, thresholds, and reference data live in `config.toml` — edit there, not in code
+- `config.toml` must be next to the executable or in the current working directory
 - `gaps.rs` bypasses `db.rs` — writes to SQLite tables directly
 - No tests — validate changes against real data output
 - Simulated data in separate table (`simulated_samples`) — never mixed unless `--include-simulated`
 - DB schema is `CREATE TABLE IF NOT EXISTS` — no migrations
-- Sync start date hardcoded as `DEFAULT_SYNC_START_MS` in `db.rs` (2024-10-22)
 - Polars pinned to 0.46 (0.53 available) — untested on newer versions. `strings` feature added for octopus.rs.
 - Outside temp feed (Met Office) is lower resolution (~hourly) than HP feeds (~10s)
 - Thresholds are 5kW-specific — 7kW model would need different values (its heating rate = 20 L/min overlaps 5kW DHW rate)
-- Two different HDD base temps: 15.5°C (UK standard in analysis + octopus) vs 17°C (gas-era regression in reference.rs)
+- Two different HDD base temps: 15.5°C (UK standard in thresholds) vs 17°C (gas-era regression in house config)
 - `octopus.rs` reads JSON files from `~/github/octopus/dist/data/` — path hardcoded in `default_data_dir()`
 - `gas-vs-hp` uses `daily_hp_by_state()` which converts 1-min power samples to energy assuming exactly 1/60 hour per sample — accurate for 1-min data but would overcount if sample interval changes
-- Gas-era DHW estimated at 11.82 kWh/day (from reference.rs) — not measured. HP-era DHW is measured by state machine.
-- ERA5 bias correction (+1.0°C) is a single constant — actual bias varies +0.6 to +1.8°C by month. Monthly correction would be more accurate but the constant is adequate for seasonal/annual analysis.
+- Gas-era DHW estimated at 11.82 kWh/day (from config) — not measured. HP-era DHW is measured by state machine.
+- ERA5 bias correction (+1.0°C) is a single constant in octopus.rs — actual bias varies +0.6 to +1.8°C by month. Monthly correction would be more accurate but the constant is adequate for seasonal/annual analysis.
 
 ## Planned Enhancements
 

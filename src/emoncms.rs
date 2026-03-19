@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-const BASE_URL: &str = "https://emoncms.org";
+use crate::config;
 
 /// Metadata for a single emoncms feed.
 #[derive(Debug, Deserialize, Clone)]
@@ -45,7 +45,8 @@ impl Client {
 
     /// List all feeds visible to this API key.
     pub fn list_feeds(&self) -> Result<Vec<Feed>> {
-        let url = format!("{}/feed/list.json?apikey={}", BASE_URL, self.apikey);
+        let base_url = &config::config().emoncms.base_url;
+        let url = format!("{}/feed/list.json?apikey={}", base_url, self.apikey);
         let resp = self.http.get(&url).send()?.text()?;
         let feeds: Vec<Feed> =
             serde_json::from_str(&resp).context("Failed to parse feed list")?;
@@ -64,9 +65,10 @@ impl Client {
         end: i64,
         interval: u32,
     ) -> Result<Vec<DataPoint>> {
+        let base_url = &config::config().emoncms.base_url;
         let url = format!(
             "{}/feed/data.json?apikey={}&id={}&start={}&end={}&interval={}",
-            BASE_URL,
+            base_url,
             self.apikey,
             id,
             start * 1000,

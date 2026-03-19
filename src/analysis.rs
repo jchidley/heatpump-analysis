@@ -34,29 +34,7 @@ use anyhow::{Context, Result};
 use chrono::DateTime;
 use polars::prelude::*;
 
-use crate::reference;
-
-/// UK standard base temperature for heating degree days.
-/// Tb = design indoor temp (18.5°C) − average internal gains (3°C) = 15.5°C.
-/// Below this outside temperature, heating is needed.
-const HDD_BASE_TEMP: f64 = 15.5;
-
-// --- Arotherm 5kW operating thresholds ---
-
-/// Minimum electrical power to consider the compressor running.
-const ELEC_RUNNING_W: f64 = 50.0;
-
-/// Flow rate above which we enter DHW state (diverter valve to cylinder).
-/// The gap between heating (14.3–14.5) and steady DHW (16.5+) is near-empty.
-const DHW_ENTER_FLOW_RATE: f64 = 16.0;
-
-/// Flow rate below which we exit DHW state back to heating.
-/// Provides hysteresis across the 14.5–16.0 transition zone (diverter moving).
-const DHW_EXIT_FLOW_RATE: f64 = 15.0;
-
-/// DT threshold below which we consider the system to be in defrost.
-/// During defrost the return is warmer than the flow (heat extracted from water).
-const DEFROST_DT_THRESHOLD: f64 = -0.5;
+use crate::config::{self, config};
 
 /// Operating state of the heat pump at a given moment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +66,9 @@ fn classify_states(
     flow_rate: &[Option<f64>],
     delta_t: &[f64],
 ) -> Vec<&'static str> {
+    let cfg = config();
+    let thresholds = &cfg.thresholds;
+
     let n = elec.len();
     let mut states = Vec::with_capacity(n);
     let mut current = HpState::Idle;
@@ -99,9 +80,9 @@ fn classify_states(
         let fr = flow_rate[i].unwrap_or(0.0);
         let dt = delta_t[i];
 
-        let next = if e <= ELEC_RUNNING_W {
+        let next = if e <= thresholds.elec_running_w {
             HpState::Idle
-        } else if h <= 0.0 || dt < DEFROST_DT_THRESHOLD {
+        } else if h <= 0.0 || dt < thresholds.defrost_dt_threshold {
             if current != HpState::Defrost {
                 pre_defrost = match current {
                     HpState::Dhw => HpState::Dhw,
@@ -112,23 +93,23 @@ fn classify_states(
         } else {
             match current {
                 HpState::Idle | HpState::Heating => {
-                    if fr >= DHW_ENTER_FLOW_RATE {
+                    if fr >= thresholds.dhw_enter_flow_rate {
                         HpState::Dhw
                     } else {
                         HpState::Heating
                     }
                 }
                 HpState::Dhw => {
-                    if fr < DHW_EXIT_FLOW_RATE {
+                    if fr < thresholds.dhw_exit_flow_rate {
                         HpState::Heating
                     } else {
                         HpState::Dhw
                     }
                 }
                 HpState::Defrost => {
-                    if fr >= DHW_ENTER_FLOW_RATE {
+                    if fr >= thresholds.dhw_enter_flow_rate {
                         HpState::Dhw
-                    } else if fr < DHW_EXIT_FLOW_RATE {
+                    } else if fr < thresholds.dhw_exit_flow_rate {
                         HpState::Heating
                     } else {
                         pre_defrost
@@ -171,7 +152,7 @@ pub fn enrich(df: &DataFrame) -> Result<DataFrame> {
         .clone()
         .lazy()
         .with_columns([
-            when(col("elec_w").gt(lit(ELEC_RUNNING_W)))
+            when(col("elec_w").gt(lit(config().thresholds.elec_running_w)))
                 .then(col("heat_w") / col("elec_w"))
                 .otherwise(lit(NULL))
                 .alias("cop"),
@@ -216,7 +197,7 @@ pub fn summary(df: &DataFrame) -> Result<()> {
     let by_state = df
         .clone()
         .lazy()
-        .filter(col("elec_w").gt(lit(ELEC_RUNNING_W)))
+        .filter(col("elec_w").gt(lit(config().thresholds.elec_running_w)))
         .group_by([col("state")])
         .agg([
             col("cop").mean().alias("avg_cop"),
@@ -396,7 +377,7 @@ pub fn degree_days(
     let mut cop_vals: Vec<Option<f64>> = Vec::new();
 
     for (date, mean_t, _min_t, _max_t) in daily_temps {
-        let hdd = (HDD_BASE_TEMP - mean_t).max(0.0);
+        let hdd = (config().thresholds.hdd_base_temp_c - mean_t).max(0.0);
         let elec = elec_by_date.get(date).copied();
         let heat = heat_by_date.get(date).copied();
 
@@ -435,7 +416,7 @@ pub fn degree_days(
         Series::new("heat/HDD".into(), &heat_per_hdd).into(),
     ])?;
 
-    println!("\n=== Daily Degree Days (base {:.1}°C) ===", HDD_BASE_TEMP);
+    println!("\n=== Daily Degree Days (base {:.1}°C) ===", config().thresholds.hdd_base_temp_c);
     println!("{}", df);
 
     // Weekly aggregates
@@ -542,7 +523,7 @@ pub fn degree_days(
 
         // Find the coldest temperature where consumption is within 20% of baseline
         let threshold = baseline_elec * 1.2;
-        let mut estimated_base = HDD_BASE_TEMP;
+        let mut estimated_base = config().thresholds.hdd_base_temp_c;
         for (t, e) in &temp_elec {
             if *e <= threshold {
                 estimated_base = *t;
@@ -571,7 +552,7 @@ pub fn degree_days(
 
     for (date, mean_t, _, _) in daily_temps {
         let month = &date[..7]; // "YYYY-MM"
-        let hdd = (HDD_BASE_TEMP - mean_t).max(0.0);
+        let hdd = (config().thresholds.hdd_base_temp_c - mean_t).max(0.0);
         let elec = elec_by_date.get(date.as_str()).copied().unwrap_or(0.0);
         let heat = heat_by_date.get(date.as_str()).copied().unwrap_or(0.0);
 
@@ -607,38 +588,39 @@ pub fn degree_days(
     );
     println!("{}", "-".repeat(72));
 
-    for (gas_month, gas_hdd, gas_kwh, gas_hw, _days) in reference::gas_era::MONTHLY {
-        let _month_key = gas_month.to_string();
+    let gas_era = &config().gas_era;
+    for gm in &gas_era.monthly {
+        let _month_key = gm.month.to_string();
         // Find matching HP month (any year)
-        let mm = &gas_month[5..7]; // extract "01", "02", etc.
+        let mm = &gm.month[5..7]; // extract "01", "02", etc.
         let hp_matches: Vec<_> = month_data
             .iter()
             .filter(|(k, _)| &k[5..7] == mm)
             .collect();
 
-        let gas_heating = (gas_kwh - gas_hw) * reference::gas_era::BOILER_EFFICIENCY;
+        let gas_heating = (gm.gas_kwh - gm.hot_water_kwh) * gas_era.boiler_efficiency;
 
         if let Some((_hp_month, (hp_hdd, hp_elec, hp_heat))) = hp_matches.first() {
             println!(
                 "{:>8} {:>8.0} {:>10.0} {:>10.0} {:>8.1} {:>10.1} {:>10.0}",
-                mm, gas_hdd, gas_kwh, gas_heating, hp_hdd, hp_elec, hp_heat
+                mm, gm.hdd_17c, gm.gas_kwh, gas_heating, hp_hdd, hp_elec, hp_heat
             );
         } else {
             println!(
                 "{:>8} {:>8.0} {:>10.0} {:>10.0} {:>8} {:>10} {:>10}",
-                mm, gas_hdd, gas_kwh, gas_heating, "-", "-", "-"
+                mm, gm.hdd_17c, gm.gas_kwh, gas_heating, "-", "-", "-"
             );
         }
     }
     println!("  * Gas Heat = (Gas kWh - Hot Water) × {:.0}% boiler efficiency",
-        reference::gas_era::BOILER_EFFICIENCY * 100.0);
+        gas_era.boiler_efficiency * 100.0);
 
     Ok(())
 }
 
 /// Indoor temperature analysis (Leather room — emonth2 sensor).
 pub fn indoor_temp(df: &DataFrame) -> Result<()> {
-    let design_temp = reference::house::DESIGN_INDOOR_TEMP;
+    let design_temp = config().house.design_indoor_temp_c;
 
     // Overall indoor temp stats
     let stats = df
@@ -704,7 +686,7 @@ pub fn indoor_temp(df: &DataFrame) -> Result<()> {
 
 /// DHW analysis — compare actual against design expectations.
 pub fn dhw_analysis(df: &DataFrame) -> Result<()> {
-    let design_dhw_kwh_per_day = 11.82; // from workbook
+    let design_dhw_kwh_per_day = config().gas_era.dhw_kwh_per_day;
 
     // Filter to DHW state only
     let dhw_stats = df
@@ -754,14 +736,14 @@ pub fn dhw_analysis(df: &DataFrame) -> Result<()> {
 
 /// Compare actual COP against Arotherm manufacturer spec at different flow temps.
 pub fn cop_vs_spec(df: &DataFrame) -> Result<()> {
-    use reference::arotherm;
+    let arotherm = &config().arotherm;
 
     // Print the manufacturer reference curve
     println!("\n=== Arotherm 5kW Manufacturer Spec (at -3°C outside) ===");
     println!("{:>10} {:>12} {:>8}", "Flow °C", "Heat Output", "COP");
     println!("{}", "-".repeat(32));
-    for (ft, heat, cop) in arotherm::SPEC_AT_MINUS3 {
-        println!("{:>10.0} {:>10.0}W {:>8.2}", ft, heat, cop);
+    for sp in &arotherm.spec_at_minus3 {
+        println!("{:>10.0} {:>10.0}W {:>8.2}", sp.flow_temp_c, sp.heat_output_w, sp.cop);
     }
 
     // Group actual data by 5°C flow temp bands, heating only
@@ -804,23 +786,23 @@ pub fn cop_vs_spec(df: &DataFrame) -> Result<()> {
     let flow_t_arr = heating.column("flow_t")?.f64()?;
     let cop_arr = heating.column("cop")?.f64()?;
 
-    for (spec_ft, _spec_heat, spec_cop) in arotherm::SPEC_AT_MINUS3 {
+    for sp in &arotherm.spec_at_minus3 {
         // Find samples within ±2.5°C of this flow temp
         let mut cops: Vec<f64> = Vec::new();
         for i in 0..flow_t_arr.len() {
             if let (Some(ft), Some(cop)) = (flow_t_arr.get(i), cop_arr.get(i)) {
-                if (ft - spec_ft).abs() < 2.5 && cop > 0.0 {
+                if (ft - sp.flow_temp_c).abs() < 2.5 && cop > 0.0 {
                     cops.push(cop);
                 }
             }
         }
         if !cops.is_empty() {
             let avg_cop = cops.iter().sum::<f64>() / cops.len() as f64;
-            let ratio = avg_cop / spec_cop;
+            let ratio = avg_cop / sp.cop;
             println!(
                 "{:>10.0} {:>10.2} {:>10.2} {:>9.0}% {:>10}",
-                spec_ft,
-                spec_cop,
+                sp.flow_temp_c,
+                sp.cop,
                 avg_cop,
                 ratio * 100.0,
                 cops.len()
@@ -828,7 +810,7 @@ pub fn cop_vs_spec(df: &DataFrame) -> Result<()> {
         } else {
             println!(
                 "{:>10.0} {:>10.2} {:>10} {:>10} {:>10}",
-                spec_ft, spec_cop, "-", "-", "0"
+                sp.flow_temp_c, sp.cop, "-", "-", "0"
             );
         }
     }
@@ -842,26 +824,29 @@ pub fn design_comparison(
     elec_data: &[(i64, Option<f64>)],
     heat_data: &[(i64, Option<f64>)],
 ) -> Result<()> {
-    use reference::{gas_era, house, radiators};
+    let cfg = config();
+    let house = &cfg.house;
+    let gas_era = &cfg.gas_era;
+    let radiators = &cfg.radiators;
 
     println!("\n=== House Design Reference ===");
-    println!("Construction:     {}", house::CONSTRUCTION);
-    println!("Floor area:       {} m²", house::FLOOR_AREA_M2);
-    println!("HTC:              {} W/°C", house::HTC_W_PER_C);
+    println!("Construction:     {}", house.construction);
+    println!("Floor area:       {} m²", house.floor_area_m2);
+    println!("HTC:              {} W/°C", house.htc_w_per_c);
     println!("Design heat loss: {} W (at {}°C outside, {}°C inside)",
-        house::DESIGN_HEAT_LOSS_W, house::DESIGN_OUTDOOR_TEMP, house::DESIGN_INDOOR_TEMP);
+        house.design_heat_loss_w, house.design_outdoor_temp_c, house.design_indoor_temp_c);
 
     // Radiator capacity at different flow temps
     println!("\n=== Radiator Output vs Flow Temperature ===");
     println!("{:>10} {:>15} {:>15}", "Flow °C", "Total Output W", "vs Design Loss");
     println!("{}", "-".repeat(45));
     for ft in &[30.0, 32.0, 35.0, 38.0, 40.0, 45.0, 50.0] {
-        let output = radiators::total_output_at_flow_temp(*ft);
-        let ratio = output / house::DESIGN_HEAT_LOSS_W * 100.0;
+        let output = config::total_radiator_output_at_flow_temp(radiators, *ft);
+        let ratio = output / house.design_heat_loss_w * 100.0;
         println!("{:>10.0} {:>13.0}W {:>13.0}%", ft, output, ratio);
     }
-    println!("\nTotal T50 rating:  {} W (15 radiators)",
-        radiators::ALL.iter().map(|r| r.t50_watts as u32).sum::<u32>());
+    println!("\nTotal T50 rating:  {} W ({} radiators)",
+        radiators.iter().map(|r| r.t50_watts as u32).sum::<u32>(), radiators.len());
 
     // Gas era comparison
     println!("\n=== Gas Era vs Heat Pump Comparison ===");
@@ -901,15 +886,15 @@ pub fn design_comparison(
     // Calculate HDD for the HP period (base 17°C for comparison with gas)
     let mut hp_hdd_17 = 0.0f64;
     for (_date, mean_t, _, _) in daily_temps {
-        let hdd = (house::BASE_TEMP_GAS_ERA - mean_t).max(0.0);
+        let hdd = (house.base_temp_gas_era_c - mean_t).max(0.0);
         hp_hdd_17 += hdd;
     }
 
     let hp_cop = if hp_elec_total > 0.1 { hp_heat_total / hp_elec_total } else { 0.0 };
 
     // Estimate what gas would have cost for the same period
-    let gas_equiv_heating_kwh = hp_hdd_17 * house::KWH_PER_HDD;
-    let gas_equiv_total_kwh = gas_equiv_heating_kwh / gas_era::BOILER_EFFICIENCY;
+    let gas_equiv_heating_kwh = hp_hdd_17 * house.kwh_per_hdd;
+    let gas_equiv_total_kwh = gas_equiv_heating_kwh / gas_era.boiler_efficiency;
 
     println!(
         "{:<35} {:>15} {:>15}",
@@ -922,29 +907,30 @@ pub fn design_comparison(
     );
     println!(
         "{:<35} {:>14.0} {:>14.0}",
-        "HDD (base 17°C)", gas_era::MONTHLY.iter().map(|m| m.1).sum::<f64>(), hp_hdd_17
+        "HDD (base 17°C)", gas_era.monthly.iter().map(|m| m.hdd_17c).sum::<f64>(), hp_hdd_17
     );
     println!(
         "{:<35} {:>13.0}* {:>14.0}",
-        "Heat delivered (kWh)", gas_era::ANNUAL_HEATING_DELIVERED_KWH, hp_heat_total
+        "Heat delivered (kWh)", gas_era.annual_heating_delivered_kwh, hp_heat_total
     );
     println!(
         "{:<35} {:>14.0} {:>14.0}",
-        "Energy consumed (kWh)", gas_era::ANNUAL_GAS_KWH, hp_elec_total
+        "Energy consumed (kWh)", gas_era.annual_gas_kwh, hp_elec_total
     );
     println!(
         "{:<35} {:>14.0}% {:>13.1}x",
-        "Efficiency / COP", gas_era::BOILER_EFFICIENCY * 100.0, hp_cop
+        "Efficiency / COP", gas_era.boiler_efficiency * 100.0, hp_cop
     );
     println!(
         "{:<35} {:>14.1} {:>14.1}",
         "kWh consumed per HDD",
-        gas_era::ANNUAL_HEATING_GAS_KWH / gas_era::MONTHLY.iter().map(|m| m.1).sum::<f64>(),
+        gas_era.annual_heating_gas_kwh / gas_era.monthly.iter().map(|m| m.hdd_17c).sum::<f64>(),
         hp_elec_total / hp_hdd_17
     );
     println!("\n  * Gas heating estimated: annual {:.0} kWh gas × {:.0}% efficiency = {:.0} kWh delivered",
-        gas_era::ANNUAL_GAS_KWH, gas_era::BOILER_EFFICIENCY * 100.0, gas_era::ANNUAL_HEATING_DELIVERED_KWH);
-    println!("  * Gas figure includes hot water ({:.1} kWh/day), HP figure includes DHW too", 11.82);
+        gas_era.annual_gas_kwh, gas_era.boiler_efficiency * 100.0, gas_era.annual_heating_delivered_kwh);
+    println!("  * Gas figure includes hot water ({:.1} kWh/day), HP figure includes DHW too",
+        gas_era.dhw_kwh_per_day);
 
     // For same HDD, how much gas vs electricity would be used?
     if hp_hdd_17 > 10.0 {
@@ -952,7 +938,7 @@ pub fn design_comparison(
         println!("If this HP period's weather had been heated by gas boiler:");
         println!("  Gas consumed:    {:.0} kWh (at {:.1} kWh/HDD × {:.0} HDD)",
             gas_equiv_total_kwh,
-            house::KWH_PER_HDD / gas_era::BOILER_EFFICIENCY,
+            house.kwh_per_hdd / gas_era.boiler_efficiency,
             hp_hdd_17);
         println!("  HP consumed:     {:.0} kWh electricity", hp_elec_total);
         println!("  Energy saving:   {:.0} kWh ({:.0}%)",
