@@ -220,10 +220,14 @@ Documented in `docs/hydraulic-analysis.md`:
 ## DHW Cylinder
 
 Documented in `docs/dhw-cylinder-analysis.md`:
-- Kingspan Albion 300L twin-coil (both coils in series for HP)
-- Eco mode cycle: ~99 min, 3.1 kW, primary ΔT 2.1°C
-- Standby loss: 13 W (0.3 kWh/day) — far below 93 W rated spec due to stratification
+- Kingspan Albion 300L twin-coil (both coils in series for HP), internal expansion (air bubble, no ext vessel)
+- Measured connection heights (from outside bottom): bottom coil 420mm, T2+cold inlet 540mm, top coil 1020mm, T1+draw-off 1580mm
+- Usable hot water above top coil: ~149L (50% of nominal 300L). Dead zone below coils: 59L (20%)
+- Eco mode cycle: ~115 min, 3.0 kW, primary ΔT 2.1°C
+- Standby loss: 13 W (0.3 kWh/day) — far below 93 W rated spec due to stratification + air bubble insulation
 - WWHR effectiveness: 41% at steady state (3.5 min ramp-up), lifts mains from 15.8°C to 25°C
+- **Validated stratification model (97% accuracy)**: WWHR water inserts at buoyancy-neutral height (~T2 level, 490mm), not at bottom. Volume from T2 to T1 = 165L; T1 step change observed at 161L drawn.
+- T1 drops during early charging (coil-driven destratification) when primary flow temp < T1
 - Multical T1/T2 sensors at mid-cylinder positions, not extremes
 
 ## Reference Data (config.toml)

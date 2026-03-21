@@ -2,7 +2,7 @@
 
 ## Overview
 
-With the emondhw Multical meter (secondary/DHW side) and emonhp MBUS heat meter (primary/HP side) both feeding into InfluxDB on pi5data, we can see both sides of the cylinder heat exchanger simultaneously. This document captures the first analyses from 19–20 March 2026.
+With the emondhw Multical meter (secondary/DHW side) and emonhp MBUS heat meter (primary/HP side) both feeding into InfluxDB on pi5data, we can see both sides of the cylinder heat exchanger simultaneously. This document captures analyses from 19–21 March 2026, including a validated 1D stratification model.
 
 ## Cylinder specification
 
@@ -11,54 +11,78 @@ With the emondhw Multical meter (secondary/DHW side) and emonhp MBUS heat meter 
 | Spec | Value |
 |------|-------|
 | Capacity | 300 litres |
-| Height | 2032 mm |
-| Diameter | 550 mm |
+| Overall height | 2032 mm |
+| Overall diameter | 550 mm |
 | Insulation | 50mm PU foam |
+| Internal height | ~1932 mm |
+| Internal diameter | ~450 mm |
+| Cross-section | 0.159 m² |
+| Volume per mm height | 0.159 L/mm |
 | Rated standing heat loss | 93 W (BS EN 12897, uniform 45°C, 20°C ambient) |
+| Measured standing heat loss | 13 W (stratified, eco mode) |
 | Energy rating | C |
 | Heat exchanger | Coil-in-coil (90–95% efficient vs 75–80% for conventional coil) |
 | Cold feed diffuser | Yes — dip pipe to bottom reduces turbulence |
 | Coils | Twin coil (solar model), **both connected in series for HP** |
+| Internal expansion | Air bubble at top (no external expansion vessel) |
 
 ### Twin coil configuration
 
-The cylinder has two coils designed for solar (lower) + boiler (upper). In this installation, **both coils are connected in series** for the heat pump, giving double the heat exchange surface area across the full height of the cylinder.
+The cylinder has two coils designed for solar (lower) + boiler (upper). In this installation, **both coils are connected in series** for the heat pump, giving double the heat exchange surface area.
 
-Connection heights from base (from Kingspan technical data, AUSI 300):
+### Measured connection heights
 
-| Label | Height (mm) | Connection |
-|-------|------------|------------|
-| A | 365 | Lower coil flow/return |
-| B | 420 | Lower coil flow/return |
-| C | 979 | Upper coil flow/return |
-| D | 1034 | Upper coil flow/return |
-| G | 465 | Cold feed (dip pipe to bottom) |
+Measured from the outside bottom of the cylinder (actual internal positions are ~50mm lower, accounting for bottom insulation):
 
-The HP primary water flows through both coils in series, entering at the top and exiting at the bottom (or vice versa), heating the full 300L volume.
+| Outside height (mm) | Internal height (mm) | Connection |
+|---------------------|---------------------|------------|
+| 420 | 370 | Bottom coil top (entry/exit at same height) |
+| 540 | 490 | T2 sensor + cold water inlet (dip pipe to bottom) |
+| 1020 | 970 | Top coil (entry/exit) |
+| 1580 | 1530 | T1 sensor + hot water draw-off |
 
-### Sensor positions
+Note: the Kingspan technical data (AUSI 300) gives slightly different heights (A=365, B=420, C=979, D=1034, G=465). The measured heights above are from the physical cylinder.
 
-The Multical sensors are **not** at the extreme top/bottom of the cylinder:
+### Cylinder profile and zone volumes
+
+At operating temperature (45°C), water expands ~1%, compressing the internal air bubble to ~25mm. The water surface sits at ~1907mm internal height.
 
 ```
-    ┌──────────────────────┐  2032mm
-    │  22mm hot draw-off   │  ← actual tap draw-off (above T1)
-    │                      │
-    │  T1 (Multical hot)   │  ← ~D position (1034mm), above upper coil
-    │  ┌────────────────┐  │
-    │  │  UPPER COIL    │  │  C-D (979-1034mm)
-    │  └────────────────┘  │
-    │                      │
-    │  T2 (Multical cold)  │  ← ~G position (465mm), above lower coil  
-    │  ┌────────────────┐  │
-    │  │  LOWER COIL    │  │  A-B (365-420mm)
-    │  └────────────────┘  │
-    │  cold feed dip pipe  │  → to bottom deflector
-    └──────────────────────┘  0mm
+         ┌─────────────────────┐  2032mm outside (1932mm internal)
+         │▒▒▒ AIR BUBBLE ▒▒▒▒▒│  ~25mm at 45°C (4L expansion space)
+         ├─────────────────────┤  ~1907mm water surface
+         │                     │
+         │  60L above T1       │  20% — unmeasured hot buffer
+  1580mm │── T1 + draw-off ────│  79% height, 243L below
+         │                     │
+         │  89L                │  30% — heated by convection from top coil
+         │                     │
+  1020mm │── top coil ─────────│  50% height, 154L below
+         │                     │
+         │  76L between coils  │  25% — partially heated zone
+         │                     │
+   540mm │── T2 + cold inlet ──│  25% height, 78L below
+         │  19L                │   6%
+   420mm │── bottom coil top ──│  19% height, 59L below
+         │                     │
+         │  59L dead zone      │  20% — dip pipe delivers cold here
+         └─────────────────────┘  0mm (outside base)
 ```
 
-- **T1** reads mid-upper cylinder between the upper coil and the draw-off. The actual tap water is drawn from above T1 and will be slightly hotter.
-- **T2** reads mid-cylinder at the cold feed entry point, above the lower coil. Cold mains water (via WWHR) enters here and the dip pipe sends it to the bottom.
+| Zone | Height (mm) | Volume (L) | % of 300L | Typical temp |
+|------|-------------|-----------|-----------|-------------|
+| Air bubble (expansion) | 25 | 4 | — | — |
+| Above T1/draw-off (HOT) | 377 | 60 | 20% | ~45°C |
+| Top coil → T1 | 560 | 89 | 30% | ~45°C |
+| T2 → top coil | 480 | 76 | 25% | 25–32°C |
+| Bottom coil → T2 | 120 | 19 | 6% | 22–32°C |
+| Below bottom coil (DEAD) | 370 | 59 | 20% | 13–22°C |
+
+The **usable hot water** (above the top coil, heated by convection) is approximately **149L** — about half the nominal 300L. The 60L above T1 is an unmeasured buffer: T1 doesn't show depletion until this buffer is consumed.
+
+### Internal expansion (air bubble)
+
+The Ultrasteel uses a floating baffle and captive air pocket for thermal expansion, eliminating the external expansion vessel. As water heats from 10°C to 45°C, it expands ~1% (3L), compressing the air space from ~46mm to ~25mm. The air/water interface at the top acts as a near-perfect insulator — no conductive heat loss upward through metal — contributing to the very low measured standby losses.
 
 ## Measurement infrastructure
 
@@ -77,15 +101,9 @@ curl -s "http://10.0.1.230:8086/api/v2/query?org=home" \
   -H "Content-Type: application/vnd.flux" \
   -d 'from(bucket:"energy")
     |> range(start: -2h)
-    |> filter(fn: (r) => r.topic == "emon/multical/dhw_t1" or
-                          r.topic == "emon/multical/dhw_t2" or
-                          r.topic == "emon/multical/dhw_flow" or
-                          r.topic == "emon/heatpump/heatmeter_FlowT" or
-                          r.topic == "emon/heatpump/heatmeter_ReturnT" or
-                          r.topic == "emon/heatpump/heatmeter_FlowRate")
-    |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-    |> map(fn: (r) => ({time: r._time, topic: r.topic, value: r._value}))
-    |> yield(name: "data")'
+    |> filter(fn: (r) => r._measurement == "emon" and r.source == "multical")
+    |> filter(fn: (r) => r.field == "dhw_t1" or r.field == "dhw_t2" or r.field == "dhw_flow")
+    |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)'
 ```
 
 ### MQTT topics
@@ -96,76 +114,148 @@ curl -s "http://10.0.1.230:8086/api/v2/query?org=home" \
 | `emon/heatpump/heatmeter_ReturnT` | emonhp MBUS | Primary return temp (°C) |
 | `emon/heatpump/heatmeter_FlowRate` | emonhp MBUS | Primary flow rate (m³/h) |
 | `emon/heatpump/heatmeter_Power` | emonhp MBUS | Primary thermal power (W) |
+| `emon/heatpump/electric_Power` | emonhp SDM120 | HP electrical consumption (W) |
 | `emon/multical/dhw_t1` | emondhw Multical | Hot out / upper cylinder (°C) |
 | `emon/multical/dhw_t2` | emondhw Multical | Cold in / mid cylinder (°C) |
 | `emon/multical/dhw_flow` | emondhw Multical | DHW draw flow rate (L/h) |
 | `emon/multical/dhw_power` | emondhw Multical | DHW thermal power (kW) |
-| `emon/multical/dhw_t1-t2` | emondhw Multical | Delta T across cylinder (°C) |
+| `emon/multical/dhw_volume_V1` | emondhw Multical | Cumulative DHW volume (L) |
 
 **Note:** `dhw_P1` and `dhw_mass_m1` return 4294967296 (0xFFFFFFFF) — register read errors. Those Modbus registers are not valid for this Multical model.
 
-## DHW reheat cycle: 20 March 2026, 05:27–07:06 UTC
+## Stratification model (validated)
 
-### Conditions
-- Eco mode DHW reheat (no taps running — pure cylinder recharge)
-- Primary flow rate: steady 1.28 m³/h (21.3 L/min) — post y-filter clean
-- Cycle duration: 99 minutes
-- Outside temperature: ~10°C
+### The draw-off model — 97% accuracy
 
-### Temperature profile
+Validated against two shower events on 21 March 2026 (70L + 110L = 180L total from Multical volume register).
 
-| Time | HP Flow | HP Return | HP ΔT | T1 (upper) | T2 (mid) |
-|------|---------|-----------|-------|------------|----------|
-| 05:27 (start) | 37.5°C | 35.3°C | 2.2°C | 42.2°C | 22.9°C |
-| 06:00 | 42.7°C | 40.6°C | 2.1°C | 42.1°C | 26.2°C |
-| 06:30 | 45.9°C | 43.8°C | 2.1°C | 42.7°C | 27.2°C |
-| 07:00 | 47.9°C | 45.8°C | 2.1°C | 44.6°C | 28.4°C |
-| 07:05 (end) | 48.2°C | 46.1°C | 2.1°C | 45.0°C | 28.7°C |
-| 07:07 (off) | 30.2°C | 24.8°C | — | 45.1°C | 28.7°C |
+**Key insight:** WWHR-preheated water enters at ~25°C, which is buoyancy-neutral with the existing warm zone at the same temperature. It doesn't push from the very bottom — it effectively inserts at the ~25°C isotherm (approximately T2 height, 490mm internal). From there, the warm/hot water column above gets pushed upward as plug flow. The sharp thermocline between the warm zone (~30°C) and the hot zone (~45°C) rises toward T1.
 
-### Key observations
+| Parameter | Value | Source |
+|-----------|-------|--------|
+| Volume from T2 (490mm) to T1 (1530mm) | 165 L | Geometry |
+| Volume drawn when T1 step change started | ~161 L | Multical + timing |
+| **Model accuracy** | **97%** | |
 
-#### 1. Very low primary ΔT (~2.1°C) — eco mode
+The step change in T1 (from 44.2°C dropping at 0.01°C/min to 0.15°C/min) confirms a thin, sharp thermocline — consistent with the research literature finding of 50–100mm thermocline thickness in well-designed vertical cylinders. Thermal diffusion during the 55-minute gap between showers was negligible (~1mm diffusion length).
 
-The HP runs at low compressor speed in eco mode, delivering ~3.1 kW through both coils in series:
+### How the model works
 
-```
-Q = 21.3 L/min ÷ 60 × 4.18 kJ/(kg·°C) × 2.1°C = 3.1 kW
-```
+During a shower draw:
+1. Hot water exits the top of the cylinder (draw-off at 1580mm)
+2. Cold water enters at 540mm, travels via dip pipe to the bottom
+3. With WWHR, incoming water is ~25°C — buoyant relative to the dead zone below but neutral with the warm zone above the lower coil
+4. The effective insertion point is at the 25°C isotherm (~490mm, T2 level)
+5. Above this point, water moves upward as plug flow
+6. The hot/warm thermocline (originally at ~970mm, top coil height) rises at:
+   - Rate = draw_rate / cross_section = 420 L/h ÷ 0.159 m² = 44 mm/min
+7. T1 at 1530mm sees the thermocline after (1530-490) / 44 = ~24 min of continuous drawing
 
-The twin coils in series provide a large heat exchange surface area, keeping the primary ΔT small. This gentle heating keeps the compressor at low speed for maximum COP. The trade-off is a 99-minute cycle vs ~30 minutes in normal mode.
+### The WWHR paradox
 
-#### 2. Excellent heat exchanger performance — 3.2°C approach
+Counter-intuitively, WWHR **reduces** the number of shower-minutes before T1 drops:
 
-The **approach temperature** (HP flow minus cylinder T1) tells us how well the coils transfer heat:
+| | With WWHR | Without WWHR |
+|---|---|---|
+| Cold side temperature | 25°C | 15.8°C |
+| Hot fraction at shower mixer | 77% | 84% |
+| Hot draw rate from cylinder | 5.4 L/min | 5.9 L/min |
+| Volume to T1 step change | 165 L | 243 L |
+| Minutes until T1 drops | 31 min | 41 min |
+| Plus 60L buffer above T1 | 11 min | 10 min |
+| **Total shower minutes** | **42 min** | **51 min** |
 
-| Time | HP Flow | T1 (upper) | Approach |
-|------|---------|------------|----------|
-| Start | 37.5°C | 42.2°C | **−4.7°C** (HP cooler than upper cylinder) |
-| Mid | 42.7°C | 42.1°C | **+0.6°C** (crossing over) |
-| End | 48.2°C | 45.0°C | **+3.2°C** |
+But WWHR halves the **energy** removed per session (5.1 kWh vs 10.1 kWh). The effect is:
+- Without WWHR, 15.8°C water sinks below everything and pushes from 0mm — 243L must be displaced before T1 sees it
+- With WWHR, 25°C water inserts at 490mm — only 165L must be displaced
+- But without WWHR the shower mixer draws 10% more hot water per minute (colder cold side)
 
-At the start, the HP primary is cooler than the upper cylinder — it's heating the cold lower water through both coils without disturbing the hot top. By the end, the approach is only 3.2°C, which is excellent for an indirect cylinder with coil-in-coil design.
+The practical difference is marginal (42 vs 51 min — both far exceed typical usage). **WWHR's real value is energy saving, not capacity extension.** It also dramatically improves stratification quality by reducing the inlet-to-tank temperature differential from 29°C to 6°C, increasing the Richardson number and preserving the sharp thermocline.
 
-#### 3. Strong cylinder stratification
+## DHW charge cycle analysis
 
-| | Start | End | Rise |
-|---|---|---|---|
-| T1 (upper) | 42.2°C | 45.2°C | +3.0°C |
-| T2 (mid) | 22.9°C | 28.7°C | +5.8°C |
-| Stratification (T1−T2) | 19.3°C | 16.5°C | narrowing |
+### Morning charge: 21 March 2026, 05:10–07:05 UTC
 
-The mid-cylinder (T2) heated nearly twice as fast as the upper (T1) — the lower coil is correctly heating the coldest water first. The 16.5°C stratification at end of cycle means the top layer is always ready for immediate use, even mid-reheat.
+Eco mode charge, cylinder warm from previous day.
 
-#### 4. COP across the cycle
+| Time | HP FlowT | HP ReturnT | HP ΔT | Heat kW | Elec W | T1 | T2 |
+|------|----------|-----------|-------|---------|--------|-----|-----|
+| 05:10 (start) | 31°C | 30°C | 1°C | 2.0 | 780 | 42.0 | 23.3 |
+| 05:30 | 39°C | 37°C | 2°C | 3.1 | 921 | 42.3 | 24.3 |
+| 06:00 | 43°C | 41°C | 2°C | 3.0 | 993 | 42.6 | 26.6 |
+| 06:30 | 46°C | 44°C | 2°C | 3.0 | 1039 | 43.4 | 29.7 |
+| 07:00 | 48°C | 46°C | 2°C | 2.9 | 1069 | 44.9 | 32.2 |
+| 07:05 (end) | 48°C | 46°C | 2°C | 2.9 | 1072 | 45.2 | 32.4 |
 
-The HP flow temp rises throughout the cycle as the cylinder heats up:
+- Duration: 115 minutes
+- Flow rate: 1.3 m³/h (21.3 L/min) — DHW pump speed
+- Total heat: ~5.75 kWh, total electricity: ~1.92 kWh, COP: 3.0
+- T1 rose 3.2°C (42.0→45.2), T2 rose 9.1°C (23.3→32.4)
 
-- Start: 37.5°C flow → COP ~4.5
-- End: 48.2°C flow → COP ~3.3
-- Weighted average across the cycle → measured DHW COP ~3.9
+The primary ΔT stayed constant at ~2°C throughout — eco mode runs at low compressor speed with the large twin-coil surface area keeping ΔT small. The return temp (bottom of coil pair exit) rose from 30°C to 46°C, tracking the water temperature around the coils.
 
-Eco mode front-loads the high-COP operation — most of the energy is delivered in the first half when flow temps are lower.
+### Afternoon charge: 21 March 2026, 13:12–14:55+ UTC
+
+Eco mode charge after two showers depleted the cylinder.
+
+| Time | HP FlowT | HP ReturnT | T1 | T2 |
+|------|----------|-----------|-----|-----|
+| 13:12 (start) | 33°C | 30°C | 43.2 | 21.3 |
+| 13:30 | 37°C | 34°C | 43.1 | 22.1 |
+| 14:00 | 42°C | 39°C | 43.0 | 26.6 |
+| 14:20 | 45°C | 42°C | 42.8 | 30.9 |
+| 14:25 | 46°C | 43°C | 42.2 | 31.6 |
+
+**Key finding: T1 drops during early charging.** T1 fell from 43.2°C to 42.2°C in the first 75 minutes despite 3+ kW being pumped in. This is "coil-driven destratification" — the coils create convective cells that partially mix the stratified layers. The primary (33–42°C) is cooler than T1 (43°C) early in the cycle, and the circulation pulls cold water from the depleted bottom zone (T2=21°C) upward through the coil region, slightly cooling the zone above. T1 only starts rising once the primary flow temp exceeds the existing T1 temperature (~14:20 when FlowT hits 45°C).
+
+### What the primary return temp reveals
+
+The HP return temp is the temperature at the bottom of the coil pair (exit point) — the coldest water the coils encounter.
+
+| Condition | ReturnT | T2 | Gap | Interpretation |
+|-----------|---------|-----|-----|----------------|
+| Morning charge start | 30°C | 23°C | 7°C | Coil zone warmer than below-coil zone |
+| Morning charge end | 46°C | 32°C | 14°C | Coil zone fully heated; below-coil still warm |
+| Afternoon charge start | 30°C | 21°C | 9°C | Sharp thermal boundary at coil base |
+| During heating mode | 30→28°C | 26→21°C | 4–7°C | Passive proxy for mid-cylinder temp |
+
+The ReturnT ≠ T2 because the coil sits above T2 and heats its immediate surroundings. The gap between ReturnT and T2 shows the sharp thermal boundary at the bottom of the coil zone — water around the coil is warmer than water just below it.
+
+## Shower events: 21 March 2026
+
+### Back-to-back showers with 55-minute gap
+
+| | Shower 1 | Shower 2 |
+|---|---|---|
+| Time | 10:19–10:29 | 11:24–11:40 |
+| Duration | 10 min | 16 min |
+| Flow rate | ~410 L/h | ~420 L/h |
+| Volume from cylinder (Multical) | 70 L | 110 L |
+| T1 before | 44.6°C | 44.3°C |
+| T1 after | 44.5°C | 43.5°C |
+| T1 behaviour | Barely moved (−0.1°C) | Flat 13 min, then **step change** |
+| T2 during draw | 26→21→26°C (WWHR ramp) | 25→22→26°C (WWHR ramp) |
+| T2 post-draw | 26°C | 25→13°C (sink at 11:46) |
+
+The T1 step change at 11:37 — where the drop rate increased from 0.01°C/min to 0.15°C/min — marks the thermocline reaching the T1 sensor position. This occurred after ~161L cumulative draw, matching the model prediction of 165L (volume from T2 to T1) to 97% accuracy.
+
+### Sink draw: 11:46 (post-showers)
+
+Brief sink use at 104 L/h caused T2 to crash from 25°C to 13.4°C — raw mains temperature without WWHR. This confirmed the mains temperature and showed the cylinder bottom was fully depleted after the two showers.
+
+## Energy accounting
+
+### Morning charge vs shower draws
+
+| | Value |
+|---|---|
+| HP thermal input (morning charge) | 5.75 kWh |
+| Energy stored in usable hot zone (149L, 45−25°C) | 3.5 kWh |
+| Energy stored in warm zone (154L, 28−15°C) | 2.3 kWh |
+| Energy removed by showers (180L, 44.5−25°C) | 4.1 kWh |
+| Deficit (removed > usable hot) | −0.6 kWh |
+
+The showers removed 117% of the usable hot energy (above the warm zone baseline). This is why the cylinder was depleted — the remaining 2.3 kWh in the warm zone was at too low a temperature for shower delivery.
 
 ## Standby heat loss: 19–20 March 2026 overnight
 
@@ -186,8 +276,6 @@ T2 **rose** during standby — heat migrating internally from the hot upper cyli
 | Metric | Value |
 |--------|-------|
 | T1 drop rate | 0.25°C/hour |
-| Energy lost from upper ~100L | 0.116 kWh |
-| Energy gained by lower ~100L | 0.065 kWh |
 | **Net energy lost to surroundings** | **0.051 kWh in 4 hours** |
 | **Average power loss** | **13 W** |
 | **Projected daily loss** | **0.3 kWh/day** |
@@ -199,113 +287,122 @@ T2 **rose** during standby — heat migrating internally from the hot upper cyli
 |---|---|---|
 | Condition | Uniform 45°C, 20°C ambient | Stratified: T1 43°C, T2 22°C |
 | Standing loss | **93 W** | **13 W** |
-| At rated ΔT (25°C) | 93 W | 28 W (extrapolated from UA) |
 
 The measured loss is far below the rated spec because:
 
-1. **Stratification** — only the top ~100L is at 43°C; the bottom ~200L is near room temperature and barely loses heat. The rated test heats the entire 300L uniformly to 45°C.
-2. **Lower mean temperature** — the surface-averaged cylinder temperature is ~32°C (only 11°C above room), not 45°C (25°C above room).
-3. **Coil-in-coil design** — the 50mm PU foam insulation performs well.
+1. **Stratification** — only the top ~150L is hot; the bottom ~150L is near room temperature and barely loses heat
+2. **Air bubble** — the air/water interface at the top insulates better than metal-to-air conduction
+3. **Lower mean surface temperature** — the surface-averaged cylinder temperature is ~32°C (11°C above room), not 45°C (25°C above room)
 
-In real-world operation with a heat pump in eco mode, the cylinder's effective standing loss is a fraction of the rated spec. At 0.3 kWh/day and COP 3.9, standby costs about **£5/year** in electricity.
+At 0.3 kWh/day and COP 3.9, standby costs about **£5/year** in electricity.
 
 ## Shower event analysis: 19 March 2026, 22:45–23:03 UTC
 
-### Timeline (from 15-second resolution Multical data)
+### Sink use (22:45–22:50) — mains temperature baseline
 
-Two distinct events were observed:
+Brief, low-flow draw (170 L/h). No WWHR benefit — sink waste doesn't flow through the shower drain heat exchanger. T2 dropped to **15.8°C**, which is the actual mains cold water temperature (London mains ~10–12°C at street, warmed to ~16°C running through house pipework in March). T1 was completely unaffected — the cold feed dip pipe delivered water to the bottom without disturbing stratification.
 
-**Event 1 — Sink use (22:45–22:50)**
+### Shower (22:57:30–23:02:30) — WWHR characterisation
 
-| Time | T2 (mid) | Flow | Notes |
-|------|----------|------|-------|
-| 22:44 | 26.6°C | 0 | Resting |
-| 22:45:30 | 25.6°C | 170 L/h (2.8 L/min) | Sink tap opened |
-| 22:46:30 | 18.9°C | 122 L/h (2.0 L/min) | Cold mains arriving |
-| 22:48 | 16.6°C | 0 | Tap closed |
-| 22:51 | 15.8°C | 0 | Settled — this is the mains cold temperature |
+| Phase | T2 (post-WWHR) | Lift from 15.8°C mains |
+|-------|----------------|----------------------|
+| Drain cold (start) | 15.5°C | −0.3°C |
+| 1 minute | 17.1°C | +1.3°C |
+| 2 minutes | 19.7°C | +3.9°C |
+| 3 minutes | 22.1°C | +6.3°C |
+| **3.5 min (steady state)** | **24.8°C** | **+9.0°C** |
 
-Brief, low-flow draw. No WWHR benefit — sink waste doesn't flow through the shower drain heat exchanger. T2 dropped to **15.8°C**, which is the actual mains cold water temperature (London mains ~10–12°C at street, warmed to ~16°C running through house pipework in March).
-
-T1 (upper cylinder) was **completely unaffected** — held at 43.9°C throughout. The cold feed dip pipe delivered water to the bottom without disturbing stratification.
-
-**Event 2 — Shower (22:57:30–23:02:30)**
-
-| Time | T2 (mid) | Flow | dT (T1−T2) | Notes |
-|------|----------|------|-----------|-------|
-| 22:57:30 | 15.5°C | 447 L/h (7.5 L/min) | 28.3°C | Shower starts, drain cold |
-| 22:58:15 | 17.1°C | 446 L/h | 26.7°C | WWHR starting to recover |
-| 22:58:45 | 19.7°C | 450 L/h | 24.2°C | Drain warming up |
-| 22:59:30 | 22.1°C | 440 L/h | 21.7°C | WWHR ramping |
-| 23:00:45 | 24.8°C | 425 L/h | 19.0°C | Approaching steady state |
-| 23:01:15 | 24.8°C | 425 L/h | 19.0°C | **WWHR at steady state** |
-| 23:02:30 | 25.1°C | 313 L/h | 18.7°C | Shower ending |
-| 23:03 | 25.3°C | 0 | 18.5°C | Settled |
-
-T1 dropped only **0.1°C** (43.9→43.8°C) during the entire shower — stratification held perfectly.
-
-### WWHR performance
-
-The waste water heat recovery unit sits in the shower drain. It pre-heats incoming mains cold water using heat from the drain water before it enters the cylinder.
-
-| Phase | T2 (post-WWHR) | Lift from 15.8°C mains | Notes |
-|-------|----------------|----------------------|-------|
-| Drain cold (start) | 15.5°C | −0.3°C | No recovery yet |
-| 1 minute | 17.1°C | +1.3°C | Drain starting to warm |
-| 2 minutes | 19.7°C | +3.9°C | Ramping |
-| 3 minutes | 22.1°C | +6.3°C | |
-| **3.5 min (steady state)** | **24.8°C** | **+9.0°C** | **Maximum recovery** |
-
-At steady state:
-
-| | Value |
+| WWHR metric | Value |
 |---|---|
-| Mains cold (measured) | **15.8°C** (not 10°C — warmed in house pipework) |
-| Post-WWHR at steady state | **25°C** |
-| WWHR temperature lift | **9.2°C** |
-| Drain water (estimated) | ~38°C |
-| Available ΔT in drain | 22.2°C |
+| Mains cold (measured) | 15.8°C |
+| Post-WWHR steady state | 25°C |
+| WWHR temperature lift | 9.2°C |
+| Estimated drain water temp | ~38°C |
 | **WWHR effectiveness** | **41%** |
+| Ramp-up time | 3–3.5 minutes |
 
-The WWHR takes **3–3.5 minutes** to reach steady state as the shower drain warms up. For a typical 7-minute shower, the blended saving across the whole event is ~30–35%.
+T1 dropped only **0.1°C** during the entire shower — stratification held perfectly.
 
 ### WWHR compound benefits
 
-The WWHR pre-heated water serves double duty:
-
-1. **Enters the cylinder warmer** — T2 at 25°C instead of 15.8°C means less reheat energy needed (dT 19°C vs 28°C = 32% less heat per litre)
-
-2. **Feeds the shower mixer cold side** — a shower at 40°C:
-   - Without WWHR: mixing 15.8°C cold + 44°C hot → ~55% hot from cylinder
-   - With WWHR: mixing 25°C cold + 44°C hot → ~20% hot from cylinder
-   - The cylinder is depleted at roughly **half the rate**
-
-3. **Preserves stratification** — warmer cold feed (25°C vs 15.8°C) causes less thermal shock when entering the cylinder bottom, so the hot upper layer is less disturbed
-
-These three effects compound: the cylinder lasts longer per shower, needs less energy to reheat, and maintains usable hot water at the top throughout the draw.
+1. **Energy saving** — cold feed at 25°C instead of 15.8°C means 32% less reheat energy per litre
+2. **Stratification preservation** — inlet-to-tank ΔT reduced from 29°C to 6°C, dramatically improving the Richardson number. This is why our thermocline is so sharp.
+3. **Shower mixer effect** — at 40°C shower temp, WWHR reduces the hot fraction from 84% to 77%, drawing less hot water per minute
 
 ### Limitations
 
-- **Sink and bath draws get no WWHR benefit** — waste water doesn't flow through the shower drain heat exchanger
-- **Short showers underperform** — the 3.5-minute ramp-up is overhead; longer showers get proportionally more benefit
-- **Mains temperature varies seasonally** — ~8°C in January, ~18°C in August. Absolute WWHR lift is similar year-round but the percentage saving is higher in winter when the mains is colder
-- **Baths are the worst case** — large volume draw with no WWHR, cold mains straight in, stratification disrupted
+- Sink and bath draws get no WWHR benefit
+- 3.5-minute ramp-up is overhead; longer showers get proportionally more benefit
+- Mains temperature varies seasonally (~8°C January, ~18°C August)
+
+## DHW reheat cycle: 20 March 2026, 05:27–07:06 UTC
+
+### Temperature profile
+
+| Time | HP Flow | HP Return | HP ΔT | T1 (upper) | T2 (mid) |
+|------|---------|-----------|-------|------------|----------|
+| 05:27 (start) | 37.5°C | 35.3°C | 2.2°C | 42.2°C | 22.9°C |
+| 06:00 | 42.7°C | 40.6°C | 2.1°C | 42.1°C | 26.2°C |
+| 06:30 | 45.9°C | 43.8°C | 2.1°C | 42.7°C | 27.2°C |
+| 07:00 | 47.9°C | 45.8°C | 2.1°C | 44.6°C | 28.4°C |
+| 07:05 (end) | 48.2°C | 46.1°C | 2.1°C | 45.0°C | 28.7°C |
+
+### Heat exchanger performance — approach temperature
+
+| Time | HP Flow | T1 | Approach |
+|------|---------|-----|----------|
+| Start | 37.5°C | 42.2°C | **−4.7°C** (HP cooler than upper cylinder) |
+| Mid | 42.7°C | 42.1°C | **+0.6°C** (crossing over) |
+| End | 48.2°C | 45.0°C | **+3.2°C** |
+
+At the start, the HP primary is cooler than the upper cylinder — it's heating the cold lower water without disturbing the hot top. The 3.2°C approach at end of cycle is excellent for an indirect coil-in-coil design.
+
+### COP across the cycle
+
+- Start: 37.5°C flow → COP ~4.5
+- End: 48.2°C flow → COP ~3.3
+- Weighted average: ~3.9
+
+Eco mode front-loads the high-COP operation — most energy is delivered in the first half when flow temps are lower.
 
 ## emonhp vs eBUS — complementary data sources
 
-Both emonhp and eBUS measure flow/return temps, flow rate, power, and energy — but they serve different roles:
+- **emonhp** (MBUS heat meter + SDM120) = independent auditor. MID-certified, legal "truth" for energy accounting. Used by the state machine in `analysis.rs`.
+- **eBUS** (via ebusd on pi5data) = inside view. Operating modes via `StatuscodeNum` (104=heating, 134=DHW, 100=standby, 516=defrost), compressor speed, refrigerant circuit.
+- **Multical** (on emondhw) = demand side. Actual DHW delivery to taps.
 
-- **emonhp** (MBUS heat meter + SDM120) = independent auditor. MID-certified meters, legal "truth" for energy accounting. This is what the state machine in `analysis.rs` uses.
-- **eBUS** (via ebusd on emondhw) = inside view. Operating modes (heating/DHW/defrost/standby), compressor speed, refrigerant circuit, target flow temp, energy integral, COP calculations, pump power %.
+Together: HP electricity → HP heat output → cylinder → useful heat at taps.
 
-Both are needed: emonhp alone can't distinguish heating from DHW (the state machine infers it from flow rate). eBUS gives the definitive operating mode via `StatuscodeNum` (104=heating, 134=DHW, 100=standby, 516=defrost). See [heating-monitoring-setup.md](../heating-monitoring-setup.md) for the full comparison.
+## Building a 1D model
 
-The Multical on emondhw adds the **third** perspective — the demand side (actual DHW delivery to taps). Together the three sources give end-to-end DHW efficiency:
+The data supports a multi-node 1D stratified tank model with these validated components:
 
-```
-HP electricity (SDM120, emonhp) → HP heat output (MBUS, emonhp) → cylinder → useful heat at taps (Multical, emondhw)
-         input                        primary side                   losses        delivery side
-```
+**Inputs:**
+- Cylinder geometry: 300L, 450mm Ø, 1932mm internal height, 25mm air gap
+- 10–20 horizontal nodes, each ~100mm = 15.9L
+- Coil positions: lower 370mm, upper 970mm (both in series)
+- T1 sensor: 1530mm, T2 sensor: 490mm
+
+**Physics per node:**
+- Conduction between adjacent nodes: k_water × A / Δx
+- Convection from coil: buoyant plume rising off coil surface (empirical from charge data)
+- Draw-off: plug flow, cold water inserted at buoyancy-neutral height (not always bottom)
+- WWHR: incoming water at 25°C inserts at ~490mm (T2 level), not at 0mm
+- Standby loss: UA = 1.1 W/°C (measured)
+- Coil destratification: mixing during charge when primary < T1 (observed in afternoon cycle)
+
+**Validation datasets (all from 19–21 March 2026):**
+
+| Dataset | What it validates |
+|---------|------------------|
+| Morning charge (T1, T2, FlowT, ReturnT, 115 min) | Charge model, COP curve |
+| Afternoon charge (depleted cylinder) | Coil destratification effect |
+| Shower 1 (70L) + Shower 2 (110L) with 55 min gap | Draw-off plug flow, thermocline speed |
+| T1 step change at 161L vs 165L model | **97% accuracy** on thermocline position |
+| Overnight standby (4 hours undisturbed) | UA calibration, internal heat migration |
+| Sink draw (no WWHR) | Mains temperature baseline |
+| Shower WWHR ramp-up (15-second resolution) | WWHR effectiveness curve |
+| T1 drop during afternoon charge | Coil-driven mixing coefficient |
 
 ## Historical DHW cycle observations (from emoncms.org)
 
@@ -313,21 +410,17 @@ From 181 cycles over 90 days of emoncms data (pre-dating the InfluxDB setup):
 
 | Metric | Value |
 |--------|-------|
-| Start return temp (avg) | 37.3°C (min 31, max 44) — cylinder temp at start of cycle |
+| Start return temp (avg) | 37.3°C (min 31, max 44) |
 | Typical cycle duration | 30–45 minutes (eco mode) |
 | Max flow temp | 53–55°C |
 | Schedule | ~05:15 (morning) + ~13:15 (afternoon) |
-| Last days before filter clean | 45–90 minute cycles with lower max flow temps — filter blockage effect |
-
-The longer cycles before the filter clean (19 March 2026) confirm the hydraulic restriction was affecting DHW performance — the reduced flow rate meant less heat transfer per pass, requiring longer run times.
 
 ## What we can now monitor
 
-With both sides of the cylinder instrumented:
-
-1. **Heat exchanger degradation** — if the approach temperature widens over time (e.g., from limescale on the secondary side from hard London mains water), the HP has to run at higher flow temps. The primary side uses deionised water so won't scale.
-2. **WWHR effectiveness** — track T2 during shower draws across seasons. Expect steady-state T2 to vary with mains temperature (seasonal) but WWHR lift to remain ~9°C.
-3. **Cylinder stratification quality** — T1 vs T2 during and after cycles. Any degradation of the cold feed dip pipe/deflector would show up as reduced stratification.
-4. **Standby losses** — track T1 decay overnight. Should remain ~0.25°C/hour at current conditions. Any increase suggests insulation degradation.
-5. **Mains water temperature** — T2 during non-WWHR draws (sink events) gives the true mains cold temperature at the cylinder. Track seasonally.
-6. **DHW cycle efficiency** — compare HP thermal input (emonhp power × time) vs useful heat delivered to taps (Multical energy) for end-to-end DHW system efficiency.
+1. **Heat exchanger degradation** — approach temperature widening over time (limescale from hard London mains)
+2. **WWHR effectiveness** — track T2 steady-state during showers across seasons
+3. **Stratification quality** — T1 step change sharpness during draws; should remain at <100mm thermocline thickness
+4. **Standby losses** — T1 decay rate overnight (baseline 0.25°C/hour)
+5. **Mains temperature** — T2 during sink draws (no WWHR), track seasonally
+6. **Coil destratification** — T1 drop during early charge cycles; indicates how much mixing the coils cause
+7. **Thermocline model validation** — draw volume at T1 step change should consistently match 165L (±10%)

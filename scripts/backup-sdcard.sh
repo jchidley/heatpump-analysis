@@ -19,7 +19,7 @@ echo "[1/3] Saving partition table..."
 sfdisk -d "$DEVICE" > "${OUTPUT}.partition-table.dump"
 
 echo "[2/3] Imaging ${DEVICE}..."
-dd if="$DEVICE" bs=4M conv=sparse of="${OUTPUT}.img" status=noxfer
+dd if="$DEVICE" bs=4M conv=sparse of="${OUTPUT}.img" status=progress
 
 echo "[3/3] PiShrink + xz..."
 pishrink.sh -Za "${OUTPUT}.img"
