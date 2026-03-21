@@ -47,9 +47,10 @@ is_peak() {
 }
 
 cleanup() {
+    trap - INT TERM  # prevent re-entry
     log "Shutting down"
+    kill "$SUB_PID" 2>/dev/null
     rm -f "$FIFO"
-    kill 0 2>/dev/null
     exit 0
 }
 
