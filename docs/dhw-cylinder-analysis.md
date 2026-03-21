@@ -240,6 +240,37 @@ The T1 step change at 11:37 — where the drop rate increased from 0.01°C/min t
 
 Brief sink use at 104 L/h caused T2 to crash from 25°C to 13.4°C — raw mains temperature without WWHR. This confirmed the mains temperature and showed the cylinder bottom was fully depleted after the two showers.
 
+## Practical usage scenarios
+
+The usable capacity is 165L from the cylinder before the tap temperature starts dropping. Different draw types consume this budget at different rates because baths don't benefit from WWHR (waste goes to the drain, not through the shower heat exchanger).
+
+### Draw rates from the cylinder
+
+| Draw type | Total flow | Cold side temp | Hot fraction | Cylinder draw rate | WWHR? |
+|-----------|-----------|---------------|-------------|-------------------|-------|
+| Shower | 7 L/min | 25°C (WWHR) | 77% | 5.4 L/min | Yes |
+| Bath fill | ~12 L/min | 15.8°C (mains) | 84% | ~10 L/min | No |
+| Sink | ~3 L/min | 15.8°C (mains) | 84% | ~2.5 L/min | No |
+
+### How far does 165L go?
+
+| Scenario | Cylinder draw | Remaining | Status |
+|----------|--------------|-----------|--------|
+| One 7-min shower | ~38L | 127L | ✅ Plenty left |
+| Two 10-min showers | ~108L | 57L | ✅ OK |
+| One 16-min shower | ~86L | 79L | ✅ OK |
+| **Bath (100L at tap)** | **~84L** | **81L** | ✅ OK alone |
+| **Bath + 8-min shower** | **~127L** | **38L** | ⚠️ Tight — works if no prior draws |
+| Bath + 10-min shower | ~138L | 27L | ⚠️ Just within limit |
+| Earlier shower + bath + shower | ~38+84+43 = **165L** | **0L** | ❌ T1 step change mid-shower |
+| Two baths | ~168L | **−3L** | ❌ Exceeds capacity |
+
+This matches real-world experience: a bath followed by a shower works if nobody else has showered that day. If someone showered earlier, the bath + shower combination pushes past the 165L limit and the second person notices the temperature dropping.
+
+### Why the dhw-auto-trigger matters for this scenario
+
+The bath + shower combination is exactly the use case the trigger is designed for. A bath takes ~8 minutes to fill — sustained flow above 200 L/h for long enough to trigger. The HP starts charging during or just after the bath fill, feeding heat back into the cylinder before the shower starts. Without the trigger, the next person waits for the scheduled off-peak charge.
+
 ## Energy accounting
 
 ### Morning charge vs shower draws
@@ -328,7 +359,8 @@ T1 dropped only **0.1°C** during the entire shower — stratification held perf
 
 ### Limitations
 
-- Sink and bath draws get no WWHR benefit
+- Sink and bath draws get no WWHR benefit — waste water doesn't flow through the shower drain heat exchanger
+- Baths are the worst case: no WWHR means 84% hot fraction vs 77% for showers, depleting the cylinder faster
 - 3.5-minute ramp-up is overhead; longer showers get proportionally more benefit
 - Mains temperature varies seasonally (~8°C January, ~18°C August)
 
