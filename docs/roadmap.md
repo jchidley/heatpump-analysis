@@ -171,6 +171,25 @@ Files in `C:\Users\jackc\OneDrive\Documents\House\` that could be imported:
 | `Cost_data_summary.xlsx` | Cost analysis |
 | `DHDG sizing spreadsheet @ 19&21 v1.1 finish.xlsx` | DHW sizing calculations |
 
+## Zigbee2MQTT Automation Hub
+
+**Status:** ✅ Repo created (`~/github/z2m-hub`). Infrastructure ready.
+
+Rust server replacing Home Assistant for Zigbee-only automation. Runs on pi5data, connects to Z2M on emonpi via WebSocket.
+
+### What's done
+- emonpi Mosquitto open on network with auth (bidirectional MQTT for Z2M)
+- Z2M WebSocket API verified (direct to `ws://emonpi:8080/api`, all device state cached)
+- pi extension for device control working
+- Interim shell automation deployed (`z2m-automations.service` on pi5data: motion → light)
+- GitHub repo: https://github.com/jchidley/z2m-hub
+
+### What's next
+- Rust server: axum HTTP/WS + tokio-tungstenite Z2M client
+- SPA dashboard (device states, controls)
+- Automation engine (rules in TOML, replaces shell script)
+- Cross-compile and deploy to pi5data
+
 ## Other Potential Enhancements
 
 - **Home Assistant integration** — pull myVAILLANT data (room temp setpoints, schedules) if rate limiting allows

@@ -75,16 +75,26 @@ Verified:
 - Sonoff coordinator detected on `/dev/ttyUSB0`
 - Adapter set explicitly (`zstack`)
 - `homeassistant: false`
-- 7 known devices restored and reporting
+- 8 known devices restored (3 active: landing, hall, landing_motion; 5 need re-pairing)
+- WebSocket API accessible at `ws://emonpi:8080/api` (no auth)
 
 ## 9) MQTT bridge
 Final state:
 - `emonpi` mosquitto bridge points to `pi5data:1883` (direct)
+- Bridge config: `emon/#` out, `zigbee2mqtt/#` both (bidirectional)
 
 Verified:
 - `ping pi5data` from emonpi works
 - TCP 1883 reachable from emonpi
 - established mosquitto bridge socket from emonpi to pi5data
+
+## 9a) Mosquitto network access (added 2026-03-21)
+- Mosquitto now listens on `0.0.0.0:1883` (was localhost-only)
+- Password auth enabled: user `emonpi`, pass `emonpimqtt2016`
+- Config: `/etc/mosquitto/conf.d/network.conf`
+- Password file: `/etc/mosquitto/passwd`
+- Z2M already had credentials in its config — no change needed
+- Verified: pi5data can publish commands directly to `zigbee2mqtt/<device>/set`
 
 ---
 
@@ -133,7 +143,8 @@ Includes configs, DB dumps, feed archives, and z2m data snapshot.
 - [x] P1/P2/P3 publishing
 - [x] DS18B20 both publishing
 - [x] LCD service active
-- [x] Zigbee2MQTT running + devices restored
-- [x] Direct MQTT bridge to pi5data active
+- [x] Zigbee2MQTT running + devices restored (3 of 8 active)
+- [x] Direct MQTT bridge to pi5data active (bidirectional for zigbee2mqtt/#)
+- [x] Mosquitto open on network (0.0.0.0:1883) with password auth
 - [x] Data flowing to InfluxDB (verified)
 - [x] Grafana dashboard created with colour standard

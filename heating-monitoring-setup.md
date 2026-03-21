@@ -24,10 +24,10 @@ Central monitoring of a Vaillant heat pump system using eBUS, MBUS heat meter, M
                                                                       │
 ┌─────────────┐                 ┌──────────────┐    bridge           │
 │ EmonPi2     │─── serial ──────│   emonpi      │────emon/#──────────┤
-│ 3×CT + V    │  /dev/ttyAMA0   │  10.0.1.117   │────zigbee2mqtt/+──┤
+│ 3×CT + V    │  /dev/ttyAMA0   │  10.0.1.117   │────zigbee2mqtt/#──┤
 │ DS18B20     │─── 1-wire ──────│  emonhub      │                    │
 │ Zigbee      │─── USB ────────│  Z2M (Docker) │                    │
-│  (7 devices)│  /dev/ttyUSB0   │  Mosquitto    │                    │
+│  (8 devices)│  /dev/ttyUSB0   │  Mosquitto    │                    │
 └─────────────┘                 └──────────────┘                    │
                                                                       ▼
 ┌─────────────┐     eBUS      ┌──────────────┐              ┌──────────────┐
@@ -108,13 +108,17 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 - **Role**: 3-channel CT energy monitor, DS18B20 temperatures, Zigbee2MQTT gateway
 - **CT channels**: P1=DNO grid (+import/−export), P2=House consumption, P3=Solar (P4–P6 unused)
 - **DS18B20**: temp_high (`28-00000ee9cb6d`), temp_low (`28-00000ee9e94f`) — 1-wire on GPIO17, same space different heights
-- **Zigbee2MQTT**: Docker container, Sonoff USB 3.0 dongle on `/dev/ttyUSB0` (`zstack` adapter), 7 paired devices:
+- **Zigbee2MQTT**: Docker container (v2.9.1), Sonoff USB 3.0 dongle on `/dev/ttyUSB0` (`zstack` adapter), 8 paired devices:
   - 4× SONOFF SNZB-02P temp/humidity: bathroom, shower, front, conservatory
   - 3× SONOFF ZBMINI switches: hall, kitchen, landing
-- **Services**: emonhub, mosquitto (with bridge to pi5data), Docker (Z2M), emonPiLCD (I2C 0x3c)
+  - 1× Aqara RTCGQ14LM motion sensor: landing_motion
+  - **Active (March 2026)**: landing, hall, landing_motion. Other 5 devices dead since Nov 2024 — need re-pairing.
+  - **WebSocket API**: `ws://emonpi:8080/api` (no auth) — pushes all cached device state on connect
+- **Mosquitto**: listening on `0.0.0.0:1883` with password auth (user `emonpi`, pass `emonpimqtt2016`). Config in `/etc/mosquitto/conf.d/network.conf`.
+- **Services**: emonhub, mosquitto, Docker (Z2M), emonPiLCD (I2C 0x3c)
 - **SSH**: `ssh pi@emonpi`
 - **Credentials**: `ak get emon-pi-credentials` / Bitwarden "emon pi, pi credentials"
-- **MQTT bridge topics**: `emon/#`, `zigbee2mqtt/+`
+- **MQTT bridge topics**: `emon/#` (out), `zigbee2mqtt/#` (both — bidirectional)
 - **Note**: `cmdline.txt` must NOT contain `console=serial0,115200` — conflicts with EmonPi2 board on ttyAMA0
 - **Note**: `/boot/firmware/config.txt` must have `dtoverlay=w1-gpio,gpiopin=17` for DS18B20
 
@@ -154,6 +158,7 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 | `zigbee2mqtt/hall` | ZBMINI | state (ON/OFF) |
 | `zigbee2mqtt/kitchen` | ZBMINI | state (ON/OFF) |
 | `zigbee2mqtt/landing` | ZBMINI | state (ON/OFF) |
+| `zigbee2mqtt/landing_motion` | RTCGQ14LM | occupancy, illuminance, battery, temperature, motion_sensitivity |
 
 **emonhp → pi5data** (bridged):
 | Topic | Source | Data |
@@ -647,6 +652,10 @@ Both needed: emonhp alone can't distinguish heating from DHW. eBUS alone can't g
 48. **Room humidity added to dashboard** — emonhp dashboard now shows room temperature + humidity on dual-axis panel with proper display names.
 49. **ebusd moved to pi5data** — ebusd now runs as Docker container on pi5data, connecting directly to eBUS adapter at 10.0.1.41:9999 over the network. Eliminates dependency on emondhw for eBUS data. ebusd-poll also runs as Docker container on pi5data.
 50. **emondhw emoncms.org apikey is placeholder** — The `emoncmsorg` interfacer in emonhub has apikey `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (not configured). Multical data is NOT sent to emoncms.org.
+51. **emonpi Mosquitto opened to network** (2026-03-21) — Added `listener 1883 0.0.0.0` + password auth (`/etc/mosquitto/conf.d/network.conf`, `/etc/mosquitto/passwd`). Allows pi5data (and any LAN device) to publish commands directly to Z2M via MQTT. Bridge topic for zigbee2mqtt changed from `+` (one-level) to `#` (multi-level, bidirectional).
+52. **Zigbee2MQTT automation service** (2026-03-21) — `z2m-automations.sh` deployed to pi5data as systemd service. Watches `landing_motion` occupancy via MQTT, turns `landing` ZBMINI on/off with 60s timeout. Interim solution until Rust z2m-hub replaces it.
+53. **Aqara motion sensor confirmed active** — `landing_motion` (RTCGQ14LM) reporting occupancy, illuminance, battery (29%), temperature. 30s detection interval cooldown.
+54. **Z2M pi extension rewritten** — WebSocket-based (`ws://emonpi:8080/api`) instead of bridged MQTT via pi5data. All device state (including battery devices) available from cache on connect. New actions: health_check, restart, configure, options, bridge_options, logs.
 
 ## TODO
 
@@ -654,7 +663,7 @@ Both needed: emonhp alone can't distinguish heating from DHW. eBUS alone can't g
 - [x] Import historical data into InfluxDB — DONE (two buckets, 44.5M points total)
 - [x] Flash emonPi2 firmware — DONE (emon_DB_6CT v2.1.1)
 - [x] Rebuild emonpi from clean minimal install — DONE (2026-03-20, Pi OS Lite + emonhub + Z2M)
-- [x] Set up Zigbee2MQTT on emonpi — DONE (Docker, 7 devices, no Home Assistant)
+- [x] Set up Zigbee2MQTT on emonpi — DONE (Docker v2.9.1, 8 devices, 3 active, no Home Assistant)
 - [x] Set up static DHCP for all monitoring devices — DONE (dnsmasq on router)
 - [x] Unify MQTT bridge architecture — DONE (all devices bridge to pi5data, Telegraf local only)
 - [x] Back up old emonpi SD card — DONE (PiShrink + xz, 1.6GB on pi5nvme)
@@ -681,3 +690,7 @@ Both needed: emonhp alone can't distinguish heating from DHW. eBUS alone can't g
 - [ ] Fix emondhw emoncms.org apikey (currently placeholder)
 - [ ] Stop ebusd on emondhw (now redundant, running on pi5data)
 - [ ] Consider running emonhub Multical reader on pi5data too (remove emondhw dependency entirely)
+- [ ] Re-pair 5 dead Zigbee devices (kitchen, bathroom, shower, front, conservatory — all dead since Nov 2024)
+- [x] Open emonpi Mosquitto to network — DONE (0.0.0.0:1883 with password auth)
+- [x] Deploy z2m-automations.sh to pi5data — DONE (motion → landing light)
+- [ ] Build z2m-hub Rust server (replace z2m-automations.sh + serve SPA dashboard)

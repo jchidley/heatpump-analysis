@@ -73,7 +73,7 @@ All hostnames resolve via local DNS (dnsmasq on router 10.0.0.1, domain `chidley
 ### MQTT Architecture
 Each emon device runs local Mosquitto with a bridge to pi5data. Telegraf on pi5data subscribes only to its local Mosquitto — all data arrives via bridges:
 ```
-emonpi  ─── bridge (emon/#, zigbee2mqtt/+) ───┐
+emonpi  ─── bridge (emon/# out, zigbee2mqtt/# both) ───┐
 emonhp  ─── bridge (emon/#) ──────────────────┼──→ pi5data Mosquitto ──→ Telegraf ──→ InfluxDB
 emondhw ─── bridge (emon/#) ──────────────────┘         ↑
                                                          │
