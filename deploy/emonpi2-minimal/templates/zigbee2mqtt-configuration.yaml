@@ -1,0 +1,64 @@
+homeassistant: false
+
+frontend: true
+permit_join: false
+
+mqtt:
+  base_topic: zigbee2mqtt
+  server: mqtt://172.17.0.1
+  user: emonpi
+  password: emonpimqtt2016
+
+serial:
+  port: /dev/ttyACM0
+
+advanced:
+  network_key:
+    - 72
+    - 60
+    - 219
+    - 223
+    - 231
+    - 14
+    - 141
+    - 156
+    - 192
+    - 13
+    - 8
+    - 80
+    - 226
+    - 235
+    - 244
+    - 106
+  pan_id: 64774
+  ext_pan_id:
+    - 108
+    - 114
+    - 20
+    - 125
+    - 35
+    - 198
+    - 197
+    - 58
+  legacy_api: false
+  legacy_availability_payload: false
+  log_level: info
+
+device_options:
+  legacy: false
+
+devices:
+  '0xe0798dfffec9567b':
+    friendly_name: landing
+  '0x28dba7fffe046c09':
+    friendly_name: bathroom_temp_humid
+  '0xe0798dfffec75bca':
+    friendly_name: hall
+  '0x842712fffe772e66':
+    friendly_name: front_temp_humid
+  '0x842712fffe772723':
+    friendly_name: conservatory_temp_humid
+  '0xe0798dfffec75ae5':
+    friendly_name: kitchen
+  '0x842712fffe76fb0d':
+    friendly_name: shower_temp_humid

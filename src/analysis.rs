@@ -12,14 +12,14 @@
 //! |------------|-----------------|-------------------|--------|----------------------------------|
 //! | Idle       | —               | —                 | —      | elec ≤ 50W                       |
 //! | Heating    | 14.0–14.5 l/m   | > 0               | > 0    | Fixed pump, weather-compensated  |
-//! | DHW        | ≥ 16.0 l/m      | > 0               | > 0    | Diverter to cylinder, peak ~20.7 |
+//! | DHW        | ≥ 15.0 l/m      | > 0               | > 0    | Diverter to cylinder, peak ~21 |
 //! | Defrost    | any             | < 0 or heat ≤ 0   | ≤ 0    | Reverse cycle, extracts from water|
-//! | Transition | 14.5–16.0 l/m   | any               | any    | Diverter valve moving            |
+//! | Transition | 14.5–15.0 l/m   | any               | any    | Diverter valve moving            |
 //!
 //! ## Hysteresis
 //!
-//! - Enter DHW when flow_rate rises above **16.0** l/m AND heat > 0
-//! - Exit DHW when flow_rate drops below **15.0** l/m AND heat > 0
+//! - Enter DHW when flow_rate rises above **15.0** l/m AND heat > 0
+//! - Exit DHW when flow_rate drops below **14.7** l/m AND heat > 0
 //! - Enter Defrost when heat ≤ 0 or DT < −0.5 (regardless of flow rate)
 //! - Exit Defrost when heat > 0 AND DT > 0 (return to previous state)
 //!

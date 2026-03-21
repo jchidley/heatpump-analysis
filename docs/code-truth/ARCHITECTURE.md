@@ -1,4 +1,6 @@
-<!-- code-truth: 9d6d3e3 -->
+> **STALE**: References to dhw-auto-trigger.py on emondhw and ebusd-poll.py in Docker are outdated. Both replaced by shell scripts on pi5data (March 2026). See AGENTS.md for current architecture.
+
+<!-- code-truth: 4cc0d3d -->
 
 # Architecture
 
@@ -56,18 +58,35 @@ db.rs::find_gaps() → gaps.rs::TempBinModel::from_db() → gaps.rs::fill_gap()
 
 Gap filling bypasses `db.rs` — it writes directly to `simulated_samples` and `gap_log` tables via its own SQL. This is a deliberate design choice (gaps.rs manages its own schema) but means the two modules must agree on feed ID naming.
 
-### Octopus path (external JSON + SQLite)
+### Octopus path (external CSV + JSON + SQLite)
 
 ```
-~/github/octopus/dist/data/consumption.json → octopus.rs::load_consumption()
-~/github/octopus/dist/data/weather.json     → octopus.rs::load_weather()
+~/github/octopus/data/usage_merged.csv → octopus.rs::load_consumption()
+~/github/octopus/data/weather.json     → octopus.rs::load_weather()
+~/github/octopus/data/config.json      → gas m³→kWh conversion factors
                                                   │
                                           (optionally joins with
                                            db.rs outside_temp for
                                            emoncms temperatures)
 ```
 
-The Octopus module is semi-independent — it reads its own JSON files and only optionally touches the SQLite database for temperature data.
+The Octopus module is semi-independent — it reads its own CSV/JSON files and only optionally touches the SQLite database for temperature data.
+
+### DHW auto-trigger path (separate system on emondhw)
+
+```
+Multical meter → emonhub → MQTT (emon/multical/dhw_flow)
+                                          │
+                              dhw-auto-trigger.py (on emondhw)
+                                          │
+                              flow > 200 L/h for 10 min?
+                                          │
+                              ebusctl write -c 700 HwcSFMode load
+                                          │
+                              Heat pump switches to DHW mode
+```
+
+This runs independently on emondhw. Not connected to the Rust analysis tool.
 
 ## Configuration Architecture
 
@@ -100,17 +119,19 @@ The operating state classifier in `analysis.rs::classify_states()` is a **determ
                  ▼                ▼
           ┌──────────┐    ┌──────────┐
           │ HEATING  │◄──►│ DEFROST  │
-          │ fr < 16  │    │ any fr   │
+          │ fr < 15  │    │ any fr   │
           └────┬─────┘    └──────────┘
-               │ fr ≥ 16         ▲
+               │ fr ≥ 15         ▲
                ▼                 │
           ┌──────────┐           │
           │   DHW    │───────────┘
-          │ fr ≥ 15  │  h ≤ 0 or dt < -0.5
+          │ fr ≥ 14.7│  h ≤ 0 or dt < -0.5
           └──────────┘
 ```
 
-The hysteresis zone (15.0–16.0 L/min) prevents rapid switching during the ~3-second diverter valve transition. The machine remembers the pre-defrost state to return correctly after defrost events that can happen at any flow rate.
+The hysteresis zone (14.7–15.0 L/min) prevents rapid switching during the ~3-second diverter valve transition. The machine remembers the pre-defrost state to return correctly after defrost events that can happen at any flow rate.
+
+**Threshold history**: Originally 16.0/15.0 L/min entry/exit. Tightened to 15.0/14.7 in March 2026 because DHW flow dropped from 21.0 to 16.8 L/min due to y-filter sludge buildup. After filter cleaning (19 March 2026), DHW flow recovered to 21.3 L/min, but the tighter thresholds are retained as they're still safe (heating clamped at 14.3 L/min).
 
 ## SQLite Schema
 
@@ -131,13 +152,39 @@ gap_log (start_ts INTEGER PK, end_ts, duration_min, elec_kwh, heat_kwh, method, 
 
 WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE IF NOT EXISTS` — no migration system.
 
+## Implicit Contracts
+
+| Contract | Where | Risk |
+|----------|-------|------|
+| DataFrame column names must match `config.toml` feed `column` fields | analysis.rs, octopus.rs | Wrong column name → silent null results |
+| `fill_gap_interpolate()` uses hardcoded feed IDs, not config lookup | gaps.rs line ~580 | Config feed ID change breaks interpolation |
+| `resolve_time_range()` hardcodes `1_729_555_200` for `--all-data` | main.rs | Duplicates `config.toml`'s `default_sync_start_ms` — can drift |
+| `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs | octopus.rs | Not in config.toml — two sources for temperature correction |
+| Octopus data path hardcoded to `~/github/octopus/data/` | octopus.rs `default_data_dir()` | Moving octopus project breaks analysis |
+| `daily_hp_by_state()` assumes 1-minute sample interval | octopus.rs `SAMPLE_HOURS = 1/60` | Different sample interval → wrong energy |
+| DHW auto-trigger constants are in Python script, not config.toml | scripts/dhw-auto-trigger.py | Two configuration systems to maintain |
+| gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs TempBinModel | Threshold changes must be consistent between analysis.rs and gaps.rs |
+
+## External Boundaries
+
+| System | Connection | Prerequisite |
+|--------|-----------|--------------|
+| emoncms.org | REST API (read key) | API key via `--apikey` or `EMONCMS_APIKEY` |
+| `~/github/octopus/` | File read (CSV + JSON) | Must exist with `data/usage_merged.csv`, `weather.json`, `config.json` |
+| emondhw (10.0.1.46) | SSH/systemd for dhw-auto-trigger | Raspberry Pi on network, ebusd running, Multical connected |
+| emonhp (10.0.1.169) | Data source (MBUS + SDM120 → emoncms.org) | Must be running for data sync |
+| pi5data (10.0.1.230) | InfluxDB/Grafana for monitoring dashboards | Docker stack running |
+
 ## Change Propagation
 
 | If you change... | You must also... |
 |-----------------|------------------|
 | A feed ID in `config.toml` | Nothing — all modules resolve by name. But existing SQLite data uses old IDs. |
 | A threshold in `config.toml` | Re-run analysis. Existing simulated samples used old thresholds — consider `DELETE FROM simulated_samples` and re-running `fill-gaps`. |
+| DHW flow thresholds | Check that `gaps.rs` TempBinModel still classifies correctly (it uses `dhw_enter_flow_rate` from config). Update `docs/explanation.md` thresholds table. |
 | A new feed in `config.toml` | Add `column` if it should appear in analysis DataFrames. Run `sync` to fetch data. |
 | DataFrame column names | Update `config.toml` feed `column` fields. Check analysis.rs and octopus.rs column references. |
 | Add a new analysis function | Add to `analysis.rs`, add `Commands` variant in `main.rs`, wire up in `match`. |
 | Arotherm model size | All thresholds are model-specific (especially flow rates). The 7kW heating rate overlaps the 5kW DHW rate. |
+| DHW auto-trigger behaviour | Edit constants in `scripts/dhw-auto-trigger.py`, scp to emondhw, restart service. |
+| Monitoring infrastructure | Update `heating-monitoring-setup.md`. |

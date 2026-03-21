@@ -2,7 +2,9 @@
 
 ## What This Is
 
-CLI tool that syncs heat pump data from emoncms.org to local SQLite, then analyses it with Polars. Vaillant Arotherm Plus 5kW at 6 Rhodes Avenue, London N22 7UT.
+Rust CLI tool that syncs heat pump data from emoncms.org to local SQLite, then analyses it with Polars. Vaillant Arotherm Plus 5kW at 6 Rhodes Avenue, London N22 7UT.
+
+Also includes shell-based monitoring scripts deployed to pi5data, and extensive monitoring infrastructure documentation.
 
 ## Data Access
 
@@ -33,7 +35,7 @@ CLI tool that syncs heat pump data from emoncms.org to local SQLite, then analys
 | Baseload analysis | `cargo run -- --all-data baseload` |
 
 `--apikey` only needed for `feeds` and `sync`. Analysis reads from `heatpump.db`.
-Octopus commands read from `~/github/octopus/dist/data/` (consumption.json, weather.json).
+Octopus commands read from `~/github/octopus/data/` (usage_merged.csv, weather.json, config.json).
 `gas-vs-hp` and `baseload` also need `heatpump.db` for HP state machine data.
 
 ## Architecture
@@ -47,37 +49,101 @@ analysis.rs   → State machine + all Polars queries (no DB/API dependency)
 gaps.rs       → Gap detection + synthetic data (accesses SQLite directly)
 octopus.rs    → Octopus Energy integration + gas-vs-HP comparison
 main.rs       → CLI routing (20 subcommands)
+scripts/      → Shell scripts deployed to pi5data (DHW trigger, eBUS polling)
 ```
+
+Git submodules:
+- `avrdb_firmware/` — AVR-DB firmware (EmonTx4/EmonPi2/EmonTx5), compiled hex files for flashing
+- `EmonScripts/` — emonSD install/update scripts, firmware upload tools
+- `emonhub/` — data multiplexer (serial/MBUS/MQTT interfacers)
+- `ebusd/` — eBUS daemon config
+
+See `docs/code-truth/` for detailed architecture, patterns, and decisions.
+
+## Monitoring Infrastructure
+
+Four-device monitoring network documented in `heating-monitoring-setup.md`:
+- **emonpi** (eth0 10.0.1.117, wlan0 10.0.1.111) — EmonPi2 (3× CT: DNO grid/house/solar), 2× DS18B20, Zigbee2MQTT (7 devices), Pi 4B
+- **emonhp** (10.0.1.169) — MID-certified MBUS heat meter + SDM120 electric meter + RFM69 room sensor → emoncms.org. Minimal install: emonhub + mosquitto only (local emoncms stack disabled — was unused).
+- **emondhw** (10.0.1.46) — Multical DHW meter (emonhub + Mosquitto bridge only). Pi Zero 2 W, 426MB RAM.
+- **pi5data** (10.0.1.230) — Central hub: Docker (Mosquitto + InfluxDB + Telegraf + Grafana + ebusd) + systemd (ebusd-poll.sh + dhw-auto-trigger.sh)
+
+All hostnames resolve via local DNS (dnsmasq on router 10.0.0.1, domain `chidley.home`). Static DHCP reservations for all four devices.
+
+### MQTT Architecture
+Each emon device runs local Mosquitto with a bridge to pi5data. Telegraf on pi5data subscribes only to its local Mosquitto — all data arrives via bridges:
+```
+emonpi  ─── bridge (emon/#, zigbee2mqtt/+) ───┐
+emonhp  ─── bridge (emon/#) ──────────────────┼──→ pi5data Mosquitto ──→ Telegraf ──→ InfluxDB
+emondhw ─── bridge (emon/#) ──────────────────┘         ↑
+                                                         │
+eBUS adapter (10.0.1.41:9999) ──→ ebusd (Docker, port 8888 exposed) ──→ ebusd-poll.sh (systemd) ──→ ebusd/poll/* topics
+                                                         │
+                                              dhw-auto-trigger.sh (systemd) ←── emon/multical/dhw_flow
+                                                         │ (on sustained draw, writes via nc to ebusd:8888)
+                                                         ╰──→ HwcSFMode load
+```
+Bridges use QoS 1 + `cleansession false` — messages queue during pi5data outages.
+MQTT credentials: user `emonpi`, password `emonpimqtt2016` (all devices).
+
+### Host Package Baseline
+All devices (emonpi, emonhp, emondhw, pi5data, pi5nvme) have: `tmux`, `mosquitto-clients`, `netcat-openbsd`.
+
+### Design Principles
+- **Shell over Python** for simple MQTT/eBUS glue scripts — `mosquitto_sub`, `mosquitto_pub`, `nc` are sufficient
+- **systemd over Docker** for custom scripts — Docker only for upstream software (ebusd, Mosquitto, InfluxDB, Grafana, Telegraf, Zigbee2MQTT)
+- **Minimal installs** — emonhp and emondhw run only emonhub + mosquitto. No local emoncms, no Docker (except emonpi for Zigbee2MQTT)
+- **Central hub** — pi5data handles all storage, visualization, and automation. Emon devices are data collectors only.
+
+### emonpi Details
+- **EmonPi2 firmware**: emon_DB_6CT v2.1.1 (serial `/dev/ttyAMA0`)
+- **CT channels**: P1=DNO grid, P2=House consumption, P3=Solar (P4–P6 unused)
+- **DS18B20**: `28-00000ee9cb6d` (temp_high), `28-00000ee9e94f` (temp_low) — same space, different heights
+- **Zigbee2MQTT**: Docker, Sonoff USB 3.0 dongle, 7 paired devices (4× SNZB-02P temp/humidity, 3× ZBMINI switches). **Status**: Z2M bridge online but all devices show lastSeen Nov 2024 — need re-pairing after March 2026 rebuild.
+- **Credentials**: `pi` user, password in GPG store (`ak get emon-pi-credentials`) and Bitwarden ("emon pi, pi credentials")
+
+eBUS provides 25+ values every 30s including operating mode (StatuscodeNum), compressor speed, target flow temp, cylinder temp. See `heating-monitoring-setup.md` for full MQTT topic list and eBUS data dictionary.
+
+## DHW Auto-Trigger
+
+`scripts/dhw-auto-trigger.sh` runs on pi5data as a systemd service. Pure shell script using `mosquitto_sub` + `nc`. Watches Multical DHW flow via MQTT (bridged from emondhw); if flow > 200 L/h sustained for 10 minutes, forces eBUS DHW charge via `nc localhost 8888` (`write -c 700 HwcSFMode load`). Blocks during Cosy peak (16–19). See `docs/dhw-auto-trigger.md` for full details.
+
+Deploy: `scp scripts/dhw-auto-trigger.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/dhw-auto-trigger.sh /usr/local/bin/ && sudo systemctl restart dhw-auto-trigger"`
+
+## eBUS Polling
+
+`scripts/ebusd-poll.sh` runs on pi5data as a systemd service. Pure shell script using `nc` + `mosquitto_pub`. Reads 25 eBUS values every 30s (+ 16 more every 5 min) via `nc localhost 8888` and publishes to `ebusd/poll/*` MQTT topics. Replaces the previous Python-in-Docker version that reinstalled dependencies on every container restart.
+
+Deploy: `scp scripts/ebusd-poll.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/ebusd-poll.sh /usr/local/bin/ && sudo systemctl restart ebusd-poll"`
 
 ## Octopus Energy Integration
 
 Data flows from the `~/github/octopus/` project into heatpump-analysis:
 
 ```
-Octopus REST API → usage CSVs → merge → preload CLI → consumption.json + weather.json
+Octopus REST API → usage CSVs → merge → usage_merged.csv + weather.json + config.json
                                                               ↓
-                                                    octopus.rs loads JSON
+                                                    octopus.rs loads CSV/JSON
                                                     + emoncms DB for HP state machine
 ```
 
 ### Data sources and coverage
-- **Electricity**: Apr 2020 → present (half-hourly, 99k+ records)
+- **Electricity**: Apr 2020 → present (half-hourly, 166k+ records)
 - **Gas**: Apr 2020 → Jul 2024 (half-hourly, gas supply ended at HP install)
 - **Gap**: 102 days Dec 2023 → Mar 2024 (meter/comms outage, unfillable)
-- **Weather**: ERA5-Land daily temps + HDD, bias-corrected (see below)
+- **Weather**: ERA5-Land daily temps + HDD, bias-corrected by +1.0°C
 
 ### Temperature hierarchy
 1. **emoncms feed 503093** (Met Office hourly) — used for HP era (Oct 2024+), most accurate
 2. **ERA5-Land** (weather.json) — used for gas era, bias-corrected by +1.0°C
-   - Derived from 507-day overlap: emoncms reads 1.0°C warmer on average (range +0.6 to +1.8°C by month)
+   - Derived from 507-day overlap: emoncms reads 1.0°C warmer on average
    - ERA5 overstates HDD by ~14% without correction
    - HDD base: 15.5°C (UK standard)
 
 ### Refreshing Octopus data
 ```bash
-cd ~/github/octopus && bash scripts/run_dashboard.sh
+cd ~/github/octopus && npm run cli -- refresh
 ```
-This fetches latest REST data, merges with legacy parquet, and regenerates the JSON files.
 
 ### Tariff history
 | Period | Electricity | Gas |
@@ -121,19 +187,15 @@ All from actual data (state machine + Octopus + emoncms):
 | **Total** | **£1,239** | **£674** |
 | **Annual saving** | | **£565 (46%)** |
 
-Cost per kWh of heat: gas 6.29p (5.87p ÷ 90%), HP heating 3.60p (17.07p ÷ COP 4.74).
-Break-even gas price: 2.92p/kWh — gas hasn't been that cheap since early 2021.
-Insulation improvements between eras reduced heat/HDD by ~4% (9.2 → 8.8).
-
 ## Key Domain Model
 
 Operating states classified by flow rate (Arotherm 5kW fixed pump = 14.3 L/min):
 - **Heating**: flow_rate 14.0–14.5, DT > 0, heat > 0
-- **DHW**: flow_rate ≥ 16.0 (enter) / < 15.0 (exit), DT > 0, heat > 0
+- **DHW**: flow_rate ≥ 15.0 (enter) / < 14.7 (exit), DT > 0, heat > 0
 - **Defrost**: heat ≤ 0 OR DT < −0.5 (any flow rate)
 - **Idle**: elec ≤ 50W
 
-Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`flow_rate >= 16.0`).
+Thresholds in `config.toml` `[thresholds]`. Originally 16.0/15.0 for DHW — tightened to 15.0/14.7 in March 2026 due to y-filter sludge reducing DHW flow. Safe because heating is software-clamped at 14.3. See `docs/hydraulic-analysis.md`.
 
 ## Feed Notes
 
@@ -146,7 +208,25 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
     - Tesla Powerwall 2 (13.5 kWh) + Gateway
     - Commissioned: 19/04/2024, Emlite M24 generation meter
 
-## Reference Data (reference.rs)
+## Hydraulic System
+
+Documented in `docs/hydraulic-analysis.md`:
+- Pump software-clamps heating at 860 L/h (14.3 L/min)
+- DHW flow rate depends on system resistance (post-clean: 21.3 L/min, before clean: 16.8)
+- Y-filter on 35mm primary catches magnetite sludge — cleaned 19 March 2026
+- **Idle flow rate is the best early warning** of resistance increase (heating flow is masked by software clamp)
+- Post-clean baseline: idle 12.6, heating 14.4, DHW 21.3 L/min
+
+## DHW Cylinder
+
+Documented in `docs/dhw-cylinder-analysis.md`:
+- Kingspan Albion 300L twin-coil (both coils in series for HP)
+- Eco mode cycle: ~99 min, 3.1 kW, primary ΔT 2.1°C
+- Standby loss: 13 W (0.3 kWh/day) — far below 93 W rated spec due to stratification
+- WWHR effectiveness: 41% at steady state (3.5 min ramp-up), lifts mains from 15.8°C to 25°C
+- Multical T1/T2 sensors at mid-cylinder positions, not extremes
+
+## Reference Data (config.toml)
 
 - House: HTC 261 W/°C, floor area 180m², solid brick + 2010-standard top floor
 - Radiators: 15× Stelrad, total T50 = 25,133W, output calculator with correction factor
@@ -160,34 +240,39 @@ Thresholds: `analysis.rs` top-of-file constants. Also hardcoded in `gaps.rs` (`f
 - All domain constants, feed IDs, thresholds, and reference data live in `config.toml` — edit there, not in code
 - `config.toml` must be next to the executable or in the current working directory
 - `gaps.rs` bypasses `db.rs` — writes to SQLite tables directly
+- `fill_gap_interpolate()` in gaps.rs still uses hardcoded feed IDs (`"503094"`, etc.) — not migrated to config
 - No tests — validate changes against real data output
 - Simulated data in separate table (`simulated_samples`) — never mixed unless `--include-simulated`
 - DB schema is `CREATE TABLE IF NOT EXISTS` — no migrations
-- Polars pinned to 0.46 (0.53 available) — untested on newer versions. `strings` feature added for octopus.rs.
+- Polars pinned to 0.46 (0.53 available) — untested on newer versions
 - Outside temp feed (Met Office) is lower resolution (~hourly) than HP feeds (~10s)
 - Thresholds are 5kW-specific — 7kW model would need different values (its heating rate = 20 L/min overlaps 5kW DHW rate)
 - Two different HDD base temps: 15.5°C (UK standard in thresholds) vs 17°C (gas-era regression in house config)
-- `octopus.rs` reads JSON files from `~/github/octopus/dist/data/` — path hardcoded in `default_data_dir()`
-- `gas-vs-hp` uses `daily_hp_by_state()` which converts 1-min power samples to energy assuming exactly 1/60 hour per sample — accurate for 1-min data but would overcount if sample interval changes
+- `octopus.rs` reads from `~/github/octopus/data/` — path hardcoded in `default_data_dir()`
+- `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs, not in config.toml
+- `--all-data` start timestamp hardcoded in `resolve_time_range()`, duplicates `config.toml` value
+- `daily_hp_by_state()` assumes exactly 1-minute sample interval (`SAMPLE_HOURS = 1/60`)
 - Gas-era DHW estimated at 11.82 kWh/day (from config) — not measured. HP-era DHW is measured by state machine.
-- ERA5 bias correction (+1.0°C) is a single constant in octopus.rs — actual bias varies +0.6 to +1.8°C by month. Monthly correction would be more accurate but the constant is adequate for seasonal/annual analysis.
-
-## Planned Enhancements
-
-See [docs/roadmap.md](docs/roadmap.md) for full details:
-- **eBUS** — adapter is physically connected but not configured. Would give real-time OAT, compressor speed, defrost status, cylinder temp
-- **Octopus Energy** — ✅ integrated. See "Octopus Energy Integration" above.
-- **Solar PV + battery** — system installed, details above. Self-consumption analysis, DHW scheduling to solar peak
-- **Cost analysis subcommand** — the tariff data and cost calculations are currently ad-hoc Python scripts; could be a proper Rust subcommand
-- Other data in `C:\Users\jackc\OneDrive\Documents\House\`: degree day CSVs (EGWU), utility bills, Octopus Agile rates, weekly consumption
+- `scripts/dhw-auto-trigger.py` is the old Python version with an inverted peak-block bug — **do not deploy it**. The active version is `scripts/dhw-auto-trigger.sh` (shell, deployed to pi5data).
+- `scripts/ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP connection hanging — without `head -1`, each `nc` call waits 5s for the server to close.
 
 ## Boundaries
 
 - Don't change operating state thresholds without re-validating against the full dataset
 - Don't mix simulated and real data by default
 - Don't commit `heatpump.db` or API keys
-- Don't modify `~/github/octopus/` from this project — refresh via `run_dashboard.sh`
-- Keep `HDD_BASE_C` in `octopus.rs` in sync with `HDD_BASE_TEMP` in `analysis.rs`
-- Keep `GAS_DHW_KWH_PER_DAY` and `BOILER_EFFICIENCY` in `octopus.rs` in sync with `reference.rs`
+- Don't modify `~/github/octopus/` from this project — refresh via `npm run cli -- refresh`
+- Keep `HDD_BASE_C` in `octopus.rs` in sync with `HDD_BASE_TEMP` in `analysis.rs` (both read from config now)
+- Keep `GAS_DHW_KWH_PER_DAY` and `BOILER_EFFICIENCY` in `octopus.rs` in sync with config.toml `[gas_era]`
 - Human-facing docs: `docs/` (Diátaxis style) — see `docs/code-truth/` for derived-from-code docs
 - This file (`AGENTS.md`) is the single LLM context source. `docs/code-truth/` is for human comprehension.
+- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office
+- Don't modify monitoring infrastructure from this project — use SSH to emonpi/emondhw/emonhp/pi5data directly
+- Don't store credentials in plaintext — use `ak get emon-pi-credentials` at runtime
+
+## Planned Enhancements
+
+See [docs/roadmap.md](docs/roadmap.md) for full details:
+- **eBUS integration into analysis** — eBUS is physically connected and publishing data (25+ values every 30s). Not yet used by the Rust analysis tool. Could validate or replace the flow-rate state machine using StatuscodeNum.
+- **Solar PV + battery** — system installed, details above. Self-consumption analysis, DHW scheduling to solar peak.
+- **Cost analysis subcommand** — tariff data and cost calculations could be a proper Rust subcommand.

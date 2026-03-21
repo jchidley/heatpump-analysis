@@ -1,0 +1,18 @@
+[submodule "ebusd"]
+	path = ebusd
+	url = https://github.com/john30/ebusd.git
+[submodule "avrdb_firmware"]
+	path = avrdb_firmware
+	url = https://github.com/openenergymonitor/avrdb_firmware.git
+[submodule "EmonScripts"]
+	path = EmonScripts
+	url = https://github.com/openenergymonitor/EmonScripts.git
+[submodule "emonhub"]
+	path = emonhub
+	url = https://github.com/openenergymonitor/emonhub.git
+[submodule "emoncms"]
+	path = emoncms
+	url = https://github.com/emoncms/emoncms.git
+[submodule "emonPiLCD"]
+	path = emonPiLCD
+	url = https://github.com/openenergymonitor/emonPiLCD.git

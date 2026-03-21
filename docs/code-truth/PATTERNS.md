@@ -1,4 +1,4 @@
-<!-- code-truth: 9d6d3e3 -->
+<!-- code-truth: 4cc0d3d -->
 
 # Patterns
 
@@ -25,6 +25,10 @@ config().emoncms.feed_id("outside_temp")
 "503093"
 ```
 
+**Cost to break**: Every module depends on `config()`. Replacing the singleton with dependency injection would touch every function signature.
+
+**Exception**: `fill_gap_interpolate()` in gaps.rs still uses hardcoded feed ID strings (`"503094"`, `"503096"`, etc.) and `ERA5_BIAS_CORRECTION_C` in octopus.rs is a Rust constant. These are known inconsistencies from the config migration.
+
 ## Analysis Functions: DataFrame In, Stdout Out
 
 Every analysis function follows the same shape:
@@ -48,6 +52,8 @@ Key conventions:
 - No return values for display data — functions return `Result<()>`
 - Some functions take additional data (e.g. `degree_days` takes daily temp and energy vectors alongside the DataFrame)
 
+**Cost to break**: Moving to structured output (JSON, CSV) would require changing every analysis function. Currently all functions are tightly coupled to terminal output.
+
 ## Polars Usage Style
 
 - Always **lazy** evaluation: `.clone().lazy()...collect()?`
@@ -55,6 +61,8 @@ Key conventions:
 - Aggregations use inline expressions: `col("cop").mean().alias("avg_cop")`
 - Temperature banding via floor division: `(col("outside_t") / lit(2.0)).floor().cast(DataType::Int32) * lit(2)`
 - DataFrames are printed directly with `println!("{}", df)` — Polars' Display impl handles formatting
+
+**Cost to break**: Polars pinned to 0.46. Upgrading would require auditing all lazy queries — Polars has frequent breaking API changes between minor versions.
 
 ## Error Handling
 
@@ -64,6 +72,8 @@ Key conventions:
 - SQLite queries use `.unwrap_or(default)` for optional values (e.g. missing temp readings default to 0.0 or 10.0)
 - The state machine never fails — it uses `.unwrap_or(0.0)` for missing values
 
+**Cost to break**: Switching to typed errors would require defining error types and updating every `?` chain.
+
 ## SQL: Parameterised vs Format Strings
 
 Two patterns coexist:
@@ -71,7 +81,6 @@ Two patterns coexist:
 **Parameterised** (for user/runtime values):
 ```rust
 conn.prepare("SELECT ... WHERE feed_id = ?1 AND timestamp >= ?2")?
-stmt.query_map(params![feed_id, start_ms], ...)?
 ```
 
 **Format strings** (for config-derived feed IDs in multi-join queries):
@@ -85,7 +94,7 @@ conn.prepare(&format!(
 
 The format string pattern is used in `gaps.rs` where queries join 6+ feeds — building the join clauses dynamically from config. Feed IDs come from the trusted config file, not user input, so SQL injection is not a concern.
 
-**Exception**: `fill_gap_interpolate()` in gaps.rs still uses hardcoded feed ID strings (`"503094"`, `"503096"`, etc.). This is a known inconsistency from the config migration.
+**Cost to break**: Low — parameterised queries could replace format strings, but the multi-join construction would become more verbose.
 
 ## CLI Structure
 
@@ -96,13 +105,15 @@ Commands use clap's derive macro with subcommands:
 enum Commands {
     Summary,
     CopByTemp,
-    // ...
+    // ...20 variants
 }
 ```
 
 Global flags (`--days`, `--all-data`, `--from`/`--to`, `--db`, `--include-simulated`) are on the parent `Cli` struct. Time range resolution happens once in `resolve_time_range()`, returning `(start_unix_s, end_unix_s)`.
 
 The `require_client()` and `require_db()` helpers enforce preconditions — `require_client()` fails if no API key, `require_db()` fails if the database file doesn't exist.
+
+**Cost to break**: Adding new subcommands is cheap (enum variant + match arm). Restructuring global flags would touch every command.
 
 ## Data Loading: Real vs Simulated
 
@@ -114,6 +125,8 @@ pub fn load_dataframe_with_simulated(conn, start, end) -> DataFrame  // real + g
 ```
 
 When simulated data is included, an `is_simulated` boolean column is added. Simulated samples never overwrite real data — they only fill timestamps where no real sample exists.
+
+**Cost to break**: Mixing simulated and real data would contaminate COP and energy analysis. The separation is a core integrity constraint.
 
 ## Sync: Chunked with Polite Throttling
 
@@ -136,3 +149,25 @@ Modules match their concern directly:
 - `octopus` — Octopus Energy
 
 No prefix/suffix conventions (`_service`, `_module`, etc.), no trait abstractions, no generic types. Each module is a flat collection of functions and structs.
+
+## Python Script Pattern (dhw-auto-trigger)
+
+The DHW auto-trigger script follows a simple pattern:
+- All tunables as module-level constants at the top of the file
+- Single `subscribe_loop()` function using paho-mqtt callback API
+- Logging to file + stdout
+- Systemd service for lifecycle management
+- Compatible with both paho-mqtt v1 and v2
+
+**Cost to break**: The script runs independently on emondhw. Changes require scp + systemd restart — no CI/CD.
+
+## Notable Absences
+
+| What's missing | Why it matters |
+|---------------|---------------|
+| Tests | No unit, integration, or property tests. Validation by running against real data. |
+| CI/CD | No automated build, test, or deploy pipeline. |
+| Logging framework | Analysis uses `println!`/`eprintln!` only. |
+| Structured output | All output is terminal-formatted text, not JSON/CSV (except `export` command). |
+| Migration system | SQLite schema is `CREATE TABLE IF NOT EXISTS`. No versioning. |
+| Async | All I/O is blocking (intentional — see DECISIONS.md). |

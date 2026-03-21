@@ -74,12 +74,16 @@ hdd_base_temp_c = 15.5
 elec_running_w = 50.0
 
 # Flow rate (L/min) above which we enter DHW state (diverter valve to cylinder).
-# The gap between heating (14.3–14.5) and steady DHW (16.5+) is near-empty.
-dhw_enter_flow_rate = 16.0
+# Heating is software-clamped at 14.3 L/min (860 L/h) so will never approach
+# this threshold. DHW flow was 21 L/min at commissioning but has dropped to
+# ~16.8 due to system sludge (Mar 2026), so thresholds tightened to maintain
+# reliable DHW detection. Safe as long as heating remains clamped.
+dhw_enter_flow_rate = 15.0
 
 # Flow rate (L/min) below which we exit DHW state back to heating.
-# Provides hysteresis across the 14.5–16.0 transition zone (diverter moving).
-dhw_exit_flow_rate = 15.0
+# Narrow hysteresis (0.3 L/min) is safe because heating is clamped at 14.3
+# and cannot false-trigger DHW entry.
+dhw_exit_flow_rate = 14.7
 
 # DT threshold (°C) below which we consider the system to be in defrost.
 # During defrost the return is warmer than the flow (heat extracted from water).

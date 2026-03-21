@@ -82,9 +82,19 @@ cargo run -- --all-data design-comparison
 
 ## Documentation
 
+### Understanding the system
+- **[docs/explanation.md](docs/explanation.md)** — How the operating model works and why (state machine, flow rates, gap filling)
+- **[docs/hydraulic-analysis.md](docs/hydraulic-analysis.md)** — Pump curves, flow rate degradation, y-filter diagnosis
+- **[docs/dhw-cylinder-analysis.md](docs/dhw-cylinder-analysis.md)** — Cylinder heat exchange, WWHR performance, standby losses
+
+### Operations
+- **[docs/dhw-auto-trigger.md](docs/dhw-auto-trigger.md)** — Emergency DHW recharge automation (eBUS + MQTT)
+- **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Full monitoring infrastructure (emonhp, emondhw, pi5data, eBUS, MQTT, InfluxDB, Grafana)
+
+### Reference
+- **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit and integration status
+- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements
 - **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
-- **[docs/explanation.md](docs/explanation.md)** — How the operating model works and why
-- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements (eBUS, Octopus, solar PV+battery, degree days ✅, design comparison ✅)
 
 ## About This Code
 

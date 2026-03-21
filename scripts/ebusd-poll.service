@@ -1,0 +1,20 @@
+[Unit]
+Description=ebusd-poll — reads eBUS values and publishes to MQTT
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ebusd-poll.sh
+Restart=always
+RestartSec=10
+
+User=jack
+Group=jack
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ebusd-poll
+
+[Install]
+WantedBy=multi-user.target

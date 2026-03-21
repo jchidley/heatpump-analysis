@@ -4,27 +4,32 @@ Planned enhancements, roughly ordered by value and readiness.
 
 ## eBUS Integration
 
-**Status:** Hardware connected but not configured.
+**Status:** ✅ Hardware connected and publishing data. Not yet integrated into the Rust analysis tool.
 
-An eBUS adapter is plugged into the Vaillant Arotherm. eBUS is the serial bus protocol Vaillant uses for internal communication between the outdoor unit, indoor controller (SensoCOMFORT), and cylinder sensor.
+The eBUS adapter (ESP32 Shield v1.24, firmware 20260317) connects to ebusd 26.1 on emondhw (10.0.1.46). A polling script publishes 25+ values every 30 seconds to MQTT, bridged to InfluxDB on pi5data with Grafana dashboards.
 
-### What it would give us
+### What eBUS now provides (via MQTT/InfluxDB)
 
-| Signal | Why it matters |
-|--------|---------------|
-| **Outside air temperature (OAT)** | Real-time at the unit, ~10s resolution vs Met Office hourly. Critical for accurate COP-vs-temperature analysis, defrost timing, and degree-day calculations |
-| **Compressor speed / frequency** | Actual modulation level — currently we infer load from electrical power |
-| **Target flow temperature** | The weather compensation curve output — lets us compare actual vs target |
-| **Defrost status** | Binary flag rather than inferring from negative DT/heat |
-| **DHW target/actual cylinder temp** | Currently no cylinder temperature in emoncms (the DHW_flag feed died Dec 2024) |
-| **Error codes / status** | Diagnostic data |
+| Signal | Available | Status |
+|--------|-----------|--------|
+| **Operating mode (StatuscodeNum)** | ✅ Every 30s | 104=heating, 134=DHW, 100=standby, 516=defrost |
+| **Compressor speed / utilisation** | ✅ Every 30s | Percentage values |
+| **Target flow temperature** | ✅ Every 30s | Weather compensation output |
+| **Outside air temperature** | ✅ Every 30s | From the outdoor unit sensor |
+| **Cylinder temperature (HwcStorageTemp)** | ✅ Every 5 min | Replaces dead DHW_flag feed |
+| **COP values (HC/HWC/monthly)** | ✅ Every 5 min | HP's own COP calculation |
+| **Compressor inlet/outlet temps** | ✅ Every 30s | Refrigerant circuit data |
+| **High pressure, EEV position, fan speed** | ✅ Every 30s | Diagnostic data |
+| **Error codes / status** | ✅ Every 30s | Via Statuscode text |
 
-### Implementation notes
+### What's NOT yet done
 
-- eBUS adapters typically expose data via MQTT or REST (e.g. ebusd)
-- Data could either be logged to emoncms (new feeds → existing sync picks them up) or stored directly in the SQLite database
-- The OAT sensor would replace Met Office data for all temperature-dependent analysis, giving much better resolution for gap-filling model
-- Need to research: ebusd setup for Arotherm Plus, which eBUS message IDs carry the signals above
+- **Rust analysis integration** — the flow-rate state machine in `analysis.rs` could be validated or replaced using `StatuscodeNum`. Not yet investigated.
+- **eBUS OAT for temperature analysis** — could replace Met Office data for better resolution, but needs calibration comparison first.
+- **Defrost analysis** — eBUS provides definitive defrost status (516) vs the current inference from negative DT/heat.
+- **emoncms import** — eBUS data is only in InfluxDB (via pi5data). Could be added as new emoncms feeds for the existing sync pipeline.
+
+See [../heating-monitoring-setup.md](../heating-monitoring-setup.md) for the full eBUS data dictionary and MQTT topic list.
 
 ## Octopus Energy Integration
 
@@ -47,17 +52,20 @@ Full data audit: [octopus-data-inventory.md](octopus-data-inventory.md)
 
 ```
 ~/github/octopus/ project:
-  Octopus REST API → usage CSVs → merge_consumption_csv.py → usage_merged.csv
+  Octopus REST API → usage CSVs → merge → usage_merged.csv
   Legacy parquet (OctopusEnergyMonitor) → legacy_usage.csv → merged in
-  npm run cli -- preload → dist/data/consumption.json + weather.json
+  Open-Meteo ERA5-Land → weather.json
 
 heatpump-analysis:
-  octopus.rs reads consumption.json + weather.json
+  octopus.rs reads usage_merged.csv + weather.json + config.json
   + heatpump.db for HP state machine (heating/DHW/defrost classification)
   + emoncms feed 503093 for accurate HP-era temperatures
 ```
 
-### Refresh: `cd ~/github/octopus && bash scripts/run_dashboard.sh`
+### Refresh
+```bash
+cd ~/github/octopus && npm run cli -- refresh
+```
 
 ### Key findings
 

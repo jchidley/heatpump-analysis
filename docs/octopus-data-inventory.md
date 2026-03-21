@@ -38,14 +38,15 @@ startAt,endAt,readAt,value,unit,source,durationInSeconds
 2025-01-31T09:15:58-06:00,2025-02-01T00:00:00-06:00,...,16.047000,kwh,Amphio,53042
 ```
 
-**Key scripts:**
-- `octopus_rest_usage.py` — fetches half-hourly elec+gas via REST API, paginated (25k/page)
-  - Output CSV schema: `fuel, interval_start, interval_end, consumption_kwh`
+**Key commands (single TypeScript codebase):**
+- `npm run cli -- fetch` — fetches half-hourly elec+gas via REST API, paginated (25k/page)
+  - Output CSV schema: `fuel,interval_start,interval_end,consumption_kwh`
   - Supports `--electricity`, `--gas`, `--both`, `--from`, `--to`, `--csv`
-- `octopus_sync_env.py` — auto-discovers MPAN/MPRN/serial numbers from account, writes `.envrc`
-- `scripts/merge_consumption_csv.py` — merges multiple CSVs with deduplication
+- `npm run cli -- sync-env` — auto-discovers MPAN/MPRN/serial numbers from account, writes `.envrc`
+- `npm run cli -- merge` — merges multiple CSVs with deduplication
+- `npm run cli -- refresh` — one-command fetch + merge + weather update (primary refresh method)
 
-**SPA dashboard:** `dist/` contains a TypeScript SPA that imports CSVs and caches in IndexedDB. CLI preload available via `npm run cli -- preload`.
+**SPA dashboard:** `dist/` contains a TypeScript SPA that imports CSVs and caches in IndexedDB.
 
 ## Coverage Timeline
 
@@ -69,7 +70,7 @@ startAt,endAt,readAt,value,unit,source,durationInSeconds
 |----------|---------|--------|
 | `OCTOPUS_API_KEY` | REST API authentication | `ak set octopus` (**not yet stored**) |
 | `OCTOPUS_ACCOUNT_NUMBER` | Account lookup | Manual |
-| `OCTOPUS_MPAN` | Electricity meter point | Auto-discovered by `octopus_sync_env.py` |
+| `OCTOPUS_MPAN` | Electricity meter point | Auto-discovered by `npm run cli -- sync-env` |
 | `OCTOPUS_MARKET_SUPPLY_POINT_ID` | Same as MPAN | Auto-discovered |
 | `OCTOPUS_E_SERIAL` | Electricity meter serial | Auto-discovered |
 | `OCTOPUS_MPRN` | Gas meter point | Auto-discovered |
@@ -82,12 +83,11 @@ API key stored in `ak` (GPG-encrypted). All steps done 2026-03-18.
 ### What was done
 
 1. **`ak set octopus`** — API key stored ✅
-2. **`octopus_sync_env.py`** — meter IDs discovered into `.envrc` ✅
+2. **`sync-env`** — meter IDs discovered into `.envrc` ✅
 3. **Full REST history fetched** — `usage_full.csv` (Mar 2024 → Mar 2026, 40,313 rows) ✅
 4. **Legacy parquet converted** — `data/legacy_usage.csv` (Apr 2020 → Dec 2023, 125,997 rows) ✅
 5. **Merged** — `data/usage_merged.csv` (166,310 rows, Apr 2020 → Mar 2026) ✅
-6. **Preloaded** — `dist/data/consumption.json` + `weather.json` via CLI preload ✅
-7. **Integrated** — `octopus.rs` in heatpump-analysis reads the JSON files ✅
+6. **Integrated** — `octopus.rs` in heatpump-analysis reads `usage_merged.csv` + `weather.json` + `config.json` directly from `~/github/octopus/data/` ✅
 
 ### Remaining gap
 
@@ -96,7 +96,7 @@ API key stored in `ak` (GPG-encrypted). All steps done 2026-03-18.
 ### To refresh data
 
 ```bash
-cd ~/github/octopus && bash scripts/run_dashboard.sh
+cd ~/github/octopus && npm run cli -- refresh
 ```
 
 ## Integration with heatpump-analysis

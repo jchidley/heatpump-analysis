@@ -1,12 +1,14 @@
 //! Load Octopus Energy consumption and weather data, combining the octopus
-//! project's precomputed JSON with emoncms outside temperature for accuracy.
+//! project's CSV + JSON with emoncms outside temperature for accuracy.
 //!
 //! Temperature hierarchy:
 //!   1. emoncms feed 503093 (Met Office hourly, Oct 2024+) — most accurate
 //!   2. ERA5-Land from octopus weather.json (Apr 2020+) — bias-corrected using
 //!      the overlap period (+1.0°C systematic offset vs emoncms)
 //!
-//! Consumption data lives at `~/github/octopus/dist/data/consumption.json`.
+//! Consumption data lives at `~/github/octopus/data/usage_merged.csv`.
+//! Gas values are stored in m³ and converted to kWh here using the calorific
+//! value and correction factor from the octopus project's config.json.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,24 +23,36 @@ use crate::config::config;
 /// Applied to ERA5 temps for gas-era days where no emoncms data exists.
 const ERA5_BIAS_CORRECTION_C: f64 = 1.0;
 
-/// Default location of the octopus project's precomputed data.
+/// Default location of the octopus project's data directory.
 fn default_data_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/jack".to_string());
     PathBuf::from(home)
         .join("github")
         .join("octopus")
-        .join("dist")
         .join("data")
 }
 
-// ── JSON schema ──────────────────────────────────────────────────────────────
+// ── Data schemas ─────────────────────────────────────────────────────────────
 
+/// Gas unit conversion config from the octopus project's config.json.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ConsumptionRecord {
-    fuel: String,
-    interval_start: String,
-    kwh: f64,
+struct OctopusConfig {
+    #[serde(default = "default_gas_units")]
+    gas_units: String,
+    #[serde(default = "default_calorific_value")]
+    gas_calorific_value: f64,
+    #[serde(default = "default_correction_factor")]
+    gas_correction_factor: f64,
+}
+
+fn default_gas_units() -> String { "m3".to_string() }
+fn default_calorific_value() -> f64 { 39.2 }
+fn default_correction_factor() -> f64 { 1.02264 }
+
+/// Convert gas m³ to kWh using standard UK formula.
+fn gas_m3_to_kwh(m3: f64, calorific_value: f64, correction_factor: f64) -> f64 {
+    (m3 * correction_factor * calorific_value) / 3.6
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,31 +66,72 @@ struct WeatherRecord {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/// Load half-hourly consumption data as a Polars DataFrame.
+/// Load half-hourly consumption data from CSV as a Polars DataFrame.
+///
+/// Gas values are stored in m³ in the CSV and converted to kWh here using
+/// the calorific value and correction factor from config.json.
 ///
 /// Columns: timestamp (Datetime ms UTC), fuel (Utf8), kwh (f64)
 pub fn load_consumption(data_dir: Option<&Path>) -> Result<DataFrame> {
     let dir = data_dir
         .map(PathBuf::from)
         .unwrap_or_else(default_data_dir);
-    let path = dir.join("consumption.json");
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("Cannot read {}", path.display()))?;
-    let records: Vec<ConsumptionRecord> =
-        serde_json::from_str(&text).context("Failed to parse consumption.json")?;
 
-    let n = records.len();
-    let mut timestamps: Vec<i64> = Vec::with_capacity(n);
-    let mut fuels: Vec<String> = Vec::with_capacity(n);
-    let mut kwhs: Vec<f64> = Vec::with_capacity(n);
+    // Load gas conversion config
+    let config_path = dir.join("config.json");
+    let octopus_cfg: OctopusConfig = if config_path.exists() {
+        let text = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Cannot read {}", config_path.display()))?;
+        serde_json::from_str(&text).context("Failed to parse config.json")?
+    } else {
+        OctopusConfig {
+            gas_units: default_gas_units(),
+            gas_calorific_value: default_calorific_value(),
+            gas_correction_factor: default_correction_factor(),
+        }
+    };
+    let need_gas_conversion = octopus_cfg.gas_units == "m3";
 
-    for r in &records {
-        let ts = chrono::DateTime::parse_from_rfc3339(&r.interval_start)
-            .with_context(|| format!("Bad timestamp: {}", r.interval_start))?
+    // Read CSV: fuel,interval_start,interval_end,consumption_kwh
+    let csv_path = dir.join("usage_merged.csv");
+    let text = std::fs::read_to_string(&csv_path)
+        .with_context(|| format!("Cannot read {}", csv_path.display()))?;
+
+    let mut timestamps: Vec<i64> = Vec::new();
+    let mut fuels: Vec<String> = Vec::new();
+    let mut kwhs: Vec<f64> = Vec::new();
+
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 {
+            continue; // skip header
+        }
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() < 4 {
+            continue;
+        }
+        let fuel = fields[0].to_string();
+        let interval_start = fields[1];
+        let raw_value: f64 = fields[3]
+            .parse()
+            .with_context(|| format!("Bad value on line {}: {}", i + 1, fields[3]))?;
+
+        let kwh = if fuel == "gas" && need_gas_conversion {
+            gas_m3_to_kwh(
+                raw_value,
+                octopus_cfg.gas_calorific_value,
+                octopus_cfg.gas_correction_factor,
+            )
+        } else {
+            raw_value
+        };
+
+        let ts = chrono::DateTime::parse_from_rfc3339(interval_start)
+            .with_context(|| format!("Bad timestamp on line {}: {}", i + 1, interval_start))?
             .timestamp_millis();
+
         timestamps.push(ts);
-        fuels.push(r.fuel.clone());
-        kwhs.push(r.kwh);
+        fuels.push(fuel);
+        kwhs.push(kwh);
     }
 
     let ts_series = Series::new("timestamp".into(), &timestamps)
@@ -91,9 +146,17 @@ pub fn load_consumption(data_dir: Option<&Path>) -> Result<DataFrame> {
     .context("build consumption DataFrame")?;
 
     eprintln!(
-        "Octopus consumption: {} records loaded from {}",
+        "Octopus consumption: {} records loaded from {}{}",
         df.height(),
-        path.display()
+        csv_path.display(),
+        if need_gas_conversion {
+            format!(
+                " (gas: m³→kWh, CV={}, CF={})",
+                octopus_cfg.gas_calorific_value, octopus_cfg.gas_correction_factor
+            )
+        } else {
+            String::new()
+        },
     );
 
     Ok(df)
