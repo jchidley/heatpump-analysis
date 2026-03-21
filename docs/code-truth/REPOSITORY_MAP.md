@@ -1,6 +1,4 @@
-> **STALE**: References to dhw-auto-trigger.py on emondhw and ebusd-poll.py in Docker are outdated. Both replaced by shell scripts on pi5data (March 2026). See AGENTS.md for current architecture.
-
-<!-- code-truth: 4cc0d3d -->
+<!-- code-truth: d55d64a -->
 
 # Repository Map
 
@@ -15,7 +13,7 @@
 | `README.md` | Human-facing quick start, command reference, project philosophy |
 | `heatpump.db` | SQLite database (gitignored, created by `sync`) |
 | `heating-monitoring-setup.md` | Full monitoring infrastructure documentation (devices, MQTT topics, eBUS data, credentials) |
-| `.gitmodules` | ebusd submodule reference |
+| `.gitmodules` | Six submodules: ebusd, avrdb_firmware, EmonScripts, emonhub, emoncms, emonPiLCD |
 
 ## Source Modules
 
@@ -98,10 +96,16 @@ This is the largest module. Two concerns:
 
 ## Scripts
 
-| File | Deployed to | Purpose |
-|------|------------|---------|
-| `scripts/dhw-auto-trigger.py` | emondhw `/usr/local/bin/` | Watches Multical DHW flow via MQTT, triggers eBUS DHW charge on prolonged draws. Blocks during Cosy peak (16–19). |
-| `scripts/dhw-auto-trigger.service` | emondhw `/etc/systemd/system/` | Systemd unit for auto-trigger |
+All deployed to pi5data `/usr/local/bin/` as systemd services.
+
+| File | Service | Purpose |
+|------|---------|---------|
+| `scripts/dhw-auto-trigger.sh` | `dhw-auto-trigger` | Watches Multical DHW flow via MQTT, triggers eBUS DHW charge on prolonged draws. Blocks during Cosy peak (16–19). |
+| `scripts/dhw-auto-trigger.service` | — | Systemd unit for auto-trigger |
+| `scripts/ebusd-poll.sh` | `ebusd-poll` | Reads 25 eBUS values every 30s via `nc`, publishes to MQTT |
+| `scripts/ebusd-poll.service` | — | Systemd unit for eBUS poll |
+| `scripts/z2m-automations.sh` | `z2m-automations` | Motion sensor → landing light automation (interim, to be replaced by z2m-hub) |
+| `scripts/backup-sdcard.sh` | — | SD card backup utility |
 
 ## Documentation
 
@@ -113,7 +117,9 @@ This is the largest module. Two concerns:
 | `docs/dhw-auto-trigger.md` | Emergency DHW recharge automation: trigger logic, eBUS commands, deployment | How-to + Explanation |
 | `docs/dhw-cylinder-analysis.md` | Cylinder heat exchange: reheat cycles, standby loss, WWHR, stratification | Explanation |
 | `docs/octopus-data-inventory.md` | Audit of Octopus data sources, coverage, integration status | Reference |
-| `docs/roadmap.md` | Planned enhancements (eBUS ✅, Octopus ✅, solar PV, degree days ✅) | Reference |
+| `docs/roadmap.md` | Planned enhancements (eBUS ✅, Octopus ✅, solar PV, degree days ✅, z2m-hub) | Reference |
+| `docs/emonpi-rebuild-status-2026-03-20.md` | emonpi rebuild checklist and status | Reference |
+| `docs/emon-installation-runbook.md` | Generic emon device installation procedure | How-to |
 | `docs/code-truth/` | This documentation set (derived from code) | — |
 | `heating-monitoring-setup.md` | Full monitoring infrastructure: devices, MQTT, eBUS, InfluxDB, Grafana, credentials | Reference |
 
@@ -139,5 +145,7 @@ This is the largest module. Two concerns:
 | New analysis subcommand | `src/analysis.rs` (function) + `src/main.rs` (Commands enum + match) |
 | Gap-fill model or strategy | `src/gaps.rs` |
 | Octopus data loading or comparison | `src/octopus.rs` |
-| DHW auto-trigger behaviour | `scripts/dhw-auto-trigger.py` (constants at top) |
+| DHW auto-trigger behaviour | `scripts/dhw-auto-trigger.sh` (constants at top) |
+| eBUS polling values | `scripts/ebusd-poll.sh` |
+| Z2M automations | `scripts/z2m-automations.sh` (interim — will move to `~/github/z2m-hub/`) |
 | Monitoring infrastructure | `heating-monitoring-setup.md` |

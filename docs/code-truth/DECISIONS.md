@@ -1,6 +1,4 @@
-> **STALE**: References to dhw-auto-trigger.py on emondhw and ebusd-poll.py in Docker are outdated. Both replaced by shell scripts on pi5data (March 2026). See AGENTS.md for current architecture.
-
-<!-- code-truth: 4cc0d3d -->
+<!-- code-truth: d55d64a -->
 
 # Decisions
 
@@ -143,17 +141,19 @@
 
 **Risk**: Schema and feed ID conventions must stay consistent between the two modules.
 
-### D13: DHW auto-trigger as separate Python script
+### D13: Monitoring scripts as shell on pi5data (not Python, not integrated into Rust CLI)
 
-**Status:** active
+**Status:** active (updated March 2026)
 
-**What**: The DHW auto-trigger runs as a standalone Python script on emondhw, not integrated into the Rust CLI.
+**What**: DHW auto-trigger, eBUS polling, and Z2M automations run as standalone shell scripts on pi5data, not integrated into the Rust CLI.
 
-**Why**: It needs to run 24/7 on the Raspberry Pi close to the eBUS adapter. The Rust CLI runs on a development machine. Different deployment targets, different lifecycle.
+**Why**: They need to run 24/7 on pi5data (the central hub). The Rust CLI runs on a development machine. Different deployment targets, different lifecycle. Shell scripts (`mosquitto_sub`, `mosquitto_pub`, `nc`) are sufficient — no Python runtime needed.
 
-**Where**: `scripts/dhw-auto-trigger.py`, deployed to `/usr/local/bin/` on emondhw
+**Where**: `scripts/dhw-auto-trigger.sh`, `scripts/ebusd-poll.sh`, `scripts/z2m-automations.sh` — all deployed to `/usr/local/bin/` on pi5data as systemd services.
 
-**Consequences**: Configuration is duplicated (Python constants vs config.toml). Peak tariff hours are hardcoded in the Python script.
+**History**: Originally `dhw-auto-trigger.py` on emondhw and `ebusd-poll.py` in Docker. Both replaced by shell scripts on pi5data in March 2026 to eliminate Python runtime dependencies and centralise all automation on one host.
+
+**Consequences**: Configuration is duplicated (shell constants vs config.toml). Z2M automations are interim — will be replaced by `~/github/z2m-hub/` Rust server.
 
 ## Open Questions
 
@@ -162,4 +162,4 @@
 - **`--all-data` start timestamp**: `resolve_time_range()` in main.rs hardcodes `1_729_555_200` (Oct 22 2024) as the earliest data, duplicating the value in `config.toml`. These should be unified.
 - **ERA5 bias correction location**: `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs, not in config.toml. Should it be externalised?
 - **eBUS state machine validation**: With eBUS now providing definitive operating mode (StatuscodeNum), the flow-rate state machine could be validated or replaced. Not yet investigated.
-- **dhw-auto-trigger.py bug**: The peak-block logic has a control flow error — the `run_ebus(EBUS_CMD)` call is inside the `in_peak` branch, meaning eBUS is triggered when it should be blocked. The log message says "BLOCKED" but the action happens. Needs fixing.
+- **dhw-auto-trigger.py bug**: The old Python version (`scripts/dhw-auto-trigger.py`) had an inverted peak-block bug. **Resolved** — replaced by `scripts/dhw-auto-trigger.sh` which has correct logic. The `.py` file should not be deployed (noted in AGENTS.md gotchas).

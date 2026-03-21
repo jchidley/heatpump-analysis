@@ -1,4 +1,4 @@
-<!-- code-truth: 4cc0d3d -->
+<!-- code-truth: d55d64a -->
 
 # Patterns
 
@@ -150,16 +150,17 @@ Modules match their concern directly:
 
 No prefix/suffix conventions (`_service`, `_module`, etc.), no trait abstractions, no generic types. Each module is a flat collection of functions and structs.
 
-## Python Script Pattern (dhw-auto-trigger)
+## Shell Script Pattern (monitoring scripts on pi5data)
 
-The DHW auto-trigger script follows a simple pattern:
-- All tunables as module-level constants at the top of the file
-- Single `subscribe_loop()` function using paho-mqtt callback API
-- Logging to file + stdout
-- Systemd service for lifecycle management
-- Compatible with both paho-mqtt v1 and v2
+All monitoring scripts (`dhw-auto-trigger.sh`, `ebusd-poll.sh`, `z2m-automations.sh`) follow a consistent pattern:
+- All tunables as shell variables at the top of the file
+- `mosquitto_sub` for event subscription, `mosquitto_pub` for commands, `nc` for eBUS
+- `log()` helper with timestamp prefix
+- `cleanup()` trap for SIGTERM/SIGINT
+- systemd service for lifecycle management (`Restart=always`)
+- Deploy: `scp` to pi5data + `sudo systemctl restart <service>`
 
-**Cost to break**: The script runs independently on emondhw. Changes require scp + systemd restart — no CI/CD.
+**Cost to break**: Scripts run independently on pi5data. Changes require scp + systemd restart — no CI/CD. Z2M automations are interim (will move to z2m-hub).
 
 ## Notable Absences
 

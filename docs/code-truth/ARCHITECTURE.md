@@ -1,6 +1,4 @@
-> **STALE**: References to dhw-auto-trigger.py on emondhw and ebusd-poll.py in Docker are outdated. Both replaced by shell scripts on pi5data (March 2026). See AGENTS.md for current architecture.
-
-<!-- code-truth: 4cc0d3d -->
+<!-- code-truth: d55d64a -->
 
 # Architecture
 
@@ -72,21 +70,35 @@ Gap filling bypasses `db.rs` — it writes directly to `simulated_samples` and `
 
 The Octopus module is semi-independent — it reads its own CSV/JSON files and only optionally touches the SQLite database for temperature data.
 
-### DHW auto-trigger path (separate system on emondhw)
+### DHW auto-trigger path (separate system on pi5data)
 
 ```
-Multical meter → emonhub → MQTT (emon/multical/dhw_flow)
-                                          │
-                              dhw-auto-trigger.py (on emondhw)
-                                          │
-                              flow > 200 L/h for 10 min?
-                                          │
-                              ebusctl write -c 700 HwcSFMode load
-                                          │
-                              Heat pump switches to DHW mode
+Multical meter → emondhw emonhub → MQTT bridge → pi5data Mosquitto
+                                                          │
+                                          dhw-auto-trigger.sh (systemd on pi5data)
+                                                          │
+                                          flow > 200 L/h for 10 min?
+                                                          │
+                                          nc localhost 8888 → write -c 700 HwcSFMode load
+                                                          │
+                                          Heat pump switches to DHW mode
 ```
 
-This runs independently on emondhw. Not connected to the Rust analysis tool.
+This runs independently on pi5data. Not connected to the Rust analysis tool.
+
+### Z2M automation path (separate system on pi5data)
+
+```
+Aqara motion sensor → Z2M (emonpi) → MQTT → pi5data Mosquitto
+                                                      │
+                                      z2m-automations.sh (systemd on pi5data)
+                                                      │
+                                      occupancy:true? → mosquitto_pub landing/set ON
+                                                      │
+                                      60s timeout → mosquitto_pub landing/set OFF
+```
+
+Interim solution — will be replaced by `~/github/z2m-hub/` Rust server.
 
 ## Configuration Architecture
 
@@ -162,7 +174,7 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs | octopus.rs | Not in config.toml — two sources for temperature correction |
 | Octopus data path hardcoded to `~/github/octopus/data/` | octopus.rs `default_data_dir()` | Moving octopus project breaks analysis |
 | `daily_hp_by_state()` assumes 1-minute sample interval | octopus.rs `SAMPLE_HOURS = 1/60` | Different sample interval → wrong energy |
-| DHW auto-trigger constants are in Python script, not config.toml | scripts/dhw-auto-trigger.py | Two configuration systems to maintain |
+| DHW auto-trigger constants are in shell script, not config.toml | scripts/dhw-auto-trigger.sh | Two configuration systems to maintain |
 | gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs TempBinModel | Threshold changes must be consistent between analysis.rs and gaps.rs |
 
 ## External Boundaries
@@ -171,7 +183,9 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 |--------|-----------|--------------|
 | emoncms.org | REST API (read key) | API key via `--apikey` or `EMONCMS_APIKEY` |
 | `~/github/octopus/` | File read (CSV + JSON) | Must exist with `data/usage_merged.csv`, `weather.json`, `config.json` |
-| emondhw (10.0.1.46) | SSH/systemd for dhw-auto-trigger | Raspberry Pi on network, ebusd running, Multical connected |
+| pi5data (10.0.1.230) | SSH/systemd for scripts (dhw-auto-trigger, ebusd-poll, z2m-automations) | Docker stack + systemd services running |
+| emonpi (10.0.1.117) | Z2M WebSocket (`ws://emonpi:8080/api`), MQTT (`emonpi:1883`) | Z2M Docker + Mosquitto running |
+| emondhw (10.0.1.46) | Multical data source (bridged via MQTT to pi5data) | Raspberry Pi on network, emonhub + Mosquitto running |
 | emonhp (10.0.1.169) | Data source (MBUS + SDM120 → emoncms.org) | Must be running for data sync |
 | pi5data (10.0.1.230) | InfluxDB/Grafana for monitoring dashboards | Docker stack running |
 
@@ -186,5 +200,6 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | DataFrame column names | Update `config.toml` feed `column` fields. Check analysis.rs and octopus.rs column references. |
 | Add a new analysis function | Add to `analysis.rs`, add `Commands` variant in `main.rs`, wire up in `match`. |
 | Arotherm model size | All thresholds are model-specific (especially flow rates). The 7kW heating rate overlaps the 5kW DHW rate. |
-| DHW auto-trigger behaviour | Edit constants in `scripts/dhw-auto-trigger.py`, scp to emondhw, restart service. |
+| DHW auto-trigger behaviour | Edit constants in `scripts/dhw-auto-trigger.sh`, deploy: `scp scripts/dhw-auto-trigger.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/dhw-auto-trigger.sh /usr/local/bin/ && sudo systemctl restart dhw-auto-trigger"` |
+| Z2M automations | Edit `scripts/z2m-automations.sh`, deploy same pattern to pi5data. Interim — will move to z2m-hub. |
 | Monitoring infrastructure | Update `heating-monitoring-setup.md`. |

@@ -1,13 +1,9 @@
-> **STALE**: References to `dhw-auto-trigger.py` on emondhw and `ebusd-poll.py` in Docker are outdated. Both replaced by shell scripts on pi5data (March 2026). See `AGENTS.md` and `docs/dhw-auto-trigger.md` for current architecture. Regenerate with code-truth skill to fix.
-
 # Repository Overview
 
 ```yaml
-commit: 4cc0d3d61f3b93ad67d0e020c3388b508d1abde8
-short_commit: 4cc0d3d
+commit: d55d64a
 branch: main
-commit_date: 2026-03-19 08:41:25 +0000
-working_tree: modified_with_untracked
+updated: 2026-03-21
 ```
 
 ## What This System Does
@@ -17,8 +13,9 @@ A Rust CLI tool that syncs heat pump monitoring data from emoncms.org to a local
 The system is built for a specific installation: a **Vaillant Arotherm Plus 5kW** air-source heat pump at a residential property in London, monitored via an emonHP bundle feeding emoncms.org.
 
 Beyond the Rust analysis tool, the project includes:
-- A **DHW auto-trigger script** (`scripts/dhw-auto-trigger.py`) deployed to emondhw, which watches DHW draw flow rate via MQTT and forces an emergency cylinder recharge via eBUS when prolonged draws are detected.
+- Shell-based **monitoring scripts** deployed to pi5data (`scripts/dhw-auto-trigger.sh`, `scripts/ebusd-poll.sh`, `scripts/z2m-automations.sh` — all systemd services)
 - Extensive **domain documentation** on the hydraulic system, DHW cylinder heat exchange, and monitoring infrastructure.
+- A separate **z2m-hub** project (`~/github/z2m-hub/`) for Zigbee automation — referenced but not part of this repo.
 
 ## Key Technologies
 
@@ -33,7 +30,7 @@ Beyond the Rust analysis tool, the project includes:
 | chrono | Date/time handling |
 | anyhow | Error propagation |
 | once_cell | Global config singleton |
-| Python 3 + paho-mqtt | DHW auto-trigger script (deployed on emondhw Pi) |
+| Shell (bash) | Monitoring scripts deployed to pi5data (DHW trigger, eBUS polling, Z2M automations) |
 | ebusd 26.1 | eBUS protocol decoder for Vaillant heat pump communication |
 
 ## Data Flow
@@ -55,16 +52,18 @@ emoncms.org REST API
 
    config.toml ──▶ config.rs (global singleton, read by all modules)
 
-   [Separately on emondhw Pi:]
-   Multical MQTT (dhw_flow) → dhw-auto-trigger.py → ebusctl (eBUS → HP)
+   [Separately on pi5data:]
+   Multical MQTT (dhw_flow) → dhw-auto-trigger.sh → ebusd (eBUS → HP)
+   Z2M MQTT (landing_motion) → z2m-automations.sh → Z2M MQTT (landing/set)
 ```
 
 ## How It's Organised
 
 - **`config.toml`** — Single source of truth for all domain data: emoncms feed IDs, operating thresholds, house thermal properties, radiator inventory, Arotherm manufacturer specs, and gas-era consumption history. Loaded once at startup.
 - **`src/`** — Six Rust modules plus `main.rs` (3,591 lines total). No nested directories, no procedural macros, no build scripts. Each module has one clear responsibility.
-- **`scripts/`** — Python scripts deployed to the emondhw Raspberry Pi (DHW auto-trigger with systemd service).
+- **`scripts/`** — Shell scripts deployed to pi5data as systemd services (DHW auto-trigger, eBUS polling, Z2M automations).
 - **`ebusd/`** — Git submodule (https://github.com/john30/ebusd), reference for eBUS protocol.
+- **`.gitmodules`** — Six submodules: ebusd, avrdb_firmware, EmonScripts, emonhub, emoncms, emonPiLCD.
 - **`docs/`** — Human-facing documentation (Diátaxis style) plus code-truth.
 - **`heatpump.db`** — SQLite database (gitignored). Created by `sync`, read by all analysis commands.
 
@@ -91,7 +90,7 @@ Grouped by concern:
 
 4. **Dual-era comparison** — Gas-era consumption data (Octopus billing) and heat-pump-era data are normalised by heating degree days with temperature from two sources (ERA5-Land for pre-HP, Met Office for HP era) with a measured bias correction.
 
-5. **DHW auto-trigger** — A Python script on emondhw watches real-time DHW draw flow via MQTT and commands the heat pump via eBUS to force an emergency cylinder recharge during prolonged draws. Blocks during peak tariff hours.
+5. **DHW auto-trigger** — A shell script on pi5data watches real-time DHW draw flow via MQTT and commands the heat pump via eBUS to force an emergency cylinder recharge during prolonged draws. Blocks during peak tariff hours.
 
 6. **No tests** — Validated against real data output rather than unit tests. Changes must be verified against the full dataset.
 
