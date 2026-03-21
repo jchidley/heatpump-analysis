@@ -65,7 +65,7 @@ See `docs/code-truth/` for detailed architecture, patterns, and decisions.
 Four-device monitoring network documented in `heating-monitoring-setup.md`:
 - **emonpi** (eth0 10.0.1.117, wlan0 10.0.1.111) — EmonPi2 (3× CT: DNO grid/house/solar), 2× DS18B20, Zigbee2MQTT (7 devices), Pi 4B
 - **emonhp** (10.0.1.169) — MID-certified MBUS heat meter + SDM120 electric meter + RFM69 room sensor → emoncms.org. Minimal install: emonhub + mosquitto only (local emoncms stack disabled — was unused).
-- **emondhw** (10.0.1.46) — Multical DHW meter (emonhub + Mosquitto bridge only). Pi Zero 2 W, 426MB RAM.
+- **emondhw** (10.0.1.46) — Multical DHW meter (emonhub + Mosquitto bridge only). Pi Zero 2 W, 426MB RAM. USB-Modbus adapter has udev rule (`99-multical.rules`) creating stable `/dev/ttyMULTICAL` symlink — prevents data loss on USB reconnect.
 - **pi5data** (10.0.1.230) — Central hub: Docker (Mosquitto + InfluxDB + Telegraf + Grafana + ebusd) + systemd (ebusd-poll.sh + dhw-auto-trigger.sh)
 
 All hostnames resolve via local DNS (dnsmasq on router 10.0.0.1, domain `chidley.home`). Static DHCP reservations for all four devices.
@@ -222,7 +222,7 @@ Documented in `docs/hydraulic-analysis.md`:
 Documented in `docs/dhw-cylinder-analysis.md`:
 - Kingspan Albion 300L twin-coil (both coils in series for HP), internal expansion (air bubble, no ext vessel)
 - Measured connection heights (from outside bottom): bottom coil 420mm, T2+cold inlet 540mm, top coil 1020mm, T1+draw-off 1580mm
-- Usable hot water above top coil: ~149L (50% of nominal 300L). Dead zone below coils: 59L (20%)
+- Usable hot water (T2 to T1/draw-off): ~165L validated. Dead zone below coils: 59L (20%)
 - Eco mode cycle: ~115 min, 3.0 kW, primary ΔT 2.1°C
 - Standby loss: 13 W (0.3 kWh/day) — far below 93 W rated spec due to stratification + air bubble insulation
 - WWHR effectiveness: 41% at steady state (3.5 min ramp-up), lifts mains from 15.8°C to 25°C

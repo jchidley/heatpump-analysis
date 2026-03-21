@@ -6,7 +6,7 @@ Planned enhancements, roughly ordered by value and readiness.
 
 **Status:** ✅ Hardware connected and publishing data. Not yet integrated into the Rust analysis tool.
 
-The eBUS adapter (ESP32 Shield v1.24, firmware 20260317) connects to ebusd 26.1 on emondhw (10.0.1.46). A polling script publishes 25+ values every 30 seconds to MQTT, bridged to InfluxDB on pi5data with Grafana dashboards.
+The eBUS adapter (ESP32 Shield v1.24, firmware 20260317) connects to ebusd 26.1 running as Docker on pi5data (port 8888). A polling script (`ebusd-poll.sh`, systemd on pi5data) publishes 25+ values every 30 seconds to MQTT, stored in InfluxDB with Grafana dashboards.
 
 ### What eBUS now provides (via MQTT/InfluxDB)
 

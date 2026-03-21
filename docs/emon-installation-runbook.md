@@ -74,6 +74,27 @@ sudo mkdir -p /etc/emonhub /var/log/emonhub
 sudo chown -R pi:pi /var/log/emonhub
 ```
 
+### udev rule for stable USB-Modbus symlink
+The Multical 403 connects via a QinHeng CH340 USB-serial adapter. Without a udev rule, the kernel assigns `/dev/ttyACMx` where `x` increments on each USB reconnect — causing emonhub to fail with "Input/output error" until manually reconfigured. A udev rule creates a stable `/dev/ttyMULTICAL` symlink based on the adapter's serial number.
+
+```bash
+# Identify the adapter (plug it in first)
+udevadm info /dev/ttyACM0 | grep -E "ID_SERIAL_SHORT|ID_VENDOR_ID|ID_MODEL_ID"
+# Expected: idVendor=1a86, idProduct=55d3, serial=586D012855
+
+# Create the udev rule
+sudo tee /etc/udev/rules.d/99-multical.rules << 'EOF'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="586D012855", SYMLINK+="ttyMULTICAL"
+EOF
+
+# Reload and verify
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+ls -la /dev/ttyMULTICAL   # should symlink to ttyACM0 (or current ttyACMx)
+```
+
+> **Note**: If replacing the USB adapter, update the `serial` attribute in the udev rule. Run `udevadm info /dev/ttyACMx` on the new adapter to find its serial number.
+
 ### emonhub systemd service
 ```bash
 sudo tee /etc/systemd/system/emonhub.service << 'EOF'
@@ -105,7 +126,7 @@ sudo tee /etc/emonhub/emonhub.conf << 'EOF'
     [[multical]]
         Type = EmonHubMinimalModbusInterfacer
         [[[init_settings]]]
-            device = /dev/ttyACM0
+            device = /dev/ttyMULTICAL
             baud = 19200
             parity = even
             datatype = float
@@ -490,6 +511,7 @@ Expected style:
 
 - [x] hostname `emondhw`
 - [x] SSH key auth works
+- [x] udev rule `/etc/udev/rules.d/99-multical.rules` present, `/dev/ttyMULTICAL` symlink resolves
 - [x] `mosquitto` active + bridge to pi5data active (`emon/#`)
 - [x] `emonhub` active, publishing `emon/multical/dhw_*`
 - [x] Multical 403 data visible in InfluxDB on pi5data (measurement `emon`, source `multical`)
@@ -559,7 +581,56 @@ sudo apt-get install -y tmux mosquitto-clients netcat-openbsd
 - **Central hub** — pi5data handles all storage, visualization, and automation. Emon devices are data collectors only.
 - **Hostnames over IPs** — use local DNS (`pi5data`, `emonpi`, `emonhp`, `emondhw`).
 
-## 15) Notes
+## 15) Troubleshooting
+
+### emondhw: Multical "Input/output error" / no DHW data
+
+**Symptom**: `emon/multical/dhw_*` topics stop updating. emonhub log shows:
+```
+ERROR multical Could not read register @ 0: (5, 'Input/output error')
+ERROR multical Could not find Modbus device
+```
+
+**Cause**: USB-Modbus adapter disconnected and reconnected, getting a new `/dev/ttyACMx` number. emonhub config points to the old device node.
+
+**Fix** (if udev rule is already in place):
+```bash
+# Restart emonhub — it will follow /dev/ttyMULTICAL to the new ttyACMx
+sudo systemctl restart emonhub
+tail -10 /var/log/emonhub/emonhub.log   # should show successful reads
+```
+
+**Fix** (if no udev rule — add one):
+```bash
+# Find the current device
+ls /dev/ttyACM*
+# Create the udev rule (see section 2, emondhw setup)
+# Update emonhub.conf to use /dev/ttyMULTICAL
+# Restart emonhub
+```
+
+**Verify end-to-end**:
+```bash
+# On pi5data — should see messages within 5 seconds
+mosquitto_sub -h localhost -u emonpi -P emonpimqtt2016 -t 'emon/multical/#' -C 5 -W 10
+```
+
+### emonhub: "Permission denied" on logfile
+
+**Symptom**: emonhub crash-loops with:
+```
+error: argument --logfile: can't open '/var/log/emonhub/emonhub.log': [Errno 13] Permission denied
+```
+
+**Fix**:
+```bash
+sudo chown -R pi:pi /var/log/emonhub
+sudo systemctl restart emonhub
+```
+
+---
+
+## 16) Notes
 
 - If DNS fails on a host, fix resolver/search-domain first (`UseDomains=yes` for systemd-networkd hosts).
 - Keep installs minimal; add components only when required by a concrete data path.

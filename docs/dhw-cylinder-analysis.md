@@ -49,11 +49,10 @@ At operating temperature (45°C), water expands ~1%, compressing the internal ai
 
 ```
          ┌─────────────────────┐  2032mm outside (1932mm internal)
-         │▒▒▒ AIR BUBBLE ▒▒▒▒▒│  ~25mm at 45°C (4L expansion space)
-         ├─────────────────────┤  ~1907mm water surface
-         │                     │
-         │  60L above T1       │  20% — unmeasured hot buffer
-  1580mm │── T1 + draw-off ────│  79% height, 243L below
+         │▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒│
+         │▒▒ AIR + DOME ▒▒▒▒▒▒│  air bubble + cylinder dome (not usable water)
+         │▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒│
+  1580mm │── T1 + draw-off ────│  draw-off and T1 at same height
          │                     │
          │  89L                │  30% — heated by convection from top coil
          │                     │
@@ -72,13 +71,13 @@ At operating temperature (45°C), water expands ~1%, compressing the internal ai
 | Zone | Height (mm) | Volume (L) | % of 300L | Typical temp |
 |------|-------------|-----------|-----------|-------------|
 | Air bubble (expansion) | 25 | 4 | — | — |
-| Above T1/draw-off (HOT) | 377 | 60 | 20% | ~45°C |
+| Above T1/draw-off (air + dome) | 377 | — | — | air bubble |
 | Top coil → T1 | 560 | 89 | 30% | ~45°C |
 | T2 → top coil | 480 | 76 | 25% | 25–32°C |
 | Bottom coil → T2 | 120 | 19 | 6% | 22–32°C |
 | Below bottom coil (DEAD) | 370 | 59 | 20% | 13–22°C |
 
-The **usable hot water** (above the top coil, heated by convection) is approximately **149L** — about half the nominal 300L. The 60L above T1 is an unmeasured buffer: T1 doesn't show depletion until this buffer is consumed.
+The **usable hot water** (above the top coil, heated by convection) is approximately **149L** — about half the nominal 300L. However, the draw-off point is at the same height as T1 (1580mm), so the 60L above T1 is just the air bubble and the domed top of the cylinder — not accessible water. The effective usable volume before tap temperature drops is the **165L between T2 and T1** (validated to 97%).
 
 ### Internal expansion (air bubble)
 
@@ -161,9 +160,7 @@ Counter-intuitively, WWHR **reduces** the number of shower-minutes before T1 dro
 | Hot fraction at shower mixer | 77% | 84% |
 | Hot draw rate from cylinder | 5.4 L/min | 5.9 L/min |
 | Volume to T1 step change | 165 L | 243 L |
-| Minutes until T1 drops | 31 min | 41 min |
-| Plus 60L buffer above T1 | 11 min | 10 min |
-| **Total shower minutes** | **42 min** | **51 min** |
+| **Minutes until tap temp drops** | **31 min** | **41 min** |
 
 But WWHR halves the **energy** removed per session (5.1 kWh vs 10.1 kWh). The effect is:
 - Without WWHR, 15.8°C water sinks below everything and pushes from 0mm — 243L must be displaced before T1 sees it
