@@ -63,10 +63,10 @@ See `docs/code-truth/` for detailed architecture, patterns, and decisions.
 ## Monitoring Infrastructure
 
 Four-device monitoring network documented in `heating-monitoring-setup.md`:
-- **emonpi** (eth0 10.0.1.117, wlan0 10.0.1.111) — EmonPi2 (3× CT: DNO grid/house/solar), 2× DS18B20, Zigbee2MQTT (7 devices), Pi 4B
+- **emonpi** (eth0 10.0.1.117, wlan0 10.0.1.111) — EmonPi2 (3× CT: DNO grid/house/solar), 2× DS18B20, Zigbee2MQTT (8 devices, 3 active), Pi 4B. Mosquitto open on 0.0.0.0:1883 with auth (user `emonpi`, pass `emonpimqtt2016`).
 - **emonhp** (10.0.1.169) — MID-certified MBUS heat meter + SDM120 electric meter + RFM69 room sensor → emoncms.org. Minimal install: emonhub + mosquitto only (local emoncms stack disabled — was unused).
 - **emondhw** (10.0.1.46) — Multical DHW meter (emonhub + Mosquitto bridge only). Pi Zero 2 W, 426MB RAM. USB-Modbus adapter has udev rule (`99-multical.rules`) creating stable `/dev/ttyMULTICAL` symlink — prevents data loss on USB reconnect.
-- **pi5data** (10.0.1.230) — Central hub: Docker (Mosquitto + InfluxDB + Telegraf + Grafana + ebusd) + systemd (ebusd-poll.sh + dhw-auto-trigger.sh)
+- **pi5data** (10.0.1.230) — Central hub: Docker (Mosquitto + InfluxDB + Telegraf + Grafana + ebusd) + systemd (ebusd-poll.sh + dhw-auto-trigger.sh + z2m-automations.sh)
 
 All hostnames resolve via local DNS (dnsmasq on router 10.0.0.1, domain `chidley.home`). Static DHCP reservations for all four devices.
 
@@ -99,7 +99,8 @@ All devices (emonpi, emonhp, emondhw, pi5data, pi5nvme) have: `tmux`, `mosquitto
 - **EmonPi2 firmware**: emon_DB_6CT v2.1.1 (serial `/dev/ttyAMA0`)
 - **CT channels**: P1=DNO grid, P2=House consumption, P3=Solar (P4–P6 unused)
 - **DS18B20**: `28-00000ee9cb6d` (temp_high), `28-00000ee9e94f` (temp_low) — same space, different heights
-- **Zigbee2MQTT**: Docker, Sonoff USB 3.0 dongle, 7 paired devices (4× SNZB-02P temp/humidity, 3× ZBMINI switches). **Status**: Z2M bridge online but all devices show lastSeen Nov 2024 — need re-pairing after March 2026 rebuild.
+- **Zigbee2MQTT**: Docker (v2.9.1), Sonoff USB 3.0 dongle, 8 paired devices (4× SNZB-02P temp/humidity, 3× ZBMINI switches, 1× Aqara RTCGQ14LM motion). **Status**: 3 active (landing, hall, landing_motion), 5 dead since Nov 2024 — need re-pairing after March 2026 rebuild. WebSocket API at `ws://emonpi:8080/api` (no auth). Mosquitto open on 0.0.0.0:1883 with password auth.
+- **z2m-hub**: Zigbee automation hub and SPA server — see `~/github/z2m-hub/`. Will replace `z2m-automations.sh` on pi5data.
 - **Credentials**: `pi` user, password in GPG store (`ak get emon-pi-credentials`) and Bitwarden ("emon pi, pi credentials")
 
 eBUS provides 25+ values every 30s including operating mode (StatuscodeNum), compressor speed, target flow temp, cylinder temp. See `heating-monitoring-setup.md` for full MQTT topic list and eBUS data dictionary.
