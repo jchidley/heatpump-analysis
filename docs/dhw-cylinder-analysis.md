@@ -43,6 +43,26 @@ Measured from the outside bottom of the cylinder (actual internal positions are 
 
 Note: the Kingspan technical data (AUSI 300) gives slightly different heights (A=365, B=420, C=979, D=1034, G=465). The measured heights above are from the physical cylinder.
 
+### Factory connection positions (from Kingspan product guide)
+
+For the 300L Solar Indirect model (AUXSN300ERP), measured from outside bottom:
+
+| Letter | Connection | Height (mm) |
+|--------|-----------|-------------|
+| A | 22mm Cold feed (dip pipe to diffuser at bottom) | 530 |
+| B | 22mm Hot water outlet | 1584 |
+| C | Immersion heater (3kW, 1¾" thread) | 1060 |
+| D1 | 22mm Boiler coil connections (upper coil) | 1005 |
+| D2 | 22mm Solar coil connections (lower coil) | 410 |
+| E | ½" BSP T&P relief valve (10 bar / 90°C) | 1552 |
+| F | 22mm Secondary return (≥210L models only) | 1519 |
+| G1 | Dry stat pocket (solar) | 465 |
+| G2 | Dry stat pocket (high limit) | 1584 |
+
+The secondary return (F) at 1519mm is 65mm below the hot outlet (B) at 1584mm — both near the top of the cylinder.
+
+Reference datasheets in `docs/datasheets/`.
+
 ### Cylinder profile and zone volumes
 
 At operating temperature (45°C), water expands ~1%, compressing the internal air bubble to ~25mm. The water surface sits at ~1907mm internal height.
@@ -542,3 +562,83 @@ The eBUS `StatuscodeNum` values relevant to DHW:
 | 516 | Deicing_active | Defrost cycle |
 
 These are available in InfluxDB as `ebusd_poll.StatuscodeNum` (numeric, from ebusd-poll.sh) and `ebusd.RunDataStatuscode` (string, from ebusd's own MQTT publishing).
+
+## PHE + secondary return analysis (evaluated, not implemented)
+
+### Concept
+
+A plate heat exchanger (PHE) on the primary HP side with a secondary pump circulating DHW water back into the cylinder via the secondary return (F, 1519mm). Primary path: HP outlet → PHE → top coil → bottom coil → HP return. The goal was to improve efficiency by reducing the approach temperature between flow temp and cylinder temp.
+
+### Why it doesn't help
+
+1. **COP doesn't change.** The HP targets 45°C flow and outputs ~4kW regardless. The PHE changes *where* the heat goes (top vs coils) but not the total heat or the HP's operating point. Return temp = Flow - Q/(ṁ×Cp) — unchanged because Q, ṁ, and Cp are the same.
+
+2. **The T1 dip is only 0.3°C.** T1 drops from 42.3°C to 42.0°C in the first hour due to coil-driven destratification. Nobody notices 0.3°C at the tap, and the charge runs at 05:15 when nobody is drawing water.
+
+3. **The end state is identical.** After 115 minutes, T1 = 45.3°C with or without the PHE.
+
+4. **The PHE can only run for ~60 min of a 115-min charge.** For the first 48 minutes, the primary flow temp (27→42°C) is *below* T1 (42°C). Running the PHE pump during this period would inject cooler-than-T1 water at the top, destroying stratification.
+
+5. **Maximum COP benefit: ~3-4%** from reducing the approach temperature by 2°C. Saves ~£7-8/year. The PHE, pump, plumbing, control logic, and fouling risk from hard London mains water cost more than this.
+
+### Conclusion
+
+The coil-in-coil heat exchanger is already 90-95% efficient. The PHE adds complexity for negligible benefit. The equipment may be useful for another application.
+
+## DHW target temperature analysis
+
+### Cost per shower is nearly constant across temperature range
+
+Analysis of the trade-off between tank temperature, COP, and hot water draw rate:
+
+| Tank °C | COP | Litres per shower | Showers per charge | Cost per shower |
+|---------|-----|-------------------|-------------------|-----------------|
+| 42 | 3.67 | 62 | 2.6 | 7.7p |
+| 43 | 3.60 | 58 | 2.8 | 7.7p |
+| 44 | 3.53 | 55 | 2.9 | 7.7p |
+| **45** | **3.46** | **52** | **3.1** | **7.7p** |
+| 46 | 3.39 | 50 | 3.2 | 7.8p |
+| 48 | 3.25 | 46 | 3.5 | 7.9p |
+| 50 | 3.11 | 42 | 3.8 | 8.0p |
+
+Assumptions: 10-min shower at 40°C, 7 L/min, WWHR cold side 25°C, Cosy off-peak 14.63p/kWh. Cost per shower varies by only 0.4p (5%) across the entire 40-51°C range.
+
+**Why:** higher temp → worse COP → more electricity per charge, BUT higher temp → less hot water per shower (more cold mixed in) → more showers per charge. The two effects almost perfectly cancel. People always mix to their comfortable temperature regardless of tank setting.
+
+### Minimum temperature constraint
+
+The tank must be hot enough that hot water arriving at the mixer (after ~1.5°C pipe loss) exceeds the desired shower temperature:
+
+- Person who likes 38°C showers → tank ≥ 40°C
+- Person who likes 40°C showers → tank ≥ 42°C
+- Person who likes 42°C showers → tank ≥ 44°C
+
+The bath + shower scenario (100L bath at 40°C without WWHR, then a 10-min shower) requires ≥ 43°C to have enough volume remaining.
+
+### Increasing temperature doesn't help either
+
+If capacity is already sufficient (161L is more than enough for one person), raising the temperature just means:
+- More showers per charge — but the HP already skips charges when the cylinder is hot enough
+- Higher standing losses (13W → 14W at 48°C, pure waste)
+- Longer charge cycles at worse COP toward the end
+
+### Current 45°C is optimal
+
+The 45°C target (`HwcTempDesired`) is ~1°C above the practical minimum (44°C for the hottest-shower person + bath margin). It provides:
+- Comfortable showers for everyone (up to 42°C at the showerhead after pipe losses)
+- Bath + shower capacity with margin
+- Near-minimum standing losses
+- The HP already skips unnecessary charges when water isn't used
+
+The biggest efficiency wins are already banked: WWHR (41% saving), Cosy off-peak charging, and low standing losses (13W vs 93W rated).
+
+## Reference datasheets
+
+Kingspan Albion cylinder documentation in `docs/datasheets/`:
+
+| File | Contents |
+|------|----------|
+| `albion-ultrasteel-installation-manual.pdf` | Full installation & maintenance manual |
+| `kingspan-ultrasteel-product-guide.pdf` | Product guide with dimensions for all models |
+| `albion-ultrasteel-gotogasdocs.pdf` | Alternative installation instructions |
+| `ultrasteel-plus-data-fiche.pdf` | ErP data fiche with AUXSN300ERP specs |

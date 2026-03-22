@@ -233,6 +233,10 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - **Validated stratification model (97.6% accuracy)**: WWHR water inserts at buoyancy-neutral height (~T2 level, 490mm), not at bottom. Volume from T2 to T1 = 165L (geometric); T1 inflection confirmed at **161L** by flow integration at 2s resolution. The 4L difference is the thermocline thickness (~25mm). Multical volume register has 10L resolution — flow integration needed for precision.
 - T1 drops during early charging (coil-driven destratification) when primary flow temp < T1
 - Multical T1/T2 sensors at mid-cylinder positions, not extremes
+- Secondary return (F) at 1519mm (65mm below hot outlet) — available but not used
+- **45°C target is optimal**: cost per shower is flat across 40-51°C (COP effect cancels mixing effect). 45°C is ~1°C above practical minimum for 42°C showers + bath margin. HP already skips charges when cylinder is hot.
+- **PHE evaluated, not worth it**: plate heat exchanger on primary side with secondary pump would add complexity for ~£7-8/year saving. Coil-in-coil is already 90-95% efficient. See `docs/dhw-cylinder-analysis.md`.
+- Reference datasheets in `docs/datasheets/` (Kingspan Albion Ultrasteel Plus Solar Indirect AUXSN300ERP)
 
 ## Reference Data (config.toml)
 
