@@ -75,13 +75,14 @@ Each emon device runs local Mosquitto with a bridge to pi5data. Telegraf on pi5d
 ```
 emonpi  ─── bridge (emon/# out, zigbee2mqtt/# both) ───┐
 emonhp  ─── bridge (emon/#) ──────────────────┼──→ pi5data Mosquitto ──→ Telegraf ──→ InfluxDB
-emondhw ─── bridge (emon/#) ──────────────────┘         ↑
-                                                         │
-eBUS adapter (10.0.1.41:9999) ──→ ebusd (Docker, port 8888 exposed) ──→ ebusd-poll.sh (systemd) ──→ ebusd/poll/* topics
-                                                         │
-                                              dhw-auto-trigger.sh (systemd) ←── emon/multical/dhw_flow
-                                                         │ (on sustained draw, writes via nc to ebusd:8888)
-                                                         ╰──→ HwcSFMode load
+emondhw ─── bridge (emon/#) ──────────────────┘         ↑                                ↑ ↓
+                                                         │                          z2m-hub (Rust)
+eBUS adapter (10.0.1.41:9999) ──→ ebusd (Docker, :8888) ──→ ebusd-poll.sh ──→ ebusd/poll/*  │
+                                                    ↑                                        │
+                                                    ├──── z2m-hub (TCP, DHW boost/tracking) ─┘
+                                                    └──── dhw-auto-trigger.sh (may be redundant)
+
+Z2M (emonpi:8080/api) ←──── WebSocket ────→ z2m-hub (automations, dashboard on :3030)
 ```
 Bridges use QoS 1 + `cleansession false` — messages queue during pi5data outages.
 MQTT credentials: user `emonpi`, password `emonpimqtt2016` (all devices).
@@ -90,8 +91,9 @@ MQTT credentials: user `emonpi`, password `emonpimqtt2016` (all devices).
 All devices (emonpi, emonhp, emondhw, pi5data, pi5nvme) have: `tmux`, `mosquitto-clients`, `netcat-openbsd`.
 
 ### Design Principles
-- **Shell over Python** for simple MQTT/eBUS glue scripts — `mosquitto_sub`, `mosquitto_pub`, `nc` are sufficient
-- **systemd over Docker** for custom scripts — Docker only for upstream software (ebusd, Mosquitto, InfluxDB, Grafana, Telegraf, Zigbee2MQTT)
+- **z2m-hub for automations** — Rust server replaces shell-script automations (z2m-automations.sh removed Mar 2026). Handles Zigbee, DHW tracking, mobile dashboard. See `~/github/z2m-hub/`.
+- **Shell for simple polling** — `ebusd-poll.sh` still runs as a shell script (simple loop, no state). `dhw-auto-trigger.sh` may be removed (z2m-hub now covers boost).
+- **systemd over Docker** for custom services — Docker only for upstream software (ebusd, Mosquitto, InfluxDB, Grafana, Telegraf, Zigbee2MQTT)
 - **Minimal installs** — emonhp and emondhw run only emonhub + mosquitto. No local emoncms, no Docker (except emonpi for Zigbee2MQTT)
 - **Central hub** — pi5data handles all storage, visualization, and automation. Emon devices are data collectors only.
 
@@ -99,20 +101,19 @@ All devices (emonpi, emonhp, emondhw, pi5data, pi5nvme) have: `tmux`, `mosquitto
 - **EmonPi2 firmware**: emon_DB_6CT v2.1.1 (serial `/dev/ttyAMA0`)
 - **CT channels**: P1=DNO grid, P2=House consumption, P3=Solar (P4–P6 unused)
 - **DS18B20**: `28-00000ee9cb6d` (temp_high), `28-00000ee9e94f` (temp_low) — same space, different heights
-- **Zigbee2MQTT**: Docker (v2.9.1), Sonoff USB 3.0 dongle, 8 paired devices. 3 active (landing, hall, landing_motion), 5 dead since Nov 2024. WebSocket API at `ws://emonpi:8080/api` (no auth).
-- **z2m-hub**: Zigbee automation hub — separate repo at `~/github/z2m-hub/`
+- **Zigbee2MQTT**: Docker (v2.9.1), Sonoff USB 3.0 dongle. WebSocket API at `ws://emonpi:8080/api` (no auth). Devices, automations, and dashboard managed by z2m-hub — see `~/github/z2m-hub/AGENTS.md`.
 - **Credentials**: `pi` user, password in GPG store (`ak get emon-pi-credentials`) and Bitwarden ("emon pi, pi credentials")
 
 eBUS provides 25+ values every 30s including operating mode (StatuscodeNum), compressor speed, target flow temp, cylinder temp. See `heating-monitoring-setup.md` for full MQTT topic list and eBUS data dictionary.
 
 ### InfluxDB Flux Tasks
-- **DHW Remaining Litres** (id: `1071306263e06000`, every 1m) — computes usable hot water remaining (161L max) since last DHW charge event. Uses eBUS `StatuscodeNum == 134` for charge detection. Volume register (`dhw_volume_V1`) is ground truth (10L steps); `dhw_flow` integration interpolates within each step (clamped 0–9.9L, resets at each register step — no drift). Writes `dhw.remaining_litres` (smooth) and `dhw.remaining_register` (ground truth) to `energy` bucket. See `docs/dhw-cylinder-analysis.md`.
+- **DHW Remaining Litres** (id: `1071306263e06000`) — **DISABLED** (Mar 2026). Had null crash when no water drawn after charge. Replaced by DHW tracking in z2m-hub (`~/github/z2m-hub/`), which writes `dhw.remaining_litres` to InfluxDB. See `docs/dhw-cylinder-analysis.md` for the 161L capacity derivation.
 
 ## DHW Auto-Trigger
 
-`scripts/dhw-auto-trigger.sh` runs on pi5data as a systemd service. Pure shell script using `mosquitto_sub` + `nc`. Watches Multical DHW flow via MQTT (bridged from emondhw); if flow > 200 L/h sustained for 10 minutes, forces eBUS DHW charge via `nc localhost 8888` (`write -c 700 HwcSFMode load`). Blocks during Cosy peak (16–19). See `docs/dhw-auto-trigger.md` for full details.
+`scripts/dhw-auto-trigger.sh` — **still running** on pi5data as `dhw-auto-trigger.service`, but **potentially redundant** now that z2m-hub handles DHW boost via mobile dashboard. Both send the same `HwcSFMode=load` command. May want to disable to avoid conflicts. See `docs/dhw-auto-trigger.md` for full details.
 
-Deploy: `scp scripts/dhw-auto-trigger.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/dhw-auto-trigger.sh /usr/local/bin/ && sudo systemctl restart dhw-auto-trigger"`
+The shell script watches Multical DHW flow via MQTT; if flow > 200 L/h sustained for 10 minutes, forces eBUS DHW charge. Blocks during Cosy peak (16–19).
 
 ## eBUS Polling
 
@@ -268,7 +269,7 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - `scripts/dhw-auto-trigger.py` is the old Python version with an inverted peak-block bug — **do not deploy it**. The active version is `scripts/dhw-auto-trigger.sh` (shell, deployed to pi5data).
 - `scripts/ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP connection hanging — without `head -1`, each `nc` call waits 5s for the server to close.
 - Multical `dhw_volume_V1` register has **10L resolution** — ground truth for draw tracking. `dhw_flow` integration interpolates between steps (resets at each step, clamped 0–9.9L). Use `dhw_flow` at 2s resolution for sub-litre analysis (e.g., thermocline pinpointing).
-- DHW remaining Flux task uses 161L capacity — validated at 2s resolution by T1 inflection during shower draws. Don't change without re-validating against draw+T1 data at full resolution.
+- DHW remaining uses 161L capacity (z2m-hub `DHW_FULL_LITRES` constant) — validated at 2s resolution by T1 inflection during shower draws. Don't change without re-validating against draw+T1 data at full resolution.
 
 ## Boundaries
 
@@ -280,7 +281,7 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - Keep `GAS_DHW_KWH_PER_DAY` and `BOILER_EFFICIENCY` in `octopus.rs` in sync with config.toml `[gas_era]`
 - Human-facing docs: `docs/` (Diátaxis style) — see `docs/code-truth/` for derived-from-code docs
 - This file (`AGENTS.md`) is the single LLM context source. `docs/code-truth/` is for human comprehension.
-- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (computed by Flux task every 1m)
+- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (written by z2m-hub)
 - Don't modify monitoring infrastructure from this project — use SSH to emonpi/emondhw/emonhp/pi5data directly
 - Don't store credentials in plaintext — use `ak get emon-pi-credentials` at runtime
 
