@@ -1,4 +1,4 @@
-<!-- code-truth: d55d64a -->
+<!-- code-truth: 08e43eb -->
 
 # Architecture
 
@@ -185,6 +185,8 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | Octopus data path hardcoded to `~/github/octopus/data/` | octopus.rs `default_data_dir()` | Moving octopus project breaks analysis |
 | `daily_hp_by_state()` assumes 1-minute sample interval | octopus.rs `SAMPLE_HOURS = 1/60` | Different sample interval → wrong energy |
 | DHW auto-trigger constants are in shell script, not config.toml | scripts/dhw-auto-trigger.sh | Two configuration systems to maintain |
+| DHW remaining Flux task uses 161L capacity constant | InfluxDB task on pi5data | Changing usable volume requires updating the Flux task via API, not just config.toml |
+| Flux task assumes StatuscodeNum 134 = DHW charge | InfluxDB task on pi5data | If eBUS status codes change (firmware update), the task silently stops detecting charges |
 | gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs TempBinModel | Threshold changes must be consistent between analysis.rs and gaps.rs |
 
 ## External Boundaries
@@ -197,7 +199,7 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | emonpi (10.0.1.117) | Z2M WebSocket (`ws://emonpi:8080/api`), MQTT (`emonpi:1883`) | Z2M Docker + Mosquitto running |
 | emondhw (10.0.1.46) | Multical data source (bridged via MQTT to pi5data) | Raspberry Pi on network, emonhub + Mosquitto running |
 | emonhp (10.0.1.169) | Data source (MBUS + SDM120 → emoncms.org) | Must be running for data sync |
-| pi5data (10.0.1.230) | InfluxDB/Grafana for monitoring dashboards | Docker stack running |
+| pi5data (10.0.1.230) | InfluxDB/Grafana for monitoring dashboards + Flux task `1071306263e06000` (DHW remaining) | Docker stack running |
 
 ## Change Propagation
 
@@ -212,4 +214,5 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | Arotherm model size | All thresholds are model-specific (especially flow rates). The 7kW heating rate overlaps the 5kW DHW rate. |
 | DHW auto-trigger behaviour | Edit constants in `scripts/dhw-auto-trigger.sh`, deploy: `scp scripts/dhw-auto-trigger.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/dhw-auto-trigger.sh /usr/local/bin/ && sudo systemctl restart dhw-auto-trigger"` |
 | Z2M automations | Edit `scripts/z2m-automations.sh`, deploy same pattern to pi5data. Interim — will move to z2m-hub. |
+| DHW usable volume (161L) | Update InfluxDB Flux task via API (`PATCH /api/v2/tasks/{id}`), backfill historical data, update `docs/dhw-cylinder-analysis.md` and AGENTS.md |
 | Monitoring infrastructure | Update `heating-monitoring-setup.md`. |

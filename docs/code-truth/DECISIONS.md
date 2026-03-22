@@ -1,4 +1,4 @@
-<!-- code-truth: d55d64a -->
+<!-- code-truth: 08e43eb -->
 
 # Decisions
 
@@ -154,6 +154,38 @@
 **History**: Originally `dhw-auto-trigger.py` on emondhw and `ebusd-poll.py` in Docker. Both replaced by shell scripts on pi5data in March 2026 to eliminate Python runtime dependencies and centralise all automation on one host.
 
 **Consequences**: Configuration is duplicated (shell constants vs config.toml). Z2M automations are interim — will be replaced by `~/github/z2m-hub/` Rust server.
+
+### D14: DHW remaining litres via InfluxDB Flux task (March 2026)
+
+**Status:** active
+
+**What**: An InfluxDB Flux task (id `1071306263e06000`, every 1m) computes usable hot water remaining since last DHW charge. Volume register (`dhw_volume_V1`) is ground truth (10L steps); `dhw_flow` integration interpolates within each step (clamped 0–9.9L, resets at each register step).
+
+**Why**: Provides real-time visibility into DHW capacity so household members can make informed decisions about whether to trigger a manual boost charge. Replaces guesswork with data.
+
+**Where**: InfluxDB on pi5data, documented in `docs/dhw-cylinder-analysis.md`
+
+**Consequences**: The 161L capacity constant lives inside the Flux task (not in config.toml). Changing it requires patching the task via API and rebackfilling historical data.
+
+### D15: PHE + secondary return rejected (March 2026)
+
+**Status:** rejected
+
+**What**: Plate heat exchanger on HP primary side with secondary pump injecting heated DHW at the secondary return (F, 1519mm). Evaluated but not implemented.
+
+**Why rejected**: COP doesn't change (HP operating point is unaffected — same total heat, same flow target). The T1 dip during early charging is only 0.3°C. Maximum saving ~£7-8/year vs complexity, fouling risk, and additional failure points. The coil-in-coil heat exchanger is already 90-95% efficient.
+
+**Where**: Analysis in `docs/dhw-cylinder-analysis.md`
+
+### D16: DHW target temperature 45°C is optimal (March 2026)
+
+**Status:** active
+
+**What**: The current 45°C `HwcTempDesired` is the right setting. Analysis shows cost per shower is nearly constant (±5%) across the entire 40-51°C range because higher temp = worse COP but less hot water drawn per shower. The two effects cancel.
+
+**Why**: People always mix to their comfortable temperature regardless of tank setting. 45°C is ~1°C above the practical minimum for a 42°C shower preference with pipe losses. Handles bath + shower with margin. Increasing doesn't help (HP already skips unnecessary charges).
+
+**Where**: Analysis in `docs/dhw-cylinder-analysis.md`
 
 ## Open Questions
 
