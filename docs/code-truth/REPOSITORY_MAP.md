@@ -100,12 +100,13 @@ All deployed to pi5data `/usr/local/bin/` as systemd services.
 
 | File | Service | Purpose |
 |------|---------|---------|
-| `scripts/dhw-auto-trigger.sh` | `dhw-auto-trigger` | Watches Multical DHW flow via MQTT, triggers eBUS DHW charge on prolonged draws. Blocks during Cosy peak (16–19). |
-| `scripts/dhw-auto-trigger.service` | — | Systemd unit for auto-trigger |
 | `scripts/ebusd-poll.sh` | `ebusd-poll` | Reads 25 eBUS values every 30s via `nc`, publishes to MQTT |
 | `scripts/ebusd-poll.service` | — | Systemd unit for eBUS poll |
-| `scripts/z2m-automations.sh` | `z2m-automations` | Motion sensor → landing light automation (interim, to be replaced by z2m-hub) |
 | `scripts/backup-sdcard.sh` | — | SD card backup utility |
+
+**Removed scripts** (Mar 2026, replaced by z2m-hub at `~/github/z2m-hub/`):
+- `scripts/dhw-auto-trigger.sh` + `.service` — DHW boost now manual via z2m-hub dashboard
+- `scripts/z2m-automations.sh` — motion→light automation now in z2m-hub Rust server
 
 ## Documentation
 
@@ -146,7 +147,7 @@ All deployed to pi5data `/usr/local/bin/` as systemd services.
 | New analysis subcommand | `src/analysis.rs` (function) + `src/main.rs` (Commands enum + match) |
 | Gap-fill model or strategy | `src/gaps.rs` |
 | Octopus data loading or comparison | `src/octopus.rs` |
-| DHW auto-trigger behaviour | `scripts/dhw-auto-trigger.sh` (constants at top) |
+| DHW boost/tracking | `~/github/z2m-hub/` (z2m-hub Rust server) |
 | eBUS polling values | `scripts/ebusd-poll.sh` |
-| Z2M automations | `scripts/z2m-automations.sh` (interim — will move to `~/github/z2m-hub/`) |
+| Z2M automations | `~/github/z2m-hub/` (z2m-hub Rust server) |
 | Monitoring infrastructure | `heating-monitoring-setup.md` |

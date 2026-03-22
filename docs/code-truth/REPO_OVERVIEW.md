@@ -13,9 +13,9 @@ A Rust CLI tool that syncs heat pump monitoring data from emoncms.org to a local
 The system is built for a specific installation: a **Vaillant Arotherm Plus 5kW** air-source heat pump at a residential property in London, monitored via an emonHP bundle feeding emoncms.org.
 
 Beyond the Rust analysis tool, the project includes:
-- Shell-based **monitoring scripts** deployed to pi5data (`scripts/dhw-auto-trigger.sh`, `scripts/ebusd-poll.sh`, `scripts/z2m-automations.sh` — all systemd services)
-- Extensive **domain documentation** on the hydraulic system, DHW cylinder heat exchange (including live remaining-litres tracking via InfluxDB Flux task), and monitoring infrastructure.
-- A separate **z2m-hub** project (`~/github/z2m-hub/`) for Zigbee automation — referenced but not part of this repo.
+- Shell-based **monitoring script** deployed to pi5data (`scripts/ebusd-poll.sh` — systemd service for eBUS data collection)
+- Extensive **domain documentation** on the hydraulic system, DHW cylinder analysis, and monitoring infrastructure.
+- A separate **z2m-hub** project (`~/github/z2m-hub/`) handles Zigbee devices, automations, DHW tracking/boost, and mobile dashboard. Previously shell scripts here (z2m-automations.sh, dhw-auto-trigger.sh) — both removed Mar 2026.
 
 ## Key Technologies
 
@@ -53,15 +53,15 @@ emoncms.org REST API
    config.toml ──▶ config.rs (global singleton, read by all modules)
 
    [Separately on pi5data:]
-   Multical MQTT (dhw_flow) → dhw-auto-trigger.sh → ebusd (eBUS → HP)
-   Z2M MQTT (landing_motion) → z2m-automations.sh → Z2M MQTT (landing/set)
+   ebusd-poll.sh → ebusd (eBUS → HP) → MQTT → Telegraf → InfluxDB
+   z2m-hub (Rust, ~/github/z2m-hub/) → Z2M WebSocket + ebusd TCP
 ```
 
 ## How It's Organised
 
 - **`config.toml`** — Single source of truth for all domain data: emoncms feed IDs, operating thresholds, house thermal properties, radiator inventory, Arotherm manufacturer specs, and gas-era consumption history. Loaded once at startup.
 - **`src/`** — Six Rust modules plus `main.rs` (3,591 lines total). No nested directories, no procedural macros, no build scripts. Each module has one clear responsibility.
-- **`scripts/`** — Shell scripts deployed to pi5data as systemd services (DHW auto-trigger, eBUS polling, Z2M automations).
+- **`scripts/`** — Shell script deployed to pi5data as systemd service (`ebusd-poll.sh`). Previously also had `dhw-auto-trigger.sh` and `z2m-automations.sh` — both removed Mar 2026, replaced by z2m-hub.
 - **`ebusd/`** — Git submodule (https://github.com/john30/ebusd), reference for eBUS protocol.
 - **`.gitmodules`** — Six submodules: ebusd, avrdb_firmware, EmonScripts, emonhub, emoncms, emonPiLCD.
 - **`docs/`** — Human-facing documentation (Diátaxis style) plus code-truth.
@@ -90,8 +90,6 @@ Grouped by concern:
 
 4. **Dual-era comparison** — Gas-era consumption data (Octopus billing) and heat-pump-era data are normalised by heating degree days with temperature from two sources (ERA5-Land for pre-HP, Met Office for HP era) with a measured bias correction.
 
-5. **DHW auto-trigger** — A shell script on pi5data watches real-time DHW draw flow via MQTT and commands the heat pump via eBUS to force an emergency cylinder recharge during prolonged draws. Blocks during peak tariff hours.
-
-6. **No tests** — Validated against real data output rather than unit tests. Changes must be verified against the full dataset.
+5. **No tests** — Validated against real data output rather than unit tests. Changes must be verified against the full dataset.
 
 7. **Three-layer monitoring** — emonhp (MID-certified meters, ground truth), eBUS (internal HP operating data), and Multical (DHW delivery side) give end-to-end visibility from electricity input through to hot water at taps.

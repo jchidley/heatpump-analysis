@@ -30,8 +30,8 @@ The eBUS adapter (ESP32 Shield v1.24, firmware 20260317) connects to ebusd 26.1 
 - **emoncms import** — eBUS data is only in InfluxDB (via pi5data). Could be added as new emoncms feeds for the existing sync pipeline.
 
 **Already using eBUS for:**
-- DHW charge detection (`StatuscodeNum == 134`) in the InfluxDB Flux task for DHW remaining litres tracking.
-- DHW auto-trigger script watches flow via MQTT, triggers via eBUS `HwcSFMode`.
+- DHW tracking + boost via z2m-hub (polls `HwcSFMode` and `Status01` via ebusd TCP)
+- eBUS data collection via `ebusd-poll.sh` → MQTT → Telegraf → InfluxDB
 
 See [../heating-monitoring-setup.md](../heating-monitoring-setup.md) for the full eBUS data dictionary and MQTT topic list.
 
@@ -177,21 +177,20 @@ Files in `C:\Users\jackc\OneDrive\Documents\House\` that could be imported:
 
 ## Zigbee2MQTT Automation Hub
 
-**Status:** ✅ Repo created (`~/github/z2m-hub`). Infrastructure ready.
+**Status:** ✅ **Complete** (Mar 2026). Running on pi5data as `z2m-hub.service`.
 
-Rust server replacing Home Assistant for Zigbee-only automation. Runs on pi5data, connects to Z2M on emonpi via WebSocket.
+Rust server replacing Home Assistant for Zigbee + heat pump automation. See `~/github/z2m-hub/` for full details.
 
 ### What's done
-- emonpi Mosquitto open on network with auth (bidirectional MQTT for Z2M)
-- Z2M WebSocket API verified (direct to `ws://emonpi:8080/api`, all device state cached)
-- pi extension for device control working
-- Interim shell automation deployed (`z2m-automations.service` on pi5data: motion → light)
+- Rust server (axum HTTP + tokio-tungstenite Z2M WebSocket + ebusd TCP)
+- Motion → light automations with illuminance gating (2 sensors, 2 lights)
+- DHW tracking (remaining litres) + manual boost button
+- Mobile dashboard on port 3030 (hot water gauge, light toggles, boost)
+- Cross-compiled for aarch64, deployed as systemd service
+- Shell scripts removed (z2m-automations.sh, dhw-auto-trigger.sh)
+- InfluxDB Flux task for DHW remaining disabled (replaced by z2m-hub)
+- 9 Zigbee devices (8 active, 1 dead battery)
 - GitHub repo: https://github.com/jchidley/z2m-hub
-
-### What's next
-- Rust server: axum HTTP/WS + tokio-tungstenite Z2M client
-- SPA dashboard (device states, controls)
-- Automation engine (rules in TOML, replaces shell script)
 - Cross-compile and deploy to pi5data
 
 ## Other Potential Enhancements

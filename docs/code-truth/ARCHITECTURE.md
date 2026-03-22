@@ -70,45 +70,11 @@ Gap filling bypasses `db.rs` — it writes directly to `simulated_samples` and `
 
 The Octopus module is semi-independent — it reads its own CSV/JSON files and only optionally touches the SQLite database for temperature data.
 
-### DHW auto-trigger path (separate system on pi5data)
+### z2m-hub (separate Rust server on pi5data)
 
-```
-Multical meter → emondhw emonhub → MQTT bridge → pi5data Mosquitto
-                                                          │
-                                          dhw-auto-trigger.sh (systemd on pi5data)
-                                                          │
-                                          flow > 200 L/h for 10 min?
-                                                          │
-                                          nc localhost 8888 → write -c 700 HwcSFMode load
-                                                          │
-                                          Heat pump switches to DHW mode
-```
+All Zigbee automations, DHW tracking/boost, and mobile dashboard are handled by z2m-hub (`~/github/z2m-hub/`). It connects to Z2M via WebSocket and ebusd via TCP. Writes `dhw.remaining_litres` to InfluxDB. Not connected to the Rust analysis tool in this repo.
 
-This runs independently on pi5data. Not connected to the Rust analysis tool.
-
-### DHW remaining litres (InfluxDB Flux task on pi5data)
-
-```
-eBUS StatuscodeNum (134 = DHW charge) ──┐
-                                        ├──→ Flux task (every 1m) ──→ dhw.remaining_litres
-Multical dhw_volume_V1 + dhw_flow ──────┘                              dhw.remaining_register
-```
-
-Tracks usable hot water remaining (161L max) since last charge. Volume register is ground truth (10L steps); flow integration interpolates within each step. See `docs/dhw-cylinder-analysis.md`.
-
-### Z2M automation path (separate system on pi5data)
-
-```
-Aqara motion sensor → Z2M (emonpi) → MQTT → pi5data Mosquitto
-                                                      │
-                                      z2m-automations.sh (systemd on pi5data)
-                                                      │
-                                      occupancy:true? → mosquitto_pub landing/set ON
-                                                      │
-                                      60s timeout → mosquitto_pub landing/set OFF
-```
-
-Interim solution — will be replaced by `~/github/z2m-hub/` Rust server.
+Previously these were shell scripts in this repo (`dhw-auto-trigger.sh`, `z2m-automations.sh`) and an InfluxDB Flux task — all replaced Mar 2026.
 
 ## Configuration Architecture
 
@@ -184,9 +150,7 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs | octopus.rs | Not in config.toml — two sources for temperature correction |
 | Octopus data path hardcoded to `~/github/octopus/data/` | octopus.rs `default_data_dir()` | Moving octopus project breaks analysis |
 | `daily_hp_by_state()` assumes 1-minute sample interval | octopus.rs `SAMPLE_HOURS = 1/60` | Different sample interval → wrong energy |
-| DHW auto-trigger constants are in shell script, not config.toml | scripts/dhw-auto-trigger.sh | Two configuration systems to maintain |
-| DHW remaining Flux task uses 161L capacity constant | InfluxDB task on pi5data | Changing usable volume requires updating the Flux task via API, not just config.toml |
-| Flux task assumes StatuscodeNum 134 = DHW charge | InfluxDB task on pi5data | If eBUS status codes change (firmware update), the task silently stops detecting charges |
+| DHW tracking (161L capacity, boost logic) lives in z2m-hub, not this repo | `~/github/z2m-hub/` | Changing usable volume requires updating z2m-hub `DHW_FULL_LITRES` constant |
 | gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs TempBinModel | Threshold changes must be consistent between analysis.rs and gaps.rs |
 
 ## External Boundaries
@@ -195,11 +159,10 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 |--------|-----------|--------------|
 | emoncms.org | REST API (read key) | API key via `--apikey` or `EMONCMS_APIKEY` |
 | `~/github/octopus/` | File read (CSV + JSON) | Must exist with `data/usage_merged.csv`, `weather.json`, `config.json` |
-| pi5data (10.0.1.230) | SSH/systemd for scripts (dhw-auto-trigger, ebusd-poll, z2m-automations) | Docker stack + systemd services running |
-| emonpi (10.0.1.117) | Z2M WebSocket (`ws://emonpi:8080/api`), MQTT (`emonpi:1883`) | Z2M Docker + Mosquitto running |
+| pi5data (10.0.1.230) | SSH/systemd for ebusd-poll.sh; Docker stack (InfluxDB, Grafana, ebusd, etc.) | Docker + systemd running |
+| emonpi (10.0.1.117) | Z2M Docker + Mosquitto (MQTT bridge to pi5data) | Running |
 | emondhw (10.0.1.46) | Multical data source (bridged via MQTT to pi5data) | Raspberry Pi on network, emonhub + Mosquitto running |
 | emonhp (10.0.1.169) | Data source (MBUS + SDM120 → emoncms.org) | Must be running for data sync |
-| pi5data (10.0.1.230) | InfluxDB/Grafana for monitoring dashboards + Flux task `1071306263e06000` (DHW remaining) | Docker stack running |
 
 ## Change Propagation
 
@@ -212,7 +175,6 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | DataFrame column names | Update `config.toml` feed `column` fields. Check analysis.rs and octopus.rs column references. |
 | Add a new analysis function | Add to `analysis.rs`, add `Commands` variant in `main.rs`, wire up in `match`. |
 | Arotherm model size | All thresholds are model-specific (especially flow rates). The 7kW heating rate overlaps the 5kW DHW rate. |
-| DHW auto-trigger behaviour | Edit constants in `scripts/dhw-auto-trigger.sh`, deploy: `scp scripts/dhw-auto-trigger.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/dhw-auto-trigger.sh /usr/local/bin/ && sudo systemctl restart dhw-auto-trigger"` |
-| Z2M automations | Edit `scripts/z2m-automations.sh`, deploy same pattern to pi5data. Interim — will move to z2m-hub. |
-| DHW usable volume (161L) | Update InfluxDB Flux task via API (`PATCH /api/v2/tasks/{id}`), backfill historical data, update `docs/dhw-cylinder-analysis.md` and AGENTS.md |
+| DHW boost/tracking or Z2M automations | Edit z2m-hub (`~/github/z2m-hub/`), cross-compile, deploy to pi5data |
+| DHW usable volume (161L) | Update `DHW_FULL_LITRES` in z2m-hub, update `docs/dhw-cylinder-analysis.md` and AGENTS.md |
 | Monitoring infrastructure | Update `heating-monitoring-setup.md`. |

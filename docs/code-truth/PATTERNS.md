@@ -152,7 +152,7 @@ No prefix/suffix conventions (`_service`, `_module`, etc.), no trait abstraction
 
 ## Shell Script Pattern (monitoring scripts on pi5data)
 
-All monitoring scripts (`dhw-auto-trigger.sh`, `ebusd-poll.sh`, `z2m-automations.sh`) follow a consistent pattern:
+The remaining monitoring script (`ebusd-poll.sh`) follows this pattern (previously also `dhw-auto-trigger.sh` and `z2m-automations.sh`, both removed Mar 2026 — replaced by z2m-hub):
 - All tunables as shell variables at the top of the file
 - `mosquitto_sub` for event subscription, `mosquitto_pub` for commands, `nc` for eBUS
 - `log()` helper with timestamp prefix
@@ -160,7 +160,7 @@ All monitoring scripts (`dhw-auto-trigger.sh`, `ebusd-poll.sh`, `z2m-automations
 - systemd service for lifecycle management (`Restart=always`)
 - Deploy: `scp` to pi5data + `sudo systemctl restart <service>`
 
-**Cost to break**: Scripts run independently on pi5data. Changes require scp + systemd restart — no CI/CD. Z2M automations are interim (will move to z2m-hub).
+**Cost to break**: ebusd-poll.sh runs independently on pi5data. Changes require scp + systemd restart — no CI/CD. Z2M automations and DHW boost/tracking now in z2m-hub (`~/github/z2m-hub/`).
 
 ## Notable Absences
 

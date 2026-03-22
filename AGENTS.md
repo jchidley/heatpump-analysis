@@ -63,7 +63,7 @@ See `docs/code-truth/` for detailed architecture, patterns, and decisions.
 ## Monitoring Infrastructure
 
 Four-device monitoring network documented in `heating-monitoring-setup.md`:
-- **emonpi** (eth0 10.0.1.117, wlan0 10.0.1.111) — EmonPi2 (3× CT: DNO grid/house/solar), 2× DS18B20, Zigbee2MQTT (8 devices, 3 active), Pi 4B
+- **emonpi** (eth0 10.0.1.117, wlan0 10.0.1.111) — EmonPi2 (3× CT: DNO grid/house/solar), 2× DS18B20, Zigbee2MQTT (9 devices, 8 active), Pi 4B
 - **emonhp** (10.0.1.169) — MID-certified MBUS heat meter + SDM120 electric meter + RFM69 room sensor → emoncms.org. Minimal install: emonhub + mosquitto only (local emoncms stack disabled — was unused).
 - **emondhw** (10.0.1.46) — Multical DHW meter (emonhub + Mosquitto bridge only). Pi Zero 2 W, 426MB RAM. USB-Modbus adapter has udev rule (`99-multical.rules`) creating stable `/dev/ttyMULTICAL` symlink — prevents data loss on USB reconnect.
 - **pi5data** (10.0.1.230) — Central hub: Docker (Mosquitto + InfluxDB + Telegraf + Grafana + ebusd) + systemd services
@@ -91,7 +91,7 @@ All devices (emonpi, emonhp, emondhw, pi5data, pi5nvme) have: `tmux`, `mosquitto
 
 ### Design Principles
 - **z2m-hub for automations** — Rust server replaces shell-script automations (z2m-automations.sh removed Mar 2026). Handles Zigbee, DHW tracking, mobile dashboard. See `~/github/z2m-hub/`.
-- **Shell for simple polling** — `ebusd-poll.sh` still runs as a shell script (simple loop, no state). `dhw-auto-trigger.sh` may be removed (z2m-hub now covers boost).
+- **Shell for simple polling** — `ebusd-poll.sh` still runs as a shell script (simple loop, no state).
 - **systemd over Docker** for custom services — Docker only for upstream software (ebusd, Mosquitto, InfluxDB, Grafana, Telegraf, Zigbee2MQTT)
 - **Minimal installs** — emonhp and emondhw run only emonhub + mosquitto. No local emoncms, no Docker (except emonpi for Zigbee2MQTT)
 - **Central hub** — pi5data handles all storage, visualization, and automation. Emon devices are data collectors only.

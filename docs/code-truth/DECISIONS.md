@@ -149,23 +149,23 @@
 
 **Why**: They need to run 24/7 on pi5data (the central hub). The Rust CLI runs on a development machine. Different deployment targets, different lifecycle. Shell scripts (`mosquitto_sub`, `mosquitto_pub`, `nc`) are sufficient — no Python runtime needed.
 
-**Where**: `scripts/dhw-auto-trigger.sh`, `scripts/ebusd-poll.sh`, `scripts/z2m-automations.sh` — all deployed to `/usr/local/bin/` on pi5data as systemd services.
+**Where**: `scripts/ebusd-poll.sh` — deployed to `/usr/local/bin/` on pi5data as systemd service.
 
-**History**: Originally `dhw-auto-trigger.py` on emondhw and `ebusd-poll.py` in Docker. Both replaced by shell scripts on pi5data in March 2026 to eliminate Python runtime dependencies and centralise all automation on one host.
+**History**: Originally `ebusd-poll.py` in Docker, replaced by shell script on pi5data in March 2026. `dhw-auto-trigger.sh` and `z2m-automations.sh` also used this pattern but were removed Mar 2026 — replaced by z2m-hub Rust server (`~/github/z2m-hub/`).
 
-**Consequences**: Configuration is duplicated (shell constants vs config.toml). Z2M automations are interim — will be replaced by `~/github/z2m-hub/` Rust server.
+**Consequences**: ebusd-poll.sh constants are in the shell script, not config.toml. Z2M automations and DHW scripts moved to z2m-hub (Mar 2026).
 
-### D14: DHW remaining litres via InfluxDB Flux task (March 2026)
+### D14: DHW remaining litres — moved to z2m-hub (March 2026)
 
 **Status:** active
 
-**What**: An InfluxDB Flux task (id `1071306263e06000`, every 1m) computes usable hot water remaining since last DHW charge. Volume register (`dhw_volume_V1`) is ground truth (10L steps); `dhw_flow` integration interpolates within each step (clamped 0–9.9L, resets at each register step).
+**What**: Originally an InfluxDB Flux task (id `1071306263e06000`, every 1m). **Disabled Mar 2026** due to null crash when no water drawn after charge. Replaced by DHW tracking in z2m-hub (`~/github/z2m-hub/`), which polls ebusd directly via TCP, detects charge completion (scheduled → 161L, manual boost → +50%), and tracks usage via Multical volume register.
 
 **Why**: Provides real-time visibility into DHW capacity so household members can make informed decisions about whether to trigger a manual boost charge. Replaces guesswork with data.
 
 **Where**: InfluxDB on pi5data, documented in `docs/dhw-cylinder-analysis.md`
 
-**Consequences**: The 161L capacity constant lives inside the Flux task (not in config.toml). Changing it requires patching the task via API and rebackfilling historical data.
+**Consequences**: The 161L capacity constant now lives in z2m-hub (`DHW_FULL_LITRES`). z2m-hub writes `dhw.remaining_litres` to InfluxDB for Grafana/historical display.
 
 ### D15: PHE + secondary return rejected (March 2026)
 
@@ -194,4 +194,4 @@
 - **`--all-data` start timestamp**: `resolve_time_range()` in main.rs hardcodes `1_729_555_200` (Oct 22 2024) as the earliest data, duplicating the value in `config.toml`. These should be unified.
 - **ERA5 bias correction location**: `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs, not in config.toml. Should it be externalised?
 - **eBUS state machine validation**: With eBUS now providing definitive operating mode (StatuscodeNum), the flow-rate state machine could be validated or replaced. Not yet investigated.
-- **dhw-auto-trigger.py bug**: The old Python version (`scripts/dhw-auto-trigger.py`) had an inverted peak-block bug. **Resolved** — replaced by `scripts/dhw-auto-trigger.sh` which has correct logic. The `.py` file should not be deployed (noted in AGENTS.md gotchas).
+- **dhw-auto-trigger removed**: Both the Python (`dhw-auto-trigger.py`) and shell (`dhw-auto-trigger.sh`) versions removed Mar 2026. DHW boost now manual via z2m-hub dashboard. The `.py` file remains in repo but should not be deployed.
