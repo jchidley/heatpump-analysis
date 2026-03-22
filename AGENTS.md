@@ -105,6 +105,9 @@ All devices (emonpi, emonhp, emondhw, pi5data, pi5nvme) have: `tmux`, `mosquitto
 
 eBUS provides 25+ values every 30s including operating mode (StatuscodeNum), compressor speed, target flow temp, cylinder temp. See `heating-monitoring-setup.md` for full MQTT topic list and eBUS data dictionary.
 
+### InfluxDB Flux Tasks
+- **DHW Remaining Litres** (id: `1071306263e06000`, every 1m) — computes usable hot water remaining (161L max) since last DHW charge event. Uses eBUS `StatuscodeNum == 134` for charge detection. Volume register (`dhw_volume_V1`) is ground truth (10L steps); `dhw_flow` integration interpolates within each step (clamped 0–9.9L, resets at each register step — no drift). Writes `dhw.remaining_litres` (smooth) and `dhw.remaining_register` (ground truth) to `energy` bucket. See `docs/dhw-cylinder-analysis.md`.
+
 ## DHW Auto-Trigger
 
 `scripts/dhw-auto-trigger.sh` runs on pi5data as a systemd service. Pure shell script using `mosquitto_sub` + `nc`. Watches Multical DHW flow via MQTT (bridged from emondhw); if flow > 200 L/h sustained for 10 minutes, forces eBUS DHW charge via `nc localhost 8888` (`write -c 700 HwcSFMode load`). Blocks during Cosy peak (16–19). See `docs/dhw-auto-trigger.md` for full details.
@@ -223,11 +226,11 @@ Documented in `docs/hydraulic-analysis.md`:
 Documented in `docs/dhw-cylinder-analysis.md`:
 - Kingspan Albion 300L twin-coil (both coils in series for HP), internal expansion (air bubble, no ext vessel)
 - Measured connection heights (from outside bottom): bottom coil 420mm, T2+cold inlet 540mm, top coil 1020mm, T1+draw-off 1580mm
-- Usable hot water (T2 to T1/draw-off): ~165L validated. Dead zone below coils: 59L (20%)
+- Usable hot water (T2 to T1/draw-off): **161L** validated by flow integration at 2s resolution (T1 inflection point). Geometric prediction is 165L; 4L difference is thermocline thickness. Dead zone below coils: 59L (20%)
 - Eco mode cycle: ~115 min, 3.0 kW, primary ΔT 2.1°C
 - Standby loss: 13 W (0.3 kWh/day) — far below 93 W rated spec due to stratification + air bubble insulation
 - WWHR effectiveness: 41% at steady state (3.5 min ramp-up), lifts mains from 15.8°C to 25°C
-- **Validated stratification model (97% accuracy)**: WWHR water inserts at buoyancy-neutral height (~T2 level, 490mm), not at bottom. Volume from T2 to T1 = 165L; T1 step change observed at 161L drawn.
+- **Validated stratification model (97.6% accuracy)**: WWHR water inserts at buoyancy-neutral height (~T2 level, 490mm), not at bottom. Volume from T2 to T1 = 165L (geometric); T1 inflection confirmed at **161L** by flow integration at 2s resolution. The 4L difference is the thermocline thickness (~25mm). Multical volume register has 10L resolution — flow integration needed for precision.
 - T1 drops during early charging (coil-driven destratification) when primary flow temp < T1
 - Multical T1/T2 sensors at mid-cylinder positions, not extremes
 
@@ -260,6 +263,8 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - Gas-era DHW estimated at 11.82 kWh/day (from config) — not measured. HP-era DHW is measured by state machine.
 - `scripts/dhw-auto-trigger.py` is the old Python version with an inverted peak-block bug — **do not deploy it**. The active version is `scripts/dhw-auto-trigger.sh` (shell, deployed to pi5data).
 - `scripts/ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP connection hanging — without `head -1`, each `nc` call waits 5s for the server to close.
+- Multical `dhw_volume_V1` register has **10L resolution** — ground truth for draw tracking. `dhw_flow` integration interpolates between steps (resets at each step, clamped 0–9.9L). Use `dhw_flow` at 2s resolution for sub-litre analysis (e.g., thermocline pinpointing).
+- DHW remaining Flux task uses 161L capacity — validated at 2s resolution by T1 inflection during shower draws. Don't change without re-validating against draw+T1 data at full resolution.
 
 ## Boundaries
 
@@ -271,7 +276,7 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - Keep `GAS_DHW_KWH_PER_DAY` and `BOILER_EFFICIENCY` in `octopus.rs` in sync with config.toml `[gas_era]`
 - Human-facing docs: `docs/` (Diátaxis style) — see `docs/code-truth/` for derived-from-code docs
 - This file (`AGENTS.md`) is the single LLM context source. `docs/code-truth/` is for human comprehension.
-- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office
+- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (computed by Flux task every 1m)
 - Don't modify monitoring infrastructure from this project — use SSH to emonpi/emondhw/emonhp/pi5data directly
 - Don't store credentials in plaintext — use `ak get emon-pi-credentials` at runtime
 

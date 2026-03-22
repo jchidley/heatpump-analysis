@@ -77,7 +77,7 @@ At operating temperature (45°C), water expands ~1%, compressing the internal ai
 | Bottom coil → T2 | 120 | 19 | 6% | 22–32°C |
 | Below bottom coil (DEAD) | 370 | 59 | 20% | 13–22°C |
 
-The **usable hot water** (above the top coil, heated by convection) is approximately **149L** — about half the nominal 300L. However, the draw-off point is at the same height as T1 (1580mm), so the 60L above T1 is just the air bubble and the domed top of the cylinder — not accessible water. The effective usable volume before tap temperature drops is the **165L between T2 and T1** (validated to 97%).
+The **usable hot water** (above the top coil, heated by convection) is approximately **149L** — about half the nominal 300L. However, the draw-off point is at the same height as T1 (1580mm), so the 60L above T1 is just the air bubble and the domed top of the cylinder — not accessible water. The effective usable volume before tap temperature drops is **161L** — the T1 inflection point measured by flow integration at 2-second resolution. This is 97.6% of the 165L geometric volume between T2 and T1; the 4L difference represents the thermocline thickness (~25mm).
 
 ### Internal expansion (air bubble)
 
@@ -133,8 +133,9 @@ Validated against two shower events on 21 March 2026 (70L + 110L = 180L total fr
 | Parameter | Value | Source |
 |-----------|-------|--------|
 | Volume from T2 (490mm) to T1 (1530mm) | 165 L | Geometry |
-| Volume drawn when T1 step change started | ~161 L | Multical + timing |
-| **Model accuracy** | **97%** | |
+| Volume drawn when T1 step change started | **~161 L** | Flow integration at 2s resolution |
+| Multical volume register resolution | 10 L | Register increments in 10L steps |
+| **Model accuracy** | **97.6%** | 161L measured vs 165L geometric prediction |
 
 The step change in T1 (from 44.2°C dropping at 0.01°C/min to 0.15°C/min) confirms a thin, sharp thermocline — consistent with the research literature finding of 50–100mm thermocline thickness in well-designed vertical cylinders. Thermal diffusion during the 55-minute gap between showers was negligible (~1mm diffusion length).
 
@@ -234,7 +235,27 @@ The ReturnT ≠ T2 because the coil sits above T2 and heats its immediate surrou
 | T2 during draw | 26→21→26°C (WWHR ramp) | 25→22→26°C (WWHR ramp) |
 | T2 post-draw | 26°C | 25→13°C (sink at 11:46) |
 
-The T1 step change at 11:37 — where the drop rate increased from 0.01°C/min to 0.15°C/min — marks the thermocline reaching the T1 sensor position. This occurred after ~161L cumulative draw, matching the model prediction of 165L (volume from T2 to T1) to 97% accuracy.
+The T1 step change marks the thermocline reaching the T1 sensor position. The Multical volume register showed this at "~160L" but the register only increments in 10L steps, too coarse to pinpoint. Flow rate integration at **2-second resolution** (trapezoidal, from `dhw_flow` in L/h) pinpoints the inflection at **~161L**.
+
+#### Multical volume register vs flow integration
+
+The Multical `dhw_volume_V1` register is cumulative but updates in **10-litre increments**. This means:
+- It's reliable for total-volume accounting across charge cycles (error < 10L)
+- It's too coarse to pinpoint thermocline transitions (which need ~1L precision)
+- For the Flux task tracking remaining hot water, flow integration provides 1L precision between register steps, while the register anchors through any data gaps
+
+Flow rate integration (`dhw_flow` at ~2s sample interval, trapezoidal rule) cross-checks well: 189.4L integrated vs 190L from the register for the same draw period. At full resolution, the T1 inflection is clear:
+
+| Integrated volume | T1 | dT1/dL (°C per litre) | Phase |
+|---|---|---|---|
+| 0–153L | 44.58→44.22°C | −0.002 | Stable (background standby decay) |
+| 153–161L | 44.22→44.20°C | −0.004 | First hint |
+| **161–168L** | **44.20→44.15°C** | **−0.010** | **Thermocline arriving at T1** |
+| 168–176L | 44.15→44.03°C | −0.023 | Thermocline passing T1 |
+| 176–183L | 44.03→43.89°C | −0.027 | Accelerating decline |
+| 183L+ | 43.89→43.54°C | −0.035+ | Full decline |
+
+The inflection at 161L where dT1/dL jumps from background noise (−0.002) to −0.010 was initially masked by 1-minute aggregation (which pointed to ~165L). The 2-second resolution data shows the true transition starts at **161L** — 97.6% of the 165L geometric prediction. The 4L difference is likely the thermocline thickness (~25mm at 0.159 L/mm).
 
 ### Sink draw: 11:46 (post-showers)
 
@@ -242,7 +263,7 @@ Brief sink use at 104 L/h caused T2 to crash from 25°C to 13.4°C — raw mains
 
 ## Practical usage scenarios
 
-The usable capacity is 165L from the cylinder before the tap temperature starts dropping. Different draw types consume this budget at different rates because baths don't benefit from WWHR (waste goes to the drain, not through the shower heat exchanger).
+The usable capacity is 161L from the cylinder before the tap temperature starts dropping. Different draw types consume this budget at different rates because baths don't benefit from WWHR (waste goes to the drain, not through the shower heat exchanger).
 
 ### Draw rates from the cylinder
 
@@ -252,7 +273,7 @@ The usable capacity is 165L from the cylinder before the tap temperature starts 
 | Bath fill | ~12 L/min | 15.8°C (mains) | 84% | ~10 L/min | No |
 | Sink | ~3 L/min | 15.8°C (mains) | 84% | ~2.5 L/min | No |
 
-### How far does 165L go?
+### How far does 161L go?
 
 | Scenario | Cylinder draw | Remaining | Status |
 |----------|--------------|-----------|--------|
@@ -262,10 +283,10 @@ The usable capacity is 165L from the cylinder before the tap temperature starts 
 | **Bath (100L at tap)** | **~84L** | **81L** | ✅ OK alone |
 | **Bath + 8-min shower** | **~127L** | **38L** | ⚠️ Tight — works if no prior draws |
 | Bath + 10-min shower | ~138L | 27L | ⚠️ Just within limit |
-| Earlier shower + bath + shower | ~38+84+43 = **165L** | **0L** | ❌ T1 step change mid-shower |
+| Earlier shower + bath + shower | ~38+84+43 = **165L** | **−4L** | ❌ T1 step change mid-shower |
 | Two baths | ~168L | **−3L** | ❌ Exceeds capacity |
 
-This matches real-world experience: a bath followed by a shower works if nobody else has showered that day. If someone showered earlier, the bath + shower combination pushes past the 165L limit and the second person notices the temperature dropping.
+This matches real-world experience: a bath followed by a shower works if nobody else has showered that day. If someone showered earlier, the bath + shower combination pushes past the 161L limit and the second person notices the temperature dropping.
 
 ### Why the dhw-auto-trigger matters for this scenario
 
@@ -427,7 +448,7 @@ The data supports a multi-node 1D stratified tank model with these validated com
 | Morning charge (T1, T2, FlowT, ReturnT, 115 min) | Charge model, COP curve |
 | Afternoon charge (depleted cylinder) | Coil destratification effect |
 | Shower 1 (70L) + Shower 2 (110L) with 55 min gap | Draw-off plug flow, thermocline speed |
-| T1 step change at 161L vs 165L model | **97% accuracy** on thermocline position |
+| T1 step change at 161L (flow integration at 2s) vs 165L model | **97.6% accuracy** on thermocline position |
 | Overnight standby (4 hours undisturbed) | UA calibration, internal heat migration |
 | Sink draw (no WWHR) | Mains temperature baseline |
 | Shower WWHR ramp-up (15-second resolution) | WWHR effectiveness curve |
@@ -452,4 +473,72 @@ From 181 cycles over 90 days of emoncms data (pre-dating the InfluxDB setup):
 4. **Standby losses** — T1 decay rate overnight (baseline 0.25°C/hour)
 5. **Mains temperature** — T2 during sink draws (no WWHR), track seasonally
 6. **Coil destratification** — T1 drop during early charge cycles; indicates how much mixing the coils cause
-7. **Thermocline model validation** — draw volume at T1 step change should consistently match 165L (±10%)
+7. **Thermocline model validation** — draw volume at T1 step change should consistently match 161L (±10%)
+8. **DHW remaining** — live InfluxDB metric (see below)
+
+## DHW remaining litres — live tracking
+
+An InfluxDB Flux task (`DHW Remaining Litres`) runs every minute, computing how much usable hot water remains in the cylinder since the last DHW charge event.
+
+### How it works
+
+1. Finds the last DHW charge event via eBUS `StatuscodeNum == 134` (Warm_Water_Compressor_active) in the `ebusd_poll` measurement
+2. Gets the Multical cumulative volume (`dhw_volume_V1`) at charge end and now → `drawn_reg` (ground truth, 10L steps)
+3. Finds when the register last changed value (last reading with a different V1)
+4. Integrates `dhw_flow` since that last register step → `frac` (0–9.9L interpolation within current 10L window)
+5. Computes: `remaining = 161 - (drawn_reg + frac)`
+6. Writes `dhw.remaining_litres` (smooth, 1L precision) and `dhw.remaining_register` (ground truth, 10L steps) to the `energy` bucket
+
+### Volume register as ground truth, flow for interpolation
+
+The Multical `dhw_volume_V1` register is the **ground truth** for total draw volume:
+- Captures every drop regardless of sampling gaps
+- Monotonically increasing — differences are always reliable
+- No integration error accumulation
+- Cross-checks with flow integration to <1% (189.4L integrated vs 190L register for a 3-hour draw period)
+
+However, the register only updates in **10L increments**, producing a staircase in Grafana. Flow rate (`dhw_flow`) provides smooth 1L interpolation between register steps:
+
+```
+drawn = register_delta + clamp(flow_since_last_register_step, 0, 9.9)
+```
+
+This ensures:
+- **Register anchors every 10L step** — flow can never drift beyond one step
+- **Flow fills in between steps** — smooth curves during draws
+- **Gaps are handled** — if flow data is missing, the register still provides the correct 10L-resolution value
+- **No cumulative drift** — flow accumulator resets at every register step
+
+### Sink vs shower draws
+
+Not all litres are equal in their impact on T1 (draw-off temperature):
+
+- **Shower draws**: WWHR preheats inlet water to ~25°C, which enters at buoyancy-neutral height (~T2 level, 490mm). Pushes the thermocline upward as plug flow. Each litre directly reduces the hot water column above T1.
+- **Sink draws**: Cold mains (~14°C) enters at the bottom via the dip pipe. Fills the dead zone below the coils first. Has minimal impact on T1 until the entire bottom zone is displaced.
+
+On 21 March, ~10L of intermittent sink use (16:22–17:15) caused zero change in T1 (held at 45.2°C) while T2 crashed to 13.6°C (raw mains). This confirms sink draws consume from the bottom dead zone (59L below the lower coil).
+
+**For the remaining-litres metric**, we track total cumulative volume regardless of draw type. This is conservative for sink-heavy use (actual usable capacity slightly higher) but accurate for shower-heavy use (the common case). The 161L figure was validated under shower conditions with WWHR at 2-second resolution.
+
+### Grafana query
+
+```flux
+from(bucket: "energy")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "dhw" and r._field == "remaining_litres")
+```
+
+### DHW charge detection via eBUS
+
+The eBUS `StatuscodeNum` values relevant to DHW:
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| 100 | Standby | Idle |
+| 101 | Heating_Prerun | Pump starting for heating |
+| 104 | Heating_Compressor_active | Space heating |
+| 107 | Heating_Overrun | Post-heating circulation |
+| **134** | **Warm_Water_Compressor_active** | **DHW charging** |
+| 516 | Deicing_active | Defrost cycle |
+
+These are available in InfluxDB as `ebusd_poll.StatuscodeNum` (numeric, from ebusd-poll.sh) and `ebusd.RunDataStatuscode` (string, from ebusd's own MQTT publishing).
