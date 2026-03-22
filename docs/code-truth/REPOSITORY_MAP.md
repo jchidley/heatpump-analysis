@@ -115,7 +115,8 @@ All deployed to pi5data `/usr/local/bin/` as systemd services.
 | `docs/explanation.md` | How the operating model works (state machine, flow rates, gap filling) | Explanation |
 | `docs/hydraulic-analysis.md` | Pump curves, flow degradation, y-filter diagnosis, post-clean results | Explanation |
 | `docs/dhw-auto-trigger.md` | Emergency DHW recharge automation: trigger logic, eBUS commands, deployment | How-to + Explanation |
-| `docs/dhw-cylinder-analysis.md` | Cylinder heat exchange: reheat cycles, standby loss, WWHR, stratification | Explanation |
+| `docs/dhw-cylinder-analysis.md` | Cylinder heat exchange: reheat cycles, standby loss, WWHR, stratification, live remaining-litres tracking, PHE evaluation, temperature optimisation | Explanation |
+| `docs/datasheets/` | Kingspan Albion Ultrasteel Plus AUXSN300ERP PDFs (installation manual, product guide, data fiche) | Reference |
 | `docs/octopus-data-inventory.md` | Audit of Octopus data sources, coverage, integration status | Reference |
 | `docs/roadmap.md` | Planned enhancements (eBUS ✅, Octopus ✅, solar PV, degree days ✅, z2m-hub) | Reference |
 | `docs/emonpi-rebuild-status-2026-03-20.md` | emonpi rebuild checklist and status | Reference |

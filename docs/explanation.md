@@ -91,7 +91,7 @@ The outside temperature feed's lower resolution matters for gap-filling: the tem
 
 From the data, DHW runs are consistently triggered at **~05:05** and **~13:05** daily, with occasional evening runs. This is controlled by the SensoCOMFORT schedule, not by the monitoring system.
 
-An emergency DHW auto-trigger script on emondhw forces a cylinder recharge via eBUS when prolonged draws (>200 L/h for 10 minutes) are detected. See [dhw-auto-trigger.md](dhw-auto-trigger.md).
+An emergency DHW auto-trigger script on pi5data forces a cylinder recharge via eBUS when prolonged draws (>200 L/h for 10 minutes) are detected. See [dhw-auto-trigger.md](dhw-auto-trigger.md).
 
 ### eBUS and Multical metering (added March 2026)
 
@@ -99,7 +99,7 @@ In addition to the emonHP bundle, the system now has:
 - **eBUS adapter** — decodes internal HP communication (operating mode, compressor speed, target flow temp, cylinder temp, COP calculations). eBUS provides the definitive operating state via `StatuscodeNum` (104=heating, 134=DHW, 100=standby, 516=defrost).
 - **Multical DHW meter** on emondhw — measures the secondary (tap water) side of the cylinder, giving T1 (hot out), T2 (cold in), flow rate, and thermal power. This enables end-to-end DHW efficiency tracking.
 
-Both feed into InfluxDB on pi5data via MQTT bridges. See [../heating-monitoring-setup.md](../heating-monitoring-setup.md) for infrastructure details and [dhw-cylinder-analysis.md](dhw-cylinder-analysis.md) for cylinder heat exchange analysis.
+Both feed into InfluxDB on pi5data via MQTT bridges. An InfluxDB Flux task computes `dhw.remaining_litres` every minute from Multical volume data and eBUS charge detection — see [dhw-cylinder-analysis.md](dhw-cylinder-analysis.md) for full details including cylinder specification, stratification model, temperature optimisation, and live monitoring setup.
 
 ## Validation
 

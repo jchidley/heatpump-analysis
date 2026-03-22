@@ -86,6 +86,16 @@ Multical meter → emondhw emonhub → MQTT bridge → pi5data Mosquitto
 
 This runs independently on pi5data. Not connected to the Rust analysis tool.
 
+### DHW remaining litres (InfluxDB Flux task on pi5data)
+
+```
+eBUS StatuscodeNum (134 = DHW charge) ──┐
+                                        ├──→ Flux task (every 1m) ──→ dhw.remaining_litres
+Multical dhw_volume_V1 + dhw_flow ──────┘                              dhw.remaining_register
+```
+
+Tracks usable hot water remaining (161L max) since last charge. Volume register is ground truth (10L steps); flow integration interpolates within each step. See `docs/dhw-cylinder-analysis.md`.
+
 ### Z2M automation path (separate system on pi5data)
 
 ```

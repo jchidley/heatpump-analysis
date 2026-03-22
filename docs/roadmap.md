@@ -29,6 +29,10 @@ The eBUS adapter (ESP32 Shield v1.24, firmware 20260317) connects to ebusd 26.1 
 - **Defrost analysis** — eBUS provides definitive defrost status (516) vs the current inference from negative DT/heat.
 - **emoncms import** — eBUS data is only in InfluxDB (via pi5data). Could be added as new emoncms feeds for the existing sync pipeline.
 
+**Already using eBUS for:**
+- DHW charge detection (`StatuscodeNum == 134`) in the InfluxDB Flux task for DHW remaining litres tracking.
+- DHW auto-trigger script watches flow via MQTT, triggers via eBUS `HwcSFMode`.
+
 See [../heating-monitoring-setup.md](../heating-monitoring-setup.md) for the full eBUS data dictionary and MQTT topic list.
 
 ## Octopus Energy Integration

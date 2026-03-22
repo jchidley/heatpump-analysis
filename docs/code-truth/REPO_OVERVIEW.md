@@ -14,7 +14,7 @@ The system is built for a specific installation: a **Vaillant Arotherm Plus 5kW*
 
 Beyond the Rust analysis tool, the project includes:
 - Shell-based **monitoring scripts** deployed to pi5data (`scripts/dhw-auto-trigger.sh`, `scripts/ebusd-poll.sh`, `scripts/z2m-automations.sh` — all systemd services)
-- Extensive **domain documentation** on the hydraulic system, DHW cylinder heat exchange, and monitoring infrastructure.
+- Extensive **domain documentation** on the hydraulic system, DHW cylinder heat exchange (including live remaining-litres tracking via InfluxDB Flux task), and monitoring infrastructure.
 - A separate **z2m-hub** project (`~/github/z2m-hub/`) for Zigbee automation — referenced but not part of this repo.
 
 ## Key Technologies
