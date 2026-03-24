@@ -1,3 +1,7 @@
 /target
 heatpump.db
 emon-credentials.txt
+*.xlsx
+*.pdf
+model/data/
+*:Zone.Identifier

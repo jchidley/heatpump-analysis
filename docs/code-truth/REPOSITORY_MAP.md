@@ -1,4 +1,4 @@
-<!-- code-truth: 08e43eb -->
+<!-- code-truth: 1900ca7+ -->
 
 # Repository Map
 
@@ -8,12 +8,15 @@
 |------|---------|
 | `config.toml` | All domain constants, thresholds, feed IDs, house data, radiator inventory, Arotherm specs, gas-era history |
 | `Cargo.toml` | Dependencies and build configuration |
-| `AGENTS.md` | LLM agent context (canonical project documentation) |
+| `AGENTS.md` | LLM agent context (canonical project documentation). **Heavily updated Mar 2026** with house layout, room sensors, radiator inventory, MVHR, pipe topology. |
 | `CLAUDE.md` | Points to AGENTS.md |
 | `README.md` | Human-facing quick start, command reference, project philosophy |
 | `heatpump.db` | SQLite database (gitignored, created by `sync`) |
 | `heating-monitoring-setup.md` | Full monitoring infrastructure documentation (devices, MQTT topics, eBUS data, credentials) |
 | `.gitmodules` | Six submodules: ebusd, avrdb_firmware, EmonScripts, emonhub, emoncms, emonPiLCD |
+| `Heating needs for the house.xlsx` | Room-by-room U-values, fabric measurements, radiator specs, HDD regression (not in git) |
+| `Utility - Gas Electric-Jack_Laptop.xlsx` | Gas/electric history 2007-2024, PV models, hot water meter, degree days (not in git) |
+| `FRV.pdf` | Flow Regulating Valve datasheet — for radiator balancing (not in git) |
 
 ## Source Modules
 
@@ -94,6 +97,33 @@ This is the largest module. Two concerns:
 - `print_baseload()` — whole-house minus HP electricity
 - **Note**: `ERA5_BIAS_CORRECTION_C` (1.0°C) is a Rust constant, not in config.toml
 
+## Python Thermal Model
+
+### `model/house.py` — Room-by-room thermal network model (750+ lines)
+
+Python script (run via `uv run --with influxdb-client --with numpy --with scipy`). Not part of the Rust build — a separate analysis tool.
+
+- **Room definitions** (`build_house()`): 13 rooms with fabric U×A values, radiator T50 ratings, sensor mappings, door states
+- **Ventilation model** (`VENTILATION` dict): per-room ACH values in three groups:
+  - Measured: bathroom MVHR (9 L/s, 78% HR)
+  - Calibrated from humidity data: Elvina (trickle vents), Jack&Carol (bay window leakage), Aldora (sealed)
+  - Estimated: all others, with bathroom-door-dependent stairwell draft
+- **Pipe topology** (`PIPE_BRANCHES`): 22mm primary vs two 15mm branches
+- **Physics** (`radiator_output()`, `fabric_loss()`, `ventilation_loss()`): standard building physics calculations
+- **Data fetching** (`fetch_data()`): queries InfluxDB on pi5data via influxdb-client Python package
+- **Analysis** (`analyse()`): steady-state energy balance per room
+- **Fitting** (`fit()`): identifies free-cooling periods from eBUS status codes (101/103=standby, 134=DHW) and calculates cooldown rates
+
+Data files stored in `model/data/` (gitignored):
+- `room_temps.csv`, `outside_temp.csv`, `hp_state.csv`, `hp_status.csv`
+
+| To change... | Look in... |
+|--------------|-----------|
+| Room fabric or radiator data | `model/house.py` `build_house()` |
+| Ventilation assumptions | `model/house.py` `VENTILATION` dict |
+| InfluxDB connection | `model/house.py` `INFLUX_*` constants |
+| Free-cooling detection | `model/house.py` `fit()` `SPACE_HEATING_OFF_CODES` |
+
 ## Scripts
 
 All deployed to pi5data `/usr/local/bin/` as systemd services.
@@ -122,6 +152,8 @@ All deployed to pi5data `/usr/local/bin/` as systemd services.
 | `docs/roadmap.md` | Planned enhancements (eBUS ✅, Octopus ✅, solar PV, degree days ✅, z2m-hub) | Reference |
 | `docs/emonpi-rebuild-status-2026-03-20.md` | emonpi rebuild checklist and status | Reference |
 | `docs/emon-installation-runbook.md` | Generic emon device installation procedure | How-to |
+| `docs/house-layout.md` | Building physics: room connectivity, door states, thermal relationships, radiators, pipe topology, ventilation, sensors, glazing | Explanation |
+| `docs/room-thermal-model.md` | Room thermal model: methodology, calibration rooms, daily experiment, overnight results, HP capacity, EWI analysis, FRV strategy | Explanation |
 | `docs/code-truth/` | This documentation set (derived from code) | — |
 | `heating-monitoring-setup.md` | Full monitoring infrastructure: devices, MQTT, eBUS, InfluxDB, Grafana, credentials | Reference |
 

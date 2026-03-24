@@ -33,6 +33,11 @@ Also includes shell-based monitoring scripts deployed to pi5data, and extensive 
 | Octopus summary | `cargo run -- octopus` |
 | Gas vs HP comparison | `cargo run -- --all-data gas-vs-hp` |
 | Baseload analysis | `cargo run -- --all-data baseload` |
+| **Room thermal model** | |
+| Fetch sensor data | `uv run --with influxdb-client --with numpy --with scipy python model/house.py fetch [hours]` |
+| Room summary | `uv run --with influxdb-client --with numpy --with scipy python model/house.py rooms` |
+| Energy balance | `uv run --with influxdb-client --with numpy --with scipy python model/house.py analyse` |
+| Fit cooldown | `uv run --with influxdb-client --with numpy --with scipy python model/house.py fit` |
 
 `--apikey` only needed for `feeds` and `sync`. Analysis reads from `heatpump.db`.
 Octopus commands read from `~/github/octopus/data/` (usage_merged.csv, weather.json, config.json).
@@ -62,51 +67,18 @@ See `docs/code-truth/` for detailed architecture, patterns, and decisions.
 
 ## Monitoring Infrastructure
 
-Four-device monitoring network documented in `heating-monitoring-setup.md`:
-- **emonpi** (eth0 10.0.1.117, wlan0 10.0.1.111) — EmonPi2 (3× CT: DNO grid/house/solar), 2× DS18B20, Zigbee2MQTT (9 devices, 8 active), Pi 4B
-- **emonhp** (10.0.1.169) — MID-certified MBUS heat meter + SDM120 electric meter + RFM69 room sensor → emoncms.org. Minimal install: emonhub + mosquitto only (local emoncms stack disabled — was unused).
-- **emondhw** (10.0.1.46) — Multical DHW meter (emonhub + Mosquitto bridge only). Pi Zero 2 W, 426MB RAM. USB-Modbus adapter has udev rule (`99-multical.rules`) creating stable `/dev/ttyMULTICAL` symlink — prevents data loss on USB reconnect.
-- **pi5data** (10.0.1.230) — Central hub: Docker (Mosquitto + InfluxDB + Telegraf + Grafana + ebusd) + systemd services
+Four devices — see `heating-monitoring-setup.md` for full details (MQTT topics, eBUS data dictionary, credentials).
 
-All hostnames resolve via local DNS (dnsmasq on router 10.0.0.1, domain `chidley.home`). Static DHCP reservations for all four devices.
+| Device | IP | Role |
+|---|---|---|
+| emonpi | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Z2M (19 Zigbee devices) |
+| emonhp | 10.0.1.169 | Heat meter + SDM120 → emoncms.org |
+| emondhw | 10.0.1.46 | Multical DHW meter |
+| pi5data | 10.0.1.230 | Central hub: Docker (Mosquitto, InfluxDB, Telegraf, Grafana, ebusd) + systemd |
 
-### MQTT Architecture
-Each emon device runs local Mosquitto with a bridge to pi5data. Telegraf on pi5data subscribes only to its local Mosquitto — all data arrives via bridges:
-```
-emonpi  ─── bridge (emon/# out, zigbee2mqtt/# both) ───┐
-emonhp  ─── bridge (emon/#) ──────────────────┼──→ pi5data Mosquitto ──→ Telegraf ──→ InfluxDB
-emondhw ─── bridge (emon/#) ──────────────────┘         ↑                                ↑ ↓
-                                                         │                          z2m-hub (Rust)
-eBUS adapter (10.0.1.41:9999) ──→ ebusd (Docker, :8888) ──→ ebusd-poll.sh ──→ ebusd/poll/*  │
-                                                    ↑                                        │
-                                                    └──── z2m-hub (TCP, DHW boost/tracking) ─┘
-
-Z2M (emonpi:8080/api) ←──── WebSocket ────→ z2m-hub (automations, dashboard on :3030)
-```
-Bridges use QoS 1 + `cleansession false` — messages queue during pi5data outages.
-MQTT credentials: user `emonpi`, password `emonpimqtt2016` (all devices).
-
-### Host Package Baseline
-All devices (emonpi, emonhp, emondhw, pi5data, pi5nvme) have: `tmux`, `mosquitto-clients`, `netcat-openbsd`.
-
-### Design Principles
-- **z2m-hub for automations** — Rust server replaces shell-script automations (z2m-automations.sh removed Mar 2026). Handles Zigbee, DHW tracking, mobile dashboard. See `~/github/z2m-hub/`.
-- **Shell for simple polling** — `ebusd-poll.sh` still runs as a shell script (simple loop, no state).
-- **systemd over Docker** for custom services — Docker only for upstream software (ebusd, Mosquitto, InfluxDB, Grafana, Telegraf, Zigbee2MQTT)
-- **Minimal installs** — emonhp and emondhw run only emonhub + mosquitto. No local emoncms, no Docker (except emonpi for Zigbee2MQTT)
-- **Central hub** — pi5data handles all storage, visualization, and automation. Emon devices are data collectors only.
-
-### emonpi Details
-- **EmonPi2 firmware**: emon_DB_6CT v2.1.1 (serial `/dev/ttyAMA0`)
-- **CT channels**: P1=DNO grid, P2=House consumption, P3=Solar (P4–P6 unused)
-- **DS18B20**: `28-00000ee9cb6d` (temp_high), `28-00000ee9e94f` (temp_low) — same space, different heights
-- **Zigbee2MQTT**: Docker (v2.9.1), Sonoff USB 3.0 dongle. WebSocket API at `ws://emonpi:8080/api` (no auth). Devices, automations, and dashboard managed by z2m-hub — see `~/github/z2m-hub/AGENTS.md`.
-- **Credentials**: `pi` user, password in GPG store (`ak get emon-pi-credentials`) and Bitwarden ("emon pi, pi credentials")
-
-eBUS provides 25+ values every 30s including operating mode (StatuscodeNum), compressor speed, target flow temp, cylinder temp. See `heating-monitoring-setup.md` for full MQTT topic list and eBUS data dictionary.
-
-### InfluxDB Flux Tasks
-- **DHW Remaining Litres** (id: `1071306263e06000`) — **DISABLED** (Mar 2026). Had null crash when no water drawn after charge. Replaced by DHW tracking in z2m-hub (`~/github/z2m-hub/`), which writes `dhw.remaining_litres` to InfluxDB. See `docs/dhw-cylinder-analysis.md` for the 161L capacity derivation.
+MQTT: each emon device bridges to pi5data. Credentials: `emonpi` / `emonpimqtt2016`.
+Z2M: `ws://emonpi:8080/api` (no auth). z2m-hub manages automations (`~/github/z2m-hub/`).
+eBUS: 25+ values every 30s via `ebusd-poll.sh` on pi5data.
 
 ## DHW Auto-Trigger — REMOVED
 
@@ -120,46 +92,16 @@ Deploy: `scp scripts/ebusd-poll.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo 
 
 ## Octopus Energy Integration
 
-Data flows from the `~/github/octopus/` project into heatpump-analysis:
+Data from `~/github/octopus/` — see `docs/octopus-data-inventory.md` for full audit.
 
-```
-Octopus REST API → usage CSVs → merge → usage_merged.csv + weather.json + config.json
-                                                              ↓
-                                                    octopus.rs loads CSV/JSON
-                                                    + emoncms DB for HP state machine
-```
-
-### Data sources and coverage
-- **Electricity**: Apr 2020 → present (half-hourly, 166k+ records)
-- **Gas**: Apr 2020 → Jul 2024 (half-hourly, gas supply ended at HP install)
-- **Gap**: 102 days Dec 2023 → Mar 2024 (meter/comms outage, unfillable)
-- **Weather**: ERA5-Land daily temps + HDD, bias-corrected by +1.0°C
-
-### Temperature hierarchy
-1. **emoncms feed 503093** (Met Office hourly) — used for HP era (Oct 2024+), most accurate
-2. **ERA5-Land** (weather.json) — used for gas era, bias-corrected by +1.0°C
-   - Derived from 507-day overlap: emoncms reads 1.0°C warmer on average
-   - ERA5 overstates HDD by ~14% without correction
-   - HDD base: 15.5°C (UK standard)
-
-### Refreshing Octopus data
 ```bash
-cd ~/github/octopus && npm run cli -- refresh
+cd ~/github/octopus && npm run cli -- refresh   # Refresh Octopus data
 ```
 
-### Tariff history
-| Period | Electricity | Gas |
-|--------|------------|-----|
-| Apr 2020 → Dec 2020 | Fix 15.03p | Fix 2.56p |
-| Dec 2020 → Dec 2022 | Agile (avg 26.35p) | Variable 2.73→3.83p |
-| Dec 2022 → Apr 2023 | Flex 51.38p (crisis) | Variable 10.31p |
-| Apr 2023 → Apr 2024 | Flex ~30p | Variable 7–12p |
-| Apr 2024 → Nov 2024 | Agile (avg 17.98p) | Variable 5–6p |
-| Nov 2024 → Oct 2025 | **Cosy** (off 14.63, mid 29.82, peak 44.74p) | — |
-| Oct 2025 → present | **Cosy Fix** (off 14.05, mid 28.65, peak 42.97p) | — |
-
-Cosy time slots: off-peak 04–07, 13–16, 22–00 (9h); mid 00–04, 07–13, 19–22 (12h); peak 16–19 (3h).
-82.6% of HP-era electricity lands in off-peak slots.
+- Electricity Apr 2020→present, Gas Apr 2020→Jul 2024 (half-hourly)
+- Current tariff: **Cosy Fix** (off 14.05p, mid 28.65p, peak 42.97p). 82.6% HP electricity at off-peak.
+- Temperature: eBUS primary (real-time), Met Office control (hourly), ERA5-Land for gas era (+1.0°C bias correction)
+- 102-day data gap Dec 2023→Mar 2024 (unfillable)
 
 ## Key Measured Performance
 
@@ -202,7 +144,7 @@ Thresholds in `config.toml` `[thresholds]`. Originally 16.0/15.0 for DHW — tig
 ## Feed Notes
 
 - `503101` (indoor_temp) = emonth2 sensor in **Leather room only**, not whole-house
-- `503093` (outside_temp) = Met Office hourly, not Arotherm OAT sensor. Reads ~1.0°C warmer than ERA5-Land (507-day overlap). Ground truth for HP era; ERA5 bias-corrected +1.0°C for gas era.
+- `503093` (outside_temp) = Met Office hourly, not Arotherm OAT sensor. Reads ~1.0°C warmer than ERA5-Land (507-day overlap). Used as control/cross-check for HP era; ERA5 bias-corrected +1.0°C for gas era. For real-time analysis, prefer `ebusd/poll/OutsideTemp` (Arotherm OAT, every 30s).
 - `512889` (DHW_flag) = dead since Dec 2024
 - Solar PV + battery system installed (not yet integrated):
     - 7× Trina 440W panels (TSM-440NEG9RC.27), 3.08 kWp, single string
@@ -212,29 +154,11 @@ Thresholds in `config.toml` `[thresholds]`. Originally 16.0/15.0 for DHW — tig
 
 ## Hydraulic System
 
-Documented in `docs/hydraulic-analysis.md`:
-- Pump software-clamps heating at 860 L/h (14.3 L/min)
-- DHW flow rate depends on system resistance (post-clean: 21.3 L/min, before clean: 16.8)
-- Y-filter on 35mm primary catches magnetite sludge — cleaned 19 March 2026
-- **Idle flow rate is the best early warning** of resistance increase (heating flow is masked by software clamp)
-- Post-clean baseline: idle 12.6, heating 14.4, DHW 21.3 L/min
+See `docs/hydraulic-analysis.md`. Key: heating flow clamped at **14.3 L/min**, DHW 21.3 L/min (post y-filter clean Mar 2026). Idle flow rate is the early warning for sludge buildup.
 
 ## DHW Cylinder
 
-Documented in `docs/dhw-cylinder-analysis.md`:
-- Kingspan Albion 300L twin-coil (both coils in series for HP), internal expansion (air bubble, no ext vessel)
-- Measured connection heights (from outside bottom): bottom coil 420mm, T2+cold inlet 540mm, top coil 1020mm, T1+draw-off 1580mm
-- Usable hot water (T2 to T1/draw-off): **161L** validated by flow integration at 2s resolution (T1 inflection point). Geometric prediction is 165L; 4L difference is thermocline thickness. Dead zone below coils: 59L (20%)
-- Eco mode cycle: ~115 min, 3.0 kW, primary ΔT 2.1°C
-- Standby loss: 13 W (0.3 kWh/day) — far below 93 W rated spec due to stratification + air bubble insulation
-- WWHR effectiveness: 41% at steady state (3.5 min ramp-up), lifts mains from 15.8°C to 25°C
-- **Validated stratification model (97.6% accuracy)**: WWHR water inserts at buoyancy-neutral height (~T2 level, 490mm), not at bottom. Volume from T2 to T1 = 165L (geometric); T1 inflection confirmed at **161L** by flow integration at 2s resolution. The 4L difference is the thermocline thickness (~25mm). Multical volume register has 10L resolution — flow integration needed for precision.
-- T1 drops during early charging (coil-driven destratification) when primary flow temp < T1
-- Multical T1/T2 sensors at mid-cylinder positions, not extremes
-- Secondary return (F) at 1519mm (65mm below hot outlet) — available but not used
-- **45°C target is optimal**: cost per shower is flat across 40-51°C (COP effect cancels mixing effect). 45°C is ~1°C above practical minimum for 42°C showers + bath margin. HP already skips charges when cylinder is hot.
-- **PHE evaluated, not worth it**: plate heat exchanger on primary side with secondary pump would add complexity for ~£7-8/year saving. Coil-in-coil is already 90-95% efficient. See `docs/dhw-cylinder-analysis.md`.
-- Reference datasheets in `docs/datasheets/` (Kingspan Albion Ultrasteel Plus Solar Indirect AUXSN300ERP)
+See `docs/dhw-cylinder-analysis.md` for full analysis. Key numbers: Kingspan Albion 300L, usable **161L**, **45°C target** (optimal), standby loss 13W, eco mode ~115 min at 3.0 kW. DHW tracking via z2m-hub (`DHW_FULL_LITRES = 161`).
 
 ## Reference Data (config.toml)
 
@@ -244,6 +168,22 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - Gas era: 18,702 kWh/yr gas, 90% boiler, 11.82 kWh/day hot water
 - Insulation improved between gas and HP eras (heat/HDD dropped ~4%)
 - Solid wall insulation planned but not yet done
+- Spreadsheet models: `Heating needs for the house.xlsx` (U-values, radiators, HDD), `Utility - Gas Electric-Jack_Laptop.xlsx` (gas/electric history, PV, degree days, hot water)
+
+## House Layout & Room Sensors
+
+See [docs/house-layout.md](docs/house-layout.md) for full building physics: room connectivity, door states, thermal relationships, radiator inventory, pipe topology, ventilation, sensors.
+
+See [docs/room-thermal-model.md](docs/room-thermal-model.md) for HP capacity analysis, EWI opportunity, FRV strategy, overnight data findings.
+
+Key facts for agents:
+- **13 rooms**, 11 sensored (Office + Landing being added). All SNZB-02P on v2.2.0.
+- **15 radiators**, no TRVs. Kitchen and Landing have no radiator. Sterling rad is OFF.
+- **Pipe topology**: 22mm primary (most rads) vs two 15mm branches (hall+front-horizontal, jackcarol+office) — 15mm branches are flow-starved.
+- **Bathroom MVHR**: Vent-Axia Tempra LP, 9 L/s, 78% HR, runs 24/7. Drives whole-house airflow via stairwell.
+- **Outside temp**: eBUS `ebusd/poll/OutsideTemp` primary (30s), Met Office feed 503093 as control.
+- **HP capacity**: maxes out at ~2°C outside (95% runtime). EWI on SE wall (50m², £5k DIY) would add 84 W/K = 32% HTC reduction.
+- **SNZB-02P v2.1.0 bug**: readings freeze at power-on value. v2.2.0 fixes it. Always verify readings vary before trusting.
 
 ## Gotchas
 
@@ -267,6 +207,9 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - `scripts/ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP connection hanging — without `head -1`, each `nc` call waits 5s for the server to close.
 - Multical `dhw_volume_V1` register has **10L resolution** — ground truth for draw tracking. `dhw_flow` integration interpolates between steps (resets at each step, clamped 0–9.9L). Use `dhw_flow` at 2s resolution for sub-litre analysis (e.g., thermocline pinpointing).
 - DHW remaining uses 161L capacity (z2m-hub `DHW_FULL_LITRES` constant) — validated at 2s resolution by T1 inflection during shower draws. Don't change without re-validating against draw+T1 data at full resolution.
+- SNZB-02P sensors on firmware v2.1.0 (8448) have a known bug: readings freeze at power-on value. Always verify sensor readings **vary over time** before using them in analysis. A flat reading across changing conditions = broken sensor, not thermal equilibrium.
+- SNZB-02P OTA updates flood InfluxDB with ~4 readings/sec of spam during transfer. Delete the OTA period data from InfluxDB after each update.
+- `Heating needs for the house.xlsx`: Leather "Windows" uses ΔT=19°C but faces conservatory (internal, actual ΔT ≈ 0.5°C). All internal wall ΔT=5°C assumptions overestimate by 2-10× vs measured ~1.5°C.
 
 ## Boundaries
 
@@ -278,13 +221,32 @@ Documented in `docs/dhw-cylinder-analysis.md`:
 - Keep `GAS_DHW_KWH_PER_DAY` and `BOILER_EFFICIENCY` in `octopus.rs` in sync with config.toml `[gas_era]`
 - Human-facing docs: `docs/` (Diátaxis style) — see `docs/code-truth/` for derived-from-code docs
 - This file (`AGENTS.md`) is the single LLM context source. `docs/code-truth/` is for human comprehension.
-- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (written by z2m-hub)
+- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (written by z2m-hub), Zigbee room sensor data (10× SNZB-02P temp/humidity from Mar 2026, topic `zigbee2mqtt/*_temp_humid`), eBUS data (25+ values every 30s, topics `ebusd/poll/*` and `ebusd/hmu/*`)
 - Don't modify monitoring infrastructure from this project — use SSH to emonpi/emondhw/emonhp/pi5data directly
 - Don't store credentials in plaintext — use `ak get emon-pi-credentials` at runtime
+- Always verify SNZB-02P sensor readings **vary over time** before using in analysis — stuck readings look like real data
+- Thermal model (`model/house.py`) room definitions must match AGENTS.md radiator/pipe/ventilation data — don't update one without the other
+- InfluxDB token for pi5data is in `model/house.py` constants — same token as Telegraf config on pi5data
+
+## Room Thermal Model
+
+Python model in `model/house.py` — see [docs/room-thermal-model.md](docs/room-thermal-model.md) for full documentation.
+
+Lumped-parameter thermal network using 11 room sensors + eBUS outside temp + HP heat meter. Fits thermal mass, ventilation rates, and radiator flow distribution from daily setback→DHW→warmup cycles.
+
+**Calibration rooms** (no radiator input, continuous measurement):
+- **Kitchen** (no rad, 2 open doorways) → calibrates open doorway air exchange rate
+- **Sterling** (rad off, door closed) → calibrates closed room background ventilation rate
+
+**Key outputs**: per-room flow distribution, FRV settings for 22mm radiators, kitchen radiator sizing decision. Pipe topology: 22mm primary (most rads) vs two 15mm branches (hall+front-horizontal, jackcarol+office) that are flow-starved.
 
 ## Planned Enhancements
 
 See [docs/roadmap.md](docs/roadmap.md) for full details:
-- **eBUS integration into analysis** — eBUS is physically connected and publishing data (25+ values every 30s). Not yet used by the Rust analysis tool. Could validate or replace the flow-rate state machine using StatuscodeNum.
+- **eBUS integration into analysis** — eBUS is physically connected and publishing data (25+ values every 30s). Not yet used by the Rust analysis tool. Could validate or replace the flow-rate state machine using StatuscodeNum. The thermal model already uses StatuscodeNum for free-cooling detection.
 - **Solar PV + battery** — system installed, details above. Self-consumption analysis, DHW scheduling to solar peak.
 - **Cost analysis subcommand** — tariff data and cost calculations could be a proper Rust subcommand.
+- **Cold snap calibration** — thermal model needs data at 2°C or below to resolve thermal mass and ventilation rates. Cold snap expected late March 2026.
+- **Office + Landing sensors** — being added, will complete 13/13 room coverage and fill the two biggest model gaps.
+- **FRV installation** — once thermal model is calibrated, calculate exact FRV settings for 22mm radiators. Install and measure the before/after effect with sensors.
+- **EWI on SE wall** — 10m×5m, DIY, before next winter. Model predicts 32% HTC reduction from one wall.

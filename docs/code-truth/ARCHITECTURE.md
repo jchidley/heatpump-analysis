@@ -1,4 +1,4 @@
-<!-- code-truth: 08e43eb -->
+<!-- code-truth: 1900ca7+ -->
 
 # Architecture
 
@@ -152,6 +152,34 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | `daily_hp_by_state()` assumes 1-minute sample interval | octopus.rs `SAMPLE_HOURS = 1/60` | Different sample interval → wrong energy |
 | DHW tracking (161L capacity, boost logic) lives in z2m-hub, not this repo | `~/github/z2m-hub/` | Changing usable volume requires updating z2m-hub `DHW_FULL_LITRES` constant |
 | gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs TempBinModel | Threshold changes must be consistent between analysis.rs and gaps.rs |
+
+## Room Thermal Model (Python)
+
+Separate from the Rust analysis tool. `model/house.py` implements a lumped-parameter thermal network:
+
+```
+InfluxDB (pi5data)
+  ├── room temps (zigbee2mqtt/*_temp_humid, emon/emonth2_23/temperature)
+  ├── outside temp (ebusd/poll/OutsideTemp)
+  ├── HP state (emon/heatpump/heatmeter_*, ebusd/poll/StatuscodeNum)
+  │
+  └──→ model/house.py fetch → model/data/*.csv
+                                      │
+                              model/house.py analyse/fit
+                                      │
+                              Per-room energy balance,
+                              cooldown rates, thermal mass,
+                              ventilation calibration
+```
+
+The model uses known fabric U×A values (from `Heating needs for the house.xlsx`), known radiator T50 ratings, and measured room temperatures to solve for unknown parameters (ventilation rates, thermal mass, effective radiator output / flow distribution).
+
+**Key calibration points:**
+- **Kitchen** (no radiator) → calibrates open doorway air exchange rate
+- **Sterling** (rad off, door closed) → calibrates sealed room infiltration rate
+- **Bathroom** MVHR (9 L/s, 78% HR) → known ventilation rate, anchors the model
+
+**No connection to Rust tool** — they share the same InfluxDB and emoncms data sources but don't interact. The Rust tool analyses HP performance; the Python model analyses room-level heat distribution.
 
 ## External Boundaries
 

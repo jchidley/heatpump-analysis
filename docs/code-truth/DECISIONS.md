@@ -1,4 +1,4 @@
-<!-- code-truth: 08e43eb -->
+<!-- code-truth: 1900ca7+ -->
 
 # Decisions
 
@@ -187,11 +187,45 @@
 
 **Where**: Analysis in `docs/dhw-cylinder-analysis.md`
 
+### D17: eBUS OutsideTemp as primary, Met Office as control (March 2026)
+
+**Status:** active
+
+**What**: Use `ebusd/poll/OutsideTemp` (Arotherm OAT sensor, every 30s) as the primary outside temperature for real-time analysis. emoncms feed 503093 (Met Office hourly) serves as a control/cross-check.
+
+**Why**: The Arotherm OAT sensor is local, real-time (30s resolution), and directly relevant (it's what the HP uses for weather compensation). Met Office data is hourly and from a remote station — often stale and can diverge by several degrees during rapid temperature changes.
+
+**Where**: `model/house.py` uses eBUS. Rust analysis tool still uses emoncms feed 503093 (historical analysis). AGENTS.md documents the hierarchy.
+
+### D18: Python for thermal model, not Rust (March 2026)
+
+**Status:** active (may migrate key calculations to Rust later)
+
+**What**: The room thermal model is in Python (`model/house.py`), not added to the Rust analysis tool.
+
+**Why**: Exploration speed. The model parameters are still being calibrated against sensor data. Python with NumPy/SciPy allows rapid iteration — changing room definitions, ventilation assumptions, fitting algorithms without recompilation. Once the model stabilises, key calculations may be migrated to a Rust subcommand.
+
+**Where**: `model/house.py`, `docs/room-thermal-model.md`
+
+### D19: SNZB-02P v2.2.0 mandatory, clean InfluxDB after OTA (March 2026)
+
+**Status:** active
+
+**What**: All SONOFF SNZB-02P sensors must be on firmware v2.2.0 (8704). v2.1.0 (8448) has a known bug causing readings to freeze at power-on value. OTA updates flood InfluxDB with ~4 readings/sec of spam — delete the OTA period data afterwards.
+
+**Why**: Four sensors deployed on v2.1.0 showed stuck readings (conservatory at 13.2°C for 3 days, front at 18.0°C). This led to an entirely incorrect heat loss analysis (conservatory as "heat black hole"). The v2.2.0 firmware fixes the sensor IC lockup. Always verify readings vary before trusting them.
+
+**Where**: Z2M OTA, InfluxDB cleanup via `influx delete`
+
 ## Open Questions
 
 - **`fill_gap_interpolate()` hardcoded IDs**: The linear interpolation path in gaps.rs still uses hardcoded feed ID strings. Should be migrated to use `config().emoncms.feed_id()` for consistency.
 - **Octopus data path**: `~/github/octopus/data/` is hardcoded in `default_data_dir()`. Should this move to config.toml?
 - **`--all-data` start timestamp**: `resolve_time_range()` in main.rs hardcodes `1_729_555_200` (Oct 22 2024) as the earliest data, duplicating the value in `config.toml`. These should be unified.
 - **ERA5 bias correction location**: `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs, not in config.toml. Should it be externalised?
-- **eBUS state machine validation**: With eBUS now providing definitive operating mode (StatuscodeNum), the flow-rate state machine could be validated or replaced. Not yet investigated.
+- **eBUS state machine validation**: With eBUS now providing definitive operating mode (StatuscodeNum), the flow-rate state machine could be validated or replaced. The thermal model already uses StatuscodeNum to identify free-cooling periods.
 - **dhw-auto-trigger removed**: Both the Python (`dhw-auto-trigger.py`) and shell (`dhw-auto-trigger.sh`) versions removed Mar 2026. DHW boost now manual via z2m-hub dashboard. The `.py` file remains in repo but should not be deployed.
+- **Thermal model needs cold weather data**: The model structure is validated but thermal mass and ventilation parameters need calibration from colder nights (2°C or below). The 0.1°C sensor resolution limits precision at mild ΔTs. A cold snap is expected imminently.
+- **Elvina insulation vs ventilation**: Initially suspected poorly fitted sloping roof insulation. Trickle vents being open is the likely cause of faster-than-expected cooling. Needs data with vents open vs closed to distinguish.
+- **Aldora moisture risk**: Humidity reaches 61% overnight with one occupied person. Room is too well sealed — needs trickle vent or periodic door opening. Sensor data will confirm if this is a nightly pattern.
+- **Thermal model and Rust tool should share room definitions**: `config.toml` has radiator data, `model/house.py` has fabric and ventilation data. These could be unified into config.toml for consistency.

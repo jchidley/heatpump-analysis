@@ -189,9 +189,43 @@ Rust server replacing Home Assistant for Zigbee + heat pump automation. See `~/g
 - Cross-compiled for aarch64, deployed as systemd service
 - Shell scripts removed (z2m-automations.sh, dhw-auto-trigger.sh)
 - InfluxDB Flux task for DHW remaining disabled (replaced by z2m-hub)
-- 9 Zigbee devices (8 active, 1 dead battery)
+- 19 Zigbee devices: 10× SNZB-02P temp/humidity, 4× ZBMINI switches, 3× S60ZBTPG smart plugs, 2× Aqara motion
 - GitHub repo: https://github.com/jchidley/z2m-hub
 - Cross-compile and deploy to pi5data
+
+## Room Thermal Model & Building Improvements
+
+**Status:** Model built (`model/house.py`), first overnight data collected. Awaiting cold snap for calibration.
+
+See [room-thermal-model.md](room-thermal-model.md) for full methodology.
+
+### What's done
+- Python thermal network model with 13 rooms, known fabric U×A, radiator T50s, pipe topology
+- 11 Zigbee room sensors deployed and verified (all on firmware v2.2.0)
+- Ventilation model with bathroom MVHR (measured), kitchen/Sterling calibration points
+- First overnight cooldown analysis (23-24 Mar 2026) — patterns confirmed
+- Humidity analysis confirming ventilation groups (infiltration vs sealed vs MVHR)
+
+### Awaiting data
+- **Cold snap (2°C outside)** expected late Mar 2026 — needed to calibrate thermal mass and resolve ventilation rates at design-relevant ΔT
+- **Office + Landing sensors** being added for complete coverage
+
+### Key findings so far
+- Hall drops even while HP is heating — flow-starved on 15mm branch, rad possibly undersized
+- HP maxes out at ~2°C outside (95% runtime, Jan 2025 data)
+- Kitchen and hall cool at identical rates (thermally coupled via open doorway)
+- Sterling holds steady at 19.2°C with rad off (leather floor heat)
+- Conservatory cools fastest overnight (glazed roof)
+- Elvina cools fast due to trickle vents, not poor insulation
+- Aldora reaches 61% humidity overnight — too well sealed
+
+### Physical improvements identified
+
+| Priority | Action | Cost | Impact |
+|----------|--------|------|--------|
+| 1 | FRVs on 22mm radiators (11 rads) | £359 | Redistributes flow to starved 15mm branches |
+| 2 | EWI on SE wall (10m×5m) | <£5k DIY | 32% HTC reduction. Hall, kitchen, bathroom fixed. HP stops maxing out. |
+| 3 | Trickle vent for Aldora | ~£20 | Prevents 61% humidity with overnight occupancy |
 
 ## Other Potential Enhancements
 
