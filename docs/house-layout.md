@@ -24,10 +24,10 @@ LOFT (2010 insulated, U=0.15 walls, U=0.066 roof)
 
 1ST FLOOR
   Sterling ──wall── Jack&Carol ──wall── Office
-  │carpet/timber/plaster floor         │door closed
+  │carpet/timber/plaster floor         │door open
   │(above leather)                     │
   │              Bathroom              │
-  │              │door sometimes closed│
+  │              │door open (normally) │
   └── STAIRWELL (landing) ─────────────┘
 
 GROUND FLOOR
@@ -40,6 +40,20 @@ GROUND FLOOR
                 ↕ stairwell to all floors
 ```
 
+### Construction
+
+1930s solid brick house with 2010 loft extension. All internal walls on ground and first floors are **solid single brick**. Loft rooms and landing are **timber stud with insulation**.
+
+| Floor type | Rooms |
+|---|---|
+| **Concrete slab on ground** | Kitchen (tile over concrete), Conservatory (yr 2000 extension, clay substrate) |
+| **Suspended timber** | Hall (fitted parquet), Front, Leather (spiral cellar below) |
+| **Timber between floors** (U≈1.7) | Sterling↔Leather, Jack&Carol↔Front, Bathroom↔Kitchen |
+| **100mm insulated floor** (U≈0.25) | Office↔Hall, Landing↔Hall (2010 extension above original house) |
+| **Insulated between loft and 1st** | Elvina, Aldora, Shower (2010 extension) |
+
+Thermal mass: total house **48,090 kJ/K**. Ground floor brick rooms (4,000-6,300 kJ/K) cool much slower than loft timber rooms (880-3,800 kJ/K). This dominates cooling behaviour more than fabric U-values.
+
 ### SE Face (front of house)
 
 Most exposed — takes prevailing wind and morning/midday sun. Hall, Front, Jack & Carol, Office, Elvina. Front and Jack & Carol have large bay windows (more frame joints, more infiltration paths than flat-wall windows).
@@ -49,19 +63,20 @@ Most exposed — takes prevailing wind and morning/midday sun. Hall, Front, Jack
 - **Always closed**: Elvina, Aldora, Sterling, Leather
 - **Open day / closed night**: Jack & Carol
 - **Partially closed**: Front
-- **Sometimes closed**: Bathroom
-- **Always open**: Kitchen↔Hall, Kitchen↔Conservatory, Shower↔stairwell, Hall↔stairwell (all floors)
+- **Always open**: Bathroom (except during/after showers), Office, Kitchen↔Hall, Kitchen↔Conservatory, Shower↔stairwell, Hall↔stairwell (all floors)
 
 ## Key Thermal Relationships
 
-- **Leather** (door closed, 2×DP DF, no external walls) = heat hub. Heats Sterling through floor (carpet/timber/plaster), Kitchen through shared wall, Front through shared wall, Conservatory through single glazed door.
+- **Leather** (door closed except morning for dog, 2×DP DF, no external walls) = heat hub. Heats Sterling through floor (carpet/timber/plaster), Kitchen through shared wall, Front through shared wall, Conservatory through SG door. Warmup data (25 Mar): only +0.3°C in 2.5h despite biggest 22mm rads — heat exports to 5 neighbouring rooms before it can warm itself. Doors open in morning for dog, then closed during day when occupied.
 - **Kitchen** has NO radiator. Heated entirely by adjacent rooms (Leather wall, Conservatory connection, Bathroom above). Cools at 0.29°C/h during free-cooling — identical to hall (thermally coupled through open doorway).
 - **Hall/Landing/Top Landing** = one continuous stairwell column, 3 floors. Only 1 radiator (Hall, ground floor). No radiators on landing or top landing. Hall drops even while HP is heating — flow-starved 15mm branch confirmed.
-- **Sterling** has rad turned OFF, door closed. Gets 19.2°C from Leather's floor heat alone. Dropped only 0.1°C overnight — thermally decoupled from heating system.
+- **Sterling** has rad turned OFF, door closed. Gets ~19°C from Leather's floor heat alone (Night 1: 0.06°/h, slowest in house). Occupant prefers cold, opens windows when home — leather's heat goes straight outside. **Floor insulation** (mineral wool between joists) is the best single-room intervention after EWI: leather keeps its heat, Sterling gets the cold room he wants, HP saves energy.
 - **Conservatory** = dining room, cannot be closed off. 2×K3 rads (largest in house) but cools fastest overnight (-1.9°C). Glazed roof (U=2.4) dominates after dark.
 - **Elvina** — sloping roof over 50% of area. Cools faster than jackcarol (solid brick) despite 2010 insulation spec. Cause: **trickle vents open**, not poor insulation. Humidity confirms: 1 person only +6% RH overnight (vs Aldora +10%). The trickle vents provide necessary moisture extraction but cost significant heat.
-- **Aldora** — flat roof, very well sealed. Only 0.7°C overnight drop. But too sealed: humidity reaches 61% overnight with 1 occupant (mould threshold). Needs trickle vent.
-- **Bathroom** — MVHR creates negative pressure pulling air from stairwell. This drives whole-house airflow: outside → front door → hall → stairwell → bathroom → MVHR → outside. Closing bathroom door reduces stairwell draft by ~51W.
+- **Aldora** — flat roof, very well sealed. Only 0.7°C overnight drop. But too sealed: humidity reaches 58.8% RH (surface ~71% = mould warning) overnight with 1 occupant. **Needs trickle vent** (Part F requirement for bedroom) + **radiator upgrade** from 376W towel to 909W DP DF to compensate for added ventilation losses.
+- **Jack & Carol** — door open daytime donates heat to landing/stairwell. Observed 20.8→19.2°C drop over 20h of continuous heating (24 Mar 2026). Not flow-starvation — air exchange through open door is the dominant daytime loss. Door closed overnight: only 0.08°/h cooling rate.
+- **Bathroom** — door open 24h except during/after showers. MVHR creates negative pressure pulling air from stairwell. This drives whole-house airflow: outside → front door → hall → stairwell → bathroom → MVHR → outside. Closing bathroom door reduces stairwell draft by ~51W.
+- **Office** — door normally open. Well insulated ceiling + 50mm insulated floor (plaster + 50mm wood + floating floor). Minimal fabric losses but air exchange through open door connects it to landing/stairwell.
 - In cold weather, hall, kitchen, and conservatory are the cold rooms. HP maxes out at ~2°C outside (95% runtime, Jan 2025 data).
 
 ## Glazing Comparison (from sensor data)
@@ -69,7 +84,7 @@ Most exposed — takes prevailing wind and morning/midday sun. Hall, Front, Jack
 | Type | Rooms | Performance |
 |---|---|---|
 | Triple, flat wall, single sealed unit | Sterling, Bathroom | Best. Sterling holds 19.2°C with rad OFF. |
-| Bay windows (more joints, SE face) | Front, Jack & Carol | Leakier. J&C humidity drops overnight despite 2 occupants — infiltration. |
+| Bay windows (more joints, SE face) | Front, Jack & Carol | Very leaky. J&C moisture balance: ACH 0.80-1.80 through closed bay window. Only occupied room where humidity *drops* overnight with 2 people. Draught-proofing would save ~60W. |
 | Conservatory DG (yr 2000) | Conservatory | Walls OK (U=0.5), roof terrible (U=2.4). |
 
 ## Radiator Inventory
@@ -145,7 +160,7 @@ All SONOFF SNZB-02P on firmware v2.2.0. Data → Z2M → MQTT bridge → pi5data
 | aldora_temp_humid | Aldora | Loft | sensor at 1.7m height |
 | emonth2_23 (RFM69) | Leather | Gnd | emoncms feed 503101 |
 
-**Being added**: Office, 1st floor Landing → 13/13 room coverage.
+**Added 24 Mar 2026**: Office (`office_temp_humid`), Landing (`landing_temp_humid`) → 13/13 room coverage complete. Landing has no radiator — key heat sink node where stairwell connects ground and loft floors.
 
 Zigbee routers (ZBMINI switches) at hall, landing, kitchen, and top_landing provide mesh coverage for the battery sensors. The top_landing ZBMINI was added Mar 2026 to extend range to loft sensors.
 

@@ -5,3 +5,4 @@ emon-credentials.txt
 *.pdf
 model/data/
 *:Zone.Identifier
+model/__pycache__/
