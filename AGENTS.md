@@ -166,7 +166,8 @@ See `docs/dhw-cylinder-analysis.md` for full analysis. Key numbers: Kingspan Alb
 ## Reference Data (config.toml)
 
 - House: HTC 261 W/°C, floor area 180m², solid brick + 2010-standard top floor
-- Radiators: 15× Stelrad, total T50 = 25,133W, output calculator with correction factor
+- Radiators: 15× Stelrad, total T50 = 25,133W, output calculator with correction factor. Largest radiators (DP DF, TP TF) were the biggest single cost — more expensive than the HP itself.
+- System cost (equipment only): Arotherm Plus 5kW **£3,624** + VRC 700 controller **£198** + Kingspan Albion 300L cylinder **£1,483** = **£5,304** (excludes radiators, installation, pipework)
 - Arotherm spec: COP curve at -3°C (35°C→4.48, 55°C→3.06)
 - Gas era: 18,702 kWh/yr gas, 90% boiler, 11.82 kWh/day hot water
 - Insulation improved between gas and HP eras (heat/HDD dropped ~4%)
@@ -357,4 +358,4 @@ See [docs/roadmap.md](docs/roadmap.md) for full details:
 - **Aldora rad upgrade** — 909W DP DF replaces 376W towel (rad available). Removes aldora as bottleneck. Trickle vent still needed for mould risk (58.8% RH, Part F required).
 - **FRV installation** — model is calibrated. Leather (30°C), front (28°C), shower (25°C) massively overheat at -3°C design day. FRVs on these three 22mm radiators would allow MWT to drop a further 3-5°C, worth more annual savings than the EWI. Calculate exact settings from equilibrium model, install, and verify with sensors.
 - **Sterling floor insulation** — mineral wool between joists (leather ceiling / sterling floor). Sterling occupant prefers cold + opens windows → leather's heat goes straight outside. Insulating stops this: leather retains heat, Sterling gets cold room, HP saves energy. Best single-room intervention after EWI.
-- **EWI on SE wall** — ~30m² solid brick (hall, front, jack&carol, office), U 2.11→0.23. DIY, before next winter. Model predicts: 19% heat demand reduction (23,670→19,139 kWh/yr), MWT drops 49→43°C at -3°C, annual saving £216/yr. HP runs at 84% capacity vs 106% currently. Main benefit is comfort (20°C achievable everywhere) and HP headroom, not payback (£5k/~23yr).
+- **EWI on SE wall** — ~30m² solid brick (hall, front, jack&carol, office), U 2.11→0.23. DIY, before next winter. Model predicts: 19% heat demand reduction (23,670→19,139 kWh/yr), MWT drops 49→43°C at -3°C, annual saving £216/yr. HP runs at 84% capacity vs 106% currently. Main benefit is comfort (20°C achievable everywhere) and HP headroom, not payback (£5k DIY — roughly the same as the entire HP+controller+cylinder cost).
