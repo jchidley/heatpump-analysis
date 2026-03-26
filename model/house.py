@@ -348,17 +348,18 @@ def build_rooms() -> dict[str, RoomDef]:
         name="hall", floor="Gnd", floor_area=9.72, ceiling_height=2.6,
         construction="brick_suspended",
         sensor="zigbee2mqtt/hall_temp_humid",
-        ventilation_ach=0.5,
+        ventilation_ach=0.10,  # Derived from Night 2: fabric still overstated (loft
+                               # stairwell walls/floor now internal but ext wall area
+                               # 16.8m² may be too high). Set to minimum infiltration.
         radiators=[RadiatorDef(t50=2376, pipe="15mm_branch1")],
         external_fabric=[
             ExternalElement("External Wall (solid brick)", 16.80, 2.11),
-            ExternalElement("Ground Floor", 9.72, 0.77, to_ground=True),
+            ExternalElement("Ground Floor (suspended timber)", 9.72, 0.75, to_ground=True),
             ExternalElement("Windows (old double)", 1.92, 1.9),
-            # Loft stairwell section (insulated)
-            ExternalElement("Loft Wall (insulated)", 5.0, 0.15),
-            ExternalElement("Loft Ceiling", 3.3, 0.066),
-            ExternalElement("Loft Windows", 1.44, 1.5),
-            ExternalElement("Loft External Floor", 13.2, 0.77, to_ground=True),
+            # Loft stairwell section is INSIDE the envelope — walls/floor/ceiling
+            # are internal to heated loft rooms, not external.
+            # Only the loft windows are external (glazing to outside).
+            ExternalElement("Loft Windows (stairwell)", 1.44, 1.5),
         ],
         solar=[SolarGlazing(1.92, "SW", g_value=0.7, shading=0.15)],  # old DG, mostly shaded
     )
@@ -366,11 +367,12 @@ def build_rooms() -> dict[str, RoomDef]:
     rooms["kitchen"] = RoomDef(
         name="kitchen", floor="Gnd", floor_area=8.8, ceiling_height=2.6,
         sensor="zigbee2mqtt/kitchen_temp_humid",
-        ventilation_ach=0.35,
+        ventilation_ach=0.10,  # Derived from Night 2: fabric overstated (solid floor
+                               # U may be lower than 0.50, or ext wall area wrong).
         radiators=[],  # No radiator
         external_fabric=[
             ExternalElement("External Wall (solid brick)", 8.96, 2.11),
-            ExternalElement("Ground Floor", 8.8, 0.77, to_ground=True),
+            ExternalElement("Ground Floor (1930s solid + tile)", 8.8, 0.50, to_ground=True),
             ExternalElement("Windows (old double)", 1.44, 1.9),
         ],
     )
@@ -379,14 +381,16 @@ def build_rooms() -> dict[str, RoomDef]:
         name="leather", floor="Gnd", floor_area=17.0, ceiling_height=2.6,
         construction="brick_suspended",
         sensor="emon/emonth2_23/temperature",
-        ventilation_ach=0.2,
+        ventilation_ach=0.67,  # Derived from Night 2: higher than expected.
+                               # SG door to conservatory leaks, or cellar ventilation.
         radiators=[
             RadiatorDef(t50=2376, pipe="22mm"),
             RadiatorDef(t50=2376, pipe="22mm"),
         ],
         external_fabric=[
             # No external walls — fully internal room
-            ExternalElement("Ground Floor (suspended)", 17.0, 0.77, to_ground=True),
+            # Spiral cellar below — not ventilated void, ~12-15°C conditioned
+            ExternalElement("Ground Floor (over spiral cellar)", 17.0, 0.50, to_ground=True),
         ],
     )
 
@@ -394,14 +398,14 @@ def build_rooms() -> dict[str, RoomDef]:
         name="front", floor="Gnd", floor_area=16.34, ceiling_height=2.6,
         construction="brick_suspended",
         sensor="zigbee2mqtt/front_temp_humid",
-        ventilation_ach=0.3,
+        ventilation_ach=0.75,  # Derived from Night 2: bay window leaks (same as J&C).
         radiators=[
             RadiatorDef(t50=2425, pipe="15mm_branch1"),  # horizontal
             RadiatorDef(t50=2376, pipe="22mm"),           # vertical
         ],
         external_fabric=[
             ExternalElement("External Wall (solid brick, bay)", 8.14, 2.11),
-            ExternalElement("Ground Floor (suspended)", 16.34, 0.77, to_ground=True),
+            ExternalElement("Ground Floor (suspended timber)", 16.34, 0.75, to_ground=True),
             ExternalElement("Windows (new double, bay)", 7.2, 1.2),
         ],
         solar=[SolarGlazing(7.2, "SW", g_value=0.7, shading=0.20)],  # bay window, partly shaded by reveals/neighbour
@@ -410,14 +414,14 @@ def build_rooms() -> dict[str, RoomDef]:
     rooms["conservatory"] = RoomDef(
         name="conservatory", floor="Gnd", floor_area=21.0, ceiling_height=2.6,
         sensor="zigbee2mqtt/conservatory_temp_humid",
-        ventilation_ach=0.3,
+        ventilation_ach=1.00,  # Derived from Night 2: glazed structure leaks significantly.
         radiators=[
             RadiatorDef(t50=2833, pipe="22mm"),
             RadiatorDef(t50=2867, pipe="22mm"),
         ],
         external_fabric=[
             ExternalElement("External Wall (DG, yr 2000)", 15.4, 0.5),
-            ExternalElement("Ground Floor", 21.0, 0.77, to_ground=True),
+            ExternalElement("Ground Floor (yr 2000 concrete slab)", 21.0, 0.40, to_ground=True),
             ExternalElement("Glazed Roof (DG)", 21.0, 2.4),
             ExternalElement("Windows (DG)", 9.0, 1.9),
         ],
@@ -432,7 +436,9 @@ def build_rooms() -> dict[str, RoomDef]:
     rooms["sterling"] = RoomDef(
         name="sterling", floor="1st", floor_area=18.0, ceiling_height=2.4,
         sensor="zigbee2mqtt/Sterling_temp_humid",
-        ventilation_ach=0.15,
+        ventilation_ach=0.05,  # Derived from Night 2: near-zero (fabric overstated —
+                               # ext wall 6.12m² + windows 2.52m² may be too high,
+                               # or leather floor heat understated).
         radiators=[RadiatorDef(t50=1176, pipe="22mm", active=False)],
         external_fabric=[
             # Ceiling is below heated loft — modelled as internal connection, not external
@@ -444,10 +450,10 @@ def build_rooms() -> dict[str, RoomDef]:
     rooms["jackcarol"] = RoomDef(
         name="jackcarol", floor="1st", floor_area=14.28, ceiling_height=2.4,
         sensor="zigbee2mqtt/jackcarol_temp_humid",
-        ventilation_ach=0.80,  # Moisture-validated: leaky bay window.
-                               # Night 2 (calm, doors closed): ACH=1.00.
-                               # Night 1 (windy, doors normal): ACH=1.89.
-                               # Wind adds ~0.9 ACH. 0.80 is conservative.
+        ventilation_ach=0.29,  # Derived from Night 2 cooldown (calm, doors closed).
+                               # Moisture-validated: 1.00 calm, 1.89 windy. But thermal
+                               # derivation gives 0.29 — difference is body heat uncertainty
+                               # (2 people × 70W = 140W, ±50% = ±70W → ±0.4 ACH).
                                # Fix: draught-strip bay window frame joints.
         overnight_occupants=2,
         radiators=[RadiatorDef(t50=1950, pipe="15mm_branch2")],
@@ -462,7 +468,10 @@ def build_rooms() -> dict[str, RoomDef]:
     rooms["bathroom"] = RoomDef(
         name="bathroom", floor="1st", floor_area=18.0, ceiling_height=2.4,
         sensor="zigbee2mqtt/bathroom_temp_humid",
-        ventilation_ach=0.75,  # MVHR: 9 L/s = 32.4 m³/h / 43.2 m³
+        ventilation_ach=0.75,  # MVHR: 9 L/s = 32.4 m³/h / 43.2 m³.
+                               # Night 2 derivation negative → fabric overstated
+                               # (ext wall area 10.92m² may include interior faces).
+                               # Keep MVHR spec value.
         heat_recovery=0.78,    # Vent-Axia Tempra LP
         radiators=[
             RadiatorDef(t50=614, pipe="22mm"),
@@ -478,7 +487,8 @@ def build_rooms() -> dict[str, RoomDef]:
     rooms["office"] = RoomDef(
         name="office", floor="1st", floor_area=5.28, ceiling_height=2.4,
         sensor="zigbee2mqtt/office_temp_humid",
-        ventilation_ach=0.15,
+        ventilation_ach=1.20,  # Derived from Night 2: much leakier than expected.
+                               # Solid brick walls + old window frame — high infiltration.
         radiators=[RadiatorDef(t50=1345, pipe="15mm_branch2")],
         external_fabric=[
             # Ceiling is below elvina — modelled as internal connection, not external
@@ -493,8 +503,9 @@ def build_rooms() -> dict[str, RoomDef]:
         construction="timber",
         sensor="zigbee2mqtt/landing_temp_humid",
         ventilation_ach=1.30,  # Chimney effect: calibrated from Night 1 vs Night 2.
-                               # True infiltration ~0.15 ACH; the rest is stairwell
-                               # stack-driven flow (warm air rises ground→loft).
+                               # Night 2 derivation negative → fabric overstated
+                               # (ext wall 3m² may be wrong). But chimney ACH=1.30
+                               # is the dominant term and was directly measured.
                                # Stairwell doorways disabled in build_doorways().
         radiators=[],  # No radiator
         external_fabric=[
@@ -508,11 +519,11 @@ def build_rooms() -> dict[str, RoomDef]:
         name="elvina", floor="Loft", floor_area=27.5, ceiling_height=2.2,
         construction="timber",
         sensor="zigbee2mqtt/elvina_temp_humid",
-        ventilation_ach=0.70,  # Trickle vents OPEN (occupant's choice, closeable).
-                               # Night 1 (windy): ACH=0.71 (moisture-validated).
-                               # Night 2 (calm, doors closed): ACH=0.22.
+        ventilation_ach=0.51,  # Derived from Night 2 cooldown (calm, doors closed).
+                               # Moisture-validated: 0.71 windy (Night 1), 0.22 calm (Night 2).
+                               # Thermal derivation: 0.51 (includes fabric model uncertainty).
+                               # Trickle vents OPEN (occupant's choice, closeable).
                                # Wind adds ~0.5 ACH via sloping roof vents.
-                               # Vents closed: ACH=0.22, no longer the bottleneck.
                                # Floor area needs verification (sloping roof, 20-30m²).
         overnight_occupants=1,
         radiators=[RadiatorDef(t50=909, pipe="22mm")],
@@ -553,7 +564,8 @@ def build_rooms() -> dict[str, RoomDef]:
         name="shower", floor="Loft", floor_area=4.14, ceiling_height=2.2,
         construction="timber",
         sensor="zigbee2mqtt/shower_temp_humid",
-        ventilation_ach=0.10,
+        ventilation_ach=0.05,  # Derived from Night 2: near-zero (tiny room, well-insulated,
+                               # fabric loss alone exceeds measured total).
         radiators=[RadiatorDef(t50=752, pipe="22mm")],
         external_fabric=[
             ExternalElement("External Wall (insulated)", 19.62, 0.15),
