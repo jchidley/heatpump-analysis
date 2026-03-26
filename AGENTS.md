@@ -167,7 +167,7 @@ See `docs/dhw-cylinder-analysis.md` for full analysis. Key numbers: Kingspan Alb
 
 - House: HTC 261 W/°C, floor area 180m², solid brick + 2010-standard top floor
 - Radiators: 15× Stelrad, total T50 = 25,133W, output calculator with correction factor. Largest radiators (DP DF, TP TF) were the biggest single cost — more expensive than the HP itself.
-- System cost (equipment only): Arotherm Plus 5kW **£3,624** + VRC 700 controller **£198** + Kingspan Albion 300L cylinder **£1,483** = **£5,304** (excludes radiators, installation, pipework)
+- System cost (new equipment only): Arotherm Plus 5kW **£3,624** + VRC 700 controller **£198** + Kingspan Albion 300L cylinder **£1,483** + 8 new Stelrad radiators ~**£2,744** = **~£8,048**. Five radiators pre-existed (bathroom ×2, shower, elvina, sterling, jack&carol). Gas disconnected. With BUS grant (£7,500): net **£548**, payback <1 year. Without grant: 14 years on equipment (£565/yr saving at 17.07p blended Cosy rate).
 - Arotherm spec: COP curve at -3°C (35°C→4.48, 55°C→3.06)
 - Gas era: 18,702 kWh/yr gas, 90% boiler, 11.82 kWh/day hot water
 - Insulation improved between gas and HP eras (heat/HDD dropped ~4%)
