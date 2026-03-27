@@ -12,6 +12,7 @@ This migration is held to a **high programming standard**:
 - explicit design over implicit behavior
 - typed errors over generic catch-alls in domain code
 - reproducibility over ad-hoc experimentation
+- measured physics over fitted fudge factors
 - warning-free builds (warnings treated as failures)
 - small, reviewable, testable changes
 
@@ -46,6 +47,12 @@ Any change that violates these principles is out of scope for this migration, ev
    - Warnings are treated as failures for project code.
    - Clippy and formatting are part of the default workflow, not optional cleanup.
 
+7. **Prefer measured parameters and physical models over fudge factors**
+   - First preference: direct measurements (instrumented data, surveyed geometry, datasheets, validated plans).
+   - Second preference: physically-derived estimates with explicit assumptions.
+   - Last resort: fitted correction factors / ad-hoc offsets.
+   - Any fitted factor must be documented with: why it exists, valid range, sensitivity, and removal plan.
+
 ## Scope
 
 ### In scope (first-party Python in this repo)
@@ -62,6 +69,8 @@ Python files inside git submodules (`emonhub/`, `emoncms/`, `EmonScripts/`, `emo
 - Rust CLI is the canonical analytics tool for emoncms/SQLite workflows.
 - Thermal modelling/calibration originated in Python.
 - A Rust `thermal-calibrate` command now exists and reads data directly from InfluxDB using TOML config.
+- Thermal code now has typed domain errors (`thermal::error::ThermalError`) and partial module split (`error`, `influx`, `report`) under `src/thermal/`.
+- Remaining thermal migration work is primarily `model` + `calibration` module extraction, validation/reporting hardening, and full lint-gate compliance across the whole project.
 
 ## Target architecture
 
@@ -136,10 +145,12 @@ Target shape:
 - [x] Add Rust `thermal-calibrate`
 - [x] Move calibration controls to TOML
 - [x] Use direct InfluxDB reads by default
+- [x] Introduce typed thermal domain errors (`thiserror`) and remove internal `anyhow` use in thermal modules
+- [x] Begin module split (`error`, `influx`, `report`)
 - [ ] Match/verify all relevant formulas vs `model/house.py`
 - [ ] Document intentional deltas
 
-Deliverable: Rust command produces equivalent calibration outputs for controlled test windows.
+Deliverable: Rust command produces equivalent calibration outputs for controlled test windows with typed, auditable error handling.
 
 ## Phase 2 — Port model capabilities from `house.py`
 
@@ -187,6 +198,18 @@ Snapshots are optional and must never be implicit.
 
 Deliverable: snapshots available for audit reproducibility without replacing direct-source operation.
 
+## Phase 5 — House-input revalidation (after Rust conversion)
+
+This phase is intentionally deferred until Rust conversion is complete.
+
+- [ ] Revisit original XLSX source measurements (areas, U-values, radiator inventory, geometry)
+- [ ] Ingest/compare new physical house-plan photos for dimensional validation
+- [ ] Reconcile measured inputs against Rust/TOML model inputs
+- [ ] Remove/replace any remaining fudge factors with measured or physically-derived values
+- [ ] Re-run calibration + holdout validation with the corrected inputs
+
+Deliverable: model inputs are measurement-backed and traceable to source artifacts.
+
 ## Definition of done for “Python fully migrated”
 
 Migration is complete when all are true:
@@ -223,9 +246,9 @@ Until full migration is complete:
 
 ## Immediate next actions
 
-1. Refactor `src/thermal.rs` into submodules (`model/influx/calibration/report`).
-2. Introduce typed error enums (`thiserror`) in thermal modules; restrict `anyhow` to CLI boundary.
-3. Implement `thermal-validate` using Night 3 as holdout.
-4. Add JSON artifact output for calibration runs.
-5. Add lint gate command to workflow (`cargo clippy --all-targets -- -D warnings`) and enforce warning-free thermal module.
-6. Mark `model/house.py` and `model/calibrate.py` as legacy once parity is confirmed.
+1. Complete thermal module split: extract `model.rs` and `calibration.rs` from `src/thermal.rs`.
+2. Implement `thermal-validate` using Night 3 as holdout.
+3. Add JSON artifact output for calibration runs (git SHA, config hash, windows, params, residuals).
+4. Enforce lint gates in workflow (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check`) and clear current project-wide clippy failures.
+5. Mark `model/house.py` and `model/calibrate.py` as legacy once parity is confirmed.
+6. After Rust parity, execute Phase 5 input revalidation (XLSX + house-plan photos) before declaring model stable.

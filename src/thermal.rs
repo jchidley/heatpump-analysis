@@ -1,11 +1,17 @@
+#![forbid(unsafe_code)]
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, FixedOffset};
-use reqwest::blocking::Client;
 use serde::Deserialize;
+
+mod error;
+mod influx;
+mod report;
+
+use error::{FitState, MeasuredRates, TempSeries, ThermalError, ThermalResult};
 
 #[derive(Debug, Deserialize)]
 struct ThermalConfig {
@@ -68,6 +74,7 @@ struct BoundsCfg {
     doorway_cd_max: f64,
     doorway_cd_step: f64,
 }
+
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -139,16 +146,20 @@ fn thermal_mass_plaster(area: f64) -> f64 { 17.0 * area }
 fn thermal_mass_furniture(area: f64) -> f64 { 15.0 * area }
 fn thermal_mass_timber_stud(area: f64) -> f64 { 10.0 * area }
 
-pub fn calibrate(config_path: &Path) -> Result<()> {
-    let cfg_txt = fs::read_to_string(config_path)
-        .with_context(|| format!("Failed to read thermal config: {}", config_path.display()))?;
-    let cfg: ThermalConfig = toml::from_str(&cfg_txt)
-        .with_context(|| format!("Failed to parse thermal config: {}", config_path.display()))?;
+pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
+    let cfg_txt = fs::read_to_string(config_path).map_err(|source| ThermalError::ConfigRead {
+        path: config_path.display().to_string(),
+        source,
+    })?;
+    let cfg: ThermalConfig = toml::from_str(&cfg_txt).map_err(|source| ThermalError::ConfigParse {
+        path: config_path.display().to_string(),
+        source,
+    })?;
 
-    let night1_start = parse_dt(&cfg.test_nights.night1_start)?;
-    let night1_end = parse_dt(&cfg.test_nights.night1_end)?;
-    let night2_start = parse_dt(&cfg.test_nights.night2_start)?;
-    let night2_end = parse_dt(&cfg.test_nights.night2_end)?;
+    let night1_start = influx::parse_dt(&cfg.test_nights.night1_start)?;
+    let night1_end = influx::parse_dt(&cfg.test_nights.night1_end)?;
+    let night2_start = influx::parse_dt(&cfg.test_nights.night2_start)?;
+    let night2_end = influx::parse_dt(&cfg.test_nights.night2_end)?;
 
     let mut rooms = build_rooms();
     let connections = build_connections();
@@ -160,9 +171,9 @@ pub fn calibrate(config_path: &Path) -> Result<()> {
     let latest = night1_end.max(night2_end);
 
     let token = std::env::var(&cfg.influx.token_env)
-        .map_err(|_| anyhow!("Missing env var {} for Influx token", cfg.influx.token_env))?;
+        .map_err(|_| ThermalError::MissingEnv(cfg.influx.token_env.clone()))?;
 
-    let room_rows = query_room_temps(
+    let room_rows = influx::query_room_temps(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
@@ -172,7 +183,7 @@ pub fn calibrate(config_path: &Path) -> Result<()> {
         &latest,
     )?;
 
-    let outside_rows = query_outside_temp(
+    let outside_rows = influx::query_outside_temp(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
@@ -199,7 +210,7 @@ pub fn calibrate(config_path: &Path) -> Result<()> {
     );
     println!("Exclude rooms in objective: {:?}", cfg.objective.exclude_rooms);
 
-    let mut best: Option<(f64, f64, f64, f64, f64, f64, f64, HashMap<String, f64>, HashMap<String, f64>)> = None;
+    let mut best: Option<FitState> = None;
 
     for leather_ach in frange(cfg.bounds.leather_ach_min, cfg.bounds.leather_ach_max, cfg.bounds.leather_ach_step) {
         for landing_ach in frange(cfg.bounds.landing_ach_min, cfg.bounds.landing_ach_max, cfg.bounds.landing_ach_step) {
@@ -211,8 +222,8 @@ pub fn calibrate(config_path: &Path) -> Result<()> {
                         let pred1 = predict_rates(&rooms, &connections, &doors_n1, &avg1, outside1, doorway_cd);
                         let pred2 = predict_rates(&rooms, &connections, &doors_n2, &avg2, outside2, doorway_cd);
 
-                        let r1 = rmse(&meas1, &pred1, &exclude_rooms);
-                        let r2 = rmse(&meas2, &pred2, &exclude_rooms);
+                        let r1 = report::rmse(&meas1, &pred1, &exclude_rooms);
+                        let r2 = report::rmse(&meas2, &pred2, &exclude_rooms);
                         let base_score = (r1 + r2) / 2.0;
                         let prior_penalty = cfg.objective.prior_weight * (
                             ((landing_ach - cfg.priors.landing_ach) / 0.3).powi(2)
@@ -242,10 +253,10 @@ pub fn calibrate(config_path: &Path) -> Result<()> {
     }
 
     let (final_score, leather_ach, landing_ach, conservatory_ach, office_ach, doorway_cd, base_score, pred1, pred2) =
-        best.ok_or_else(|| anyhow!("No calibration candidates evaluated"))?;
+        best.ok_or(ThermalError::NoCalibrationCandidates)?;
 
-    let r1 = rmse(&meas1, &pred1, &exclude_rooms);
-    let r2 = rmse(&meas2, &pred2, &exclude_rooms);
+    let r1 = report::rmse(&meas1, &pred1, &exclude_rooms);
+    let r2 = report::rmse(&meas2, &pred2, &exclude_rooms);
 
     println!("\n========================================================================");
     println!("BEST FIT (direct Influx + config-driven bounds)");
@@ -260,43 +271,10 @@ pub fn calibrate(config_path: &Path) -> Result<()> {
     println!("base_score       = {:.4}", base_score);
     println!("final_score      = {:.4}", final_score);
 
-    print_table("Night 1 fit", &meas1, &pred1);
-    print_table("Night 2 fit", &meas2, &pred2);
+    report::print_table("Night 1 fit", &meas1, &pred1);
+    report::print_table("Night 2 fit", &meas2, &pred2);
 
     Ok(())
-}
-
-fn print_table(title: &str, measured: &HashMap<String, f64>, pred: &HashMap<String, f64>) {
-    println!("\n{}", title);
-    println!("{:<14} {:>8} {:>8} {:>6} {:>8}", "Room", "Measured", "Pred", "Ratio", "Err");
-    println!("{}", "─".repeat(50));
-
-    let mut keys: Vec<_> = measured.keys().cloned().collect();
-    keys.sort();
-    for room in keys {
-        let m = measured[&room];
-        let p = pred.get(&room).copied().unwrap_or(f64::NAN);
-        let ratio = if m.abs() > 1e-9 { p / m } else { 0.0 };
-        let err = p - m;
-        println!("{:<14} {:>8.3} {:>8.3} {:>6.2} {:>+8.3}", room, m, p, ratio, err);
-    }
-}
-
-fn rmse(measured: &HashMap<String, f64>, predicted: &HashMap<String, f64>, exclude: &HashSet<String>) -> f64 {
-    let mut errs = Vec::new();
-    for (room, m) in measured {
-        if exclude.contains(room) {
-            continue;
-        }
-        if let Some(p) = predicted.get(room) {
-            errs.push((m - p).powi(2));
-        }
-    }
-    if errs.is_empty() {
-        999.0
-    } else {
-        (errs.iter().sum::<f64>() / errs.len() as f64).sqrt()
-    }
 }
 
 fn set_calibration_params(
@@ -305,22 +283,22 @@ fn set_calibration_params(
     landing_ach: f64,
     conservatory_ach: f64,
     office_ach: f64,
-) -> Result<()> {
+) -> ThermalResult<()> {
     rooms
         .get_mut("leather")
-        .ok_or_else(|| anyhow!("Missing room leather"))?
+        .ok_or(ThermalError::MissingRoom("leather"))?
         .ventilation_ach = leather_ach;
     rooms
         .get_mut("landing")
-        .ok_or_else(|| anyhow!("Missing room landing"))?
+        .ok_or(ThermalError::MissingRoom("landing"))?
         .ventilation_ach = landing_ach;
     rooms
         .get_mut("conservatory")
-        .ok_or_else(|| anyhow!("Missing room conservatory"))?
+        .ok_or(ThermalError::MissingRoom("conservatory"))?
         .ventilation_ach = conservatory_ach;
     rooms
         .get_mut("office")
-        .ok_or_else(|| anyhow!("Missing room office"))?
+        .ok_or(ThermalError::MissingRoom("office"))?
         .ventilation_ach = office_ach;
     Ok(())
 }
@@ -347,11 +325,11 @@ fn predict_rates(
 }
 
 fn measured_rates(
-    room_series: &HashMap<String, Vec<(DateTime<FixedOffset>, f64)>>,
+    room_series: &TempSeries,
     outside_series: &[(DateTime<FixedOffset>, f64)],
     start: DateTime<FixedOffset>,
     end: DateTime<FixedOffset>,
-) -> Result<(HashMap<String, f64>, HashMap<String, f64>, f64)> {
+) -> ThermalResult<MeasuredRates> {
     let outside_vals: Vec<f64> = outside_series
         .iter()
         .filter(|(t, _)| *t >= start && *t <= end)
@@ -359,7 +337,7 @@ fn measured_rates(
         .collect();
 
     if outside_vals.is_empty() {
-        return Err(anyhow!("No outside temperature data in calibration window"));
+        return Err(ThermalError::NoOutsideData);
     }
 
     let outside_avg = outside_vals.iter().sum::<f64>() / outside_vals.len() as f64;
@@ -378,12 +356,17 @@ fn measured_rates(
             continue;
         }
 
-        let hours = (p.last().unwrap().0 - p.first().unwrap().0).num_seconds() as f64 / 3600.0;
+        let (first, last) = match (p.first(), p.last()) {
+            (Some(first), Some(last)) => (first, last),
+            _ => continue,
+        };
+
+        let hours = (last.0 - first.0).num_seconds() as f64 / 3600.0;
         if hours < 0.5 {
             continue;
         }
 
-        let rate = (p.first().unwrap().1 - p.last().unwrap().1) / hours;
+        let rate = (first.1 - last.1) / hours;
         let avg = p.iter().map(|(_, v)| *v).sum::<f64>() / p.len() as f64;
 
         rates.insert(room.clone(), rate);
@@ -396,7 +379,7 @@ fn measured_rates(
 fn build_room_series(
     room_rows: &[(DateTime<FixedOffset>, String, f64)],
     rooms: &BTreeMap<String, RoomDef>,
-) -> Result<HashMap<String, Vec<(DateTime<FixedOffset>, f64)>>> {
+) -> ThermalResult<TempSeries> {
     let mut by_topic: HashMap<&str, &str> = HashMap::new();
     for room in rooms.values() {
         by_topic.insert(room.sensor_topic, room.name);
@@ -414,169 +397,6 @@ fn build_room_series(
     }
 
     Ok(out)
-}
-
-fn query_room_temps(
-    influx_url: &str,
-    org: &str,
-    bucket: &str,
-    token: &str,
-    sensor_topics: &[&str],
-    start: &DateTime<FixedOffset>,
-    stop: &DateTime<FixedOffset>,
-) -> Result<Vec<(DateTime<FixedOffset>, String, f64)>> {
-    let mut conditions = Vec::new();
-    for t in sensor_topics {
-        if *t == "emon/emonth2_23/temperature" {
-            conditions.push(format!("(r.topic == \"{}\" and r._field == \"value\")", t));
-        } else {
-            conditions.push(format!("(r.topic == \"{}\" and r._field == \"temperature\")", t));
-        }
-    }
-
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => {})\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"topic\", \"_value\"])",
-        bucket,
-        start.to_rfc3339(),
-        stop.to_rfc3339(),
-        conditions.join(" or ")
-    );
-
-    let rows = query_flux_csv(influx_url, org, token, &flux)?;
-
-    let mut out = Vec::new();
-    for row in rows {
-        let t = parse_dt(
-            row.get("_time")
-                .ok_or_else(|| anyhow!("Missing _time in room temp row"))?,
-        )?;
-        let topic = row
-            .get("topic")
-            .ok_or_else(|| anyhow!("Missing topic in room temp row"))?
-            .to_string();
-        let value: f64 = row
-            .get("_value")
-            .ok_or_else(|| anyhow!("Missing _value in room temp row"))?
-            .parse()
-            .context("Failed to parse room temp _value")?;
-        out.push((t, topic, value));
-    }
-    out.sort_by_key(|(t, _, _)| *t);
-    Ok(out)
-}
-
-fn query_outside_temp(
-    influx_url: &str,
-    org: &str,
-    bucket: &str,
-    token: &str,
-    start: &DateTime<FixedOffset>,
-    stop: &DateTime<FixedOffset>,
-) -> Result<Vec<(DateTime<FixedOffset>, f64)>> {
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r.topic == \"ebusd/poll/OutsideTemp\")\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
-        bucket,
-        start.to_rfc3339(),
-        stop.to_rfc3339(),
-    );
-
-    let rows = query_flux_csv(influx_url, org, token, &flux)?;
-    let mut out = Vec::new();
-    for row in rows {
-        let t = parse_dt(
-            row.get("_time")
-                .ok_or_else(|| anyhow!("Missing _time in outside row"))?,
-        )?;
-        let value: f64 = row
-            .get("_value")
-            .ok_or_else(|| anyhow!("Missing _value in outside row"))?
-            .parse()
-            .context("Failed to parse outside _value")?;
-        out.push((t, value));
-    }
-    out.sort_by_key(|(t, _)| *t);
-    Ok(out)
-}
-
-fn query_flux_csv(
-    influx_url: &str,
-    org: &str,
-    token: &str,
-    flux: &str,
-) -> Result<Vec<HashMap<String, String>>> {
-    let url = format!("{}/api/v2/query?org={}", influx_url.trim_end_matches('/'), org);
-    let body = serde_json::json!({
-        "query": flux,
-        "type": "flux"
-    });
-
-    let resp = Client::new()
-        .post(url)
-        .bearer_auth(token)
-        .header("Accept", "application/csv")
-        .json(&body)
-        .send()
-        .context("Influx query failed")?;
-
-    let status = resp.status();
-    let text = resp.text().context("Failed to read Influx response")?;
-    if !status.is_success() {
-        return Err(anyhow!("Influx query failed ({}): {}", status, text));
-    }
-
-    parse_influx_annotated_csv(&text)
-}
-
-fn parse_influx_annotated_csv(csv_text: &str) -> Result<Vec<HashMap<String, String>>> {
-    let mut rows = Vec::new();
-
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .flexible(true)
-        .from_reader(csv_text.as_bytes());
-
-    let mut headers: Option<Vec<String>> = None;
-
-    for rec in reader.records() {
-        let rec = rec?;
-        if rec.is_empty() {
-            continue;
-        }
-
-        let first = rec.get(0).unwrap_or("");
-        if first.starts_with('#') {
-            continue;
-        }
-
-        if headers.is_none() {
-            headers = Some(rec.iter().map(|s| s.to_string()).collect());
-            continue;
-        }
-
-        let h = headers.as_ref().unwrap();
-        let mut map = HashMap::new();
-        for (i, val) in rec.iter().enumerate() {
-            if i >= h.len() {
-                continue;
-            }
-            let key = &h[i];
-            if key.is_empty() {
-                continue;
-            }
-            map.insert(key.clone(), val.to_string());
-        }
-        if !map.is_empty() {
-            rows.push(map);
-        }
-    }
-
-    // Influx includes "result" and "table" columns; we keep all and consumers pick what they need.
-    Ok(rows)
-}
-
-fn parse_dt(s: &str) -> Result<DateTime<FixedOffset>> {
-    Ok(DateTime::parse_from_rfc3339(s)
-        .with_context(|| format!("Failed to parse datetime: {}", s))?)
 }
 
 fn frange(min: f64, max: f64, step: f64) -> Vec<f64> {
@@ -620,16 +440,14 @@ fn estimate_thermal_mass(room: &RoomDef, connections: &[InternalConnection]) -> 
     }
 
     for conn in connections {
-        if conn.room_a == room.name || conn.room_b == room.name {
-            if conn.ua > 0.0 {
-                let implied_area = conn.ua / U_INTERNAL_WALL;
-                if room.construction == "brick" || room.construction == "brick_suspended" {
-                    c += thermal_mass_brick_int(implied_area);
-                } else {
-                    c += thermal_mass_timber_stud(implied_area);
-                }
-                c += thermal_mass_plaster(implied_area);
+        if (conn.room_a == room.name || conn.room_b == room.name) && conn.ua > 0.0 {
+            let implied_area = conn.ua / U_INTERNAL_WALL;
+            if room.construction == "brick" || room.construction == "brick_suspended" {
+                c += thermal_mass_brick_int(implied_area);
+            } else {
+                c += thermal_mass_timber_stud(implied_area);
             }
+            c += thermal_mass_plaster(implied_area);
         }
     }
 
