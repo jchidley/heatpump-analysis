@@ -189,7 +189,7 @@ Rust server replacing Home Assistant for Zigbee + heat pump automation. See `~/g
 - Cross-compiled for aarch64, deployed as systemd service
 - Shell scripts removed (z2m-automations.sh, dhw-auto-trigger.sh)
 - InfluxDB Flux task for DHW remaining disabled (replaced by z2m-hub)
-- 19 Zigbee devices: 10× SNZB-02P temp/humidity, 4× ZBMINI switches, 3× S60ZBTPG smart plugs, 2× Aqara motion
+- 21 Zigbee devices: 12× SNZB-02P temp/humidity (13 rooms less leather which uses emonth2), 4× ZBMINI switches, 3× S60ZBTPG smart plugs, 2× Aqara motion
 - GitHub repo: https://github.com/jchidley/z2m-hub
 - Cross-compile and deploy to pi5data
 
@@ -201,31 +201,38 @@ See [room-thermal-model.md](room-thermal-model.md) for full methodology.
 
 ### What's done
 - Python thermal network model with 13 rooms, known fabric U×A, radiator T50s, pipe topology
-- 11 Zigbee room sensors deployed and verified (all on firmware v2.2.0)
-- Ventilation model with bathroom MVHR (measured), kitchen/Sterling calibration points
-- First overnight cooldown analysis (23-24 Mar 2026) — patterns confirmed
-- Humidity analysis confirming ventilation groups (infiltration vs sealed vs MVHR)
+- **13 Zigbee room sensors** deployed and verified (all on firmware v2.2.0) — Office + Landing added 24 Mar 2026
+- Ventilation model with bathroom MVHR (measured), per-room ACH calibrated from Night 1/Night 2
+- **Night 1 (24-25 Mar, doors normal, 8.5°C) and Night 2 (25-26 Mar, all doors closed, 5.0°C)** — joint calibration complete
+- Doorway Cd=0.20, landing chimney ACH=1.30 calibrated (RMSE=0.057°C/h)
+- **Solar gain model** with per-room SolarGlazing (orientation, tilt, g-value, shading)
+- **Equilibrium solver** (scipy fsolve for steady-state room temps)
+- **Moisture analysis** with ACH cross-validation (absolute humidity, surface RH)
+- Cooldown RMSE 0.41°C, warmup RMSE 1.16°C, equilibrium RMSE 1.2°C
+- Measured heat loss per room (Night 2 data), radiator adequacy assessment
+- Humidity-derived ventilation rates for occupied rooms (jackcarol, elvina, aldora)
+- Intervention analysis: elvina vents → aldora rad → J&C draught-strip → EWI SE wall
+- Bathroom sensor moved from airing cupboard to room wall (was reading 3°C high)
 
-### Awaiting data
-- **Cold snap (2°C outside)** expected late Mar 2026 — needed to calibrate thermal mass and resolve ventilation rates at design-relevant ΔT
-- **Office + Landing sensors** being added for complete coverage
-
-### Key findings so far
-- Hall drops even while HP is heating — flow-starved on 15mm branch, rad possibly undersized
-- HP maxes out at ~2°C outside (95% runtime, Jan 2025 data)
-- Kitchen and hall cool at identical rates (thermally coupled via open doorway)
-- Sterling holds steady at 19.2°C with rad off (leather floor heat)
-- Conservatory cools fastest overnight (glazed roof)
-- Elvina cools fast due to trickle vents, not poor insulation
-- Aldora reaches 61% humidity overnight — too well sealed
+### Key findings
+- **Bottleneck sequence**: elvina vents (FREE) → aldora rad upgrade (FREE, reuse existing) → bathroom
+- **EWI SE wall** (30m², ~£5k DIY): 19% heat demand reduction, MWT drops 49→43°C at -3°C
+- **FRVs** on leather, front, shower would allow MWT to drop a further 3-5°C
+- Jack&Carol bay window leaks: ACH=1.00 calm, 1.89 windy (moisture-proven)
+- Aldora mould risk: 58.8% RH, needs trickle vent
+- Kitchen equilibrium −2.2°C (needs more doorway exchange from model)
+- Setback disabled 26 Mar 2026 (trial) — cost-neutral, reduces HP stress
 
 ### Physical improvements identified
 
 | Priority | Action | Cost | Impact |
 |----------|--------|------|--------|
-| 1 | FRVs on 22mm radiators (11 rads) | £359 | Redistributes flow to starved 15mm branches |
-| 2 | EWI on SE wall (10m×5m) | <£5k DIY | 32% HTC reduction. Hall, kitchen, bathroom fixed. HP stops maxing out. |
-| 3 | Trickle vent for Aldora | ~£20 | Prevents 61% humidity with overnight occupancy |
+| 1 | Close Elvina trickle vents | FREE | Removes system bottleneck — forces MWT 49→47°C at -3°C |
+| 2 | Aldora rad upgrade (reuse existing 909W DP DF) | FREE | Removes aldora as bottleneck (MWT 47→45°C). Trickle vent still needed for mould risk. |
+| 3 | Jack&Carol bay window draught-strip | ~£30 | Moisture-proven leakage: ACH 1.00 calm, 1.89 windy. Saves ~60W calm, ~150W windy |
+| 4 | FRVs on overheating rads (leather, front, shower) | ~£100 | Leather 30°C, front 28°C, shower 25°C at -3°C — massively overheat. FRVs allow MWT to drop 3-5°C |
+| 5 | EWI on SE wall (~30m²) | ~£5k DIY | 19% heat demand reduction. MWT drops 49→43°C at -3°C. HP runs at 84% capacity vs 106%. |
+| 6 | Open Aldora trickle vents (currently closed — too cold) | FREE | Prevents 58.8% RH / mould risk. Blocked by #2 — room too cold without rad upgrade |
 
 ## Other Potential Enhancements
 

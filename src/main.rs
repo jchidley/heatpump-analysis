@@ -4,6 +4,7 @@ mod db;
 mod emoncms;
 mod gaps;
 mod octopus;
+mod thermal;
 
 use std::path::PathBuf;
 
@@ -94,6 +95,12 @@ enum Commands {
     Baseload,
     /// Run all analyses
     All,
+    /// Calibrate thermal model parameters from InfluxDB using fixed test windows
+    ThermalCalibrate {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+    },
 }
 
 impl Cli {
@@ -430,6 +437,10 @@ fn main() -> Result<()> {
 
             let temps = db::load_daily_outside_temp(&conn, start, end)?;
             analysis::degree_days(&temps, &elec, &heat)?;
+        }
+
+        Commands::ThermalCalibrate { ref config } => {
+            thermal::calibrate(std::path::Path::new(config))?;
         }
     }
 

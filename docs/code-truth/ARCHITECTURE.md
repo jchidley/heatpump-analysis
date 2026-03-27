@@ -1,4 +1,4 @@
-<!-- code-truth: 1900ca7+ -->
+<!-- code-truth: 3af9fd0 -->
 
 # Architecture
 
@@ -16,9 +16,14 @@ main.rs
   │     └── config.rs
   └── octopus.rs     (reads config for thresholds, gas_era)
         └── config.rs
+
+model/house.py       (completely independent — no Rust connection)
+  └── InfluxDB on pi5data (reads room temps, outside temp, HP state, eBUS status)
 ```
 
 Key constraint: **analysis.rs has no dependency on db.rs or emoncms.rs**. It operates purely on Polars DataFrames passed in by main.rs. This separation means analysis functions can be called with any DataFrame that has the right columns.
+
+Key constraint: **model/house.py has no connection to the Rust tool**. They share the same InfluxDB and emoncms data sources but don't interact. The Rust tool analyses HP performance; the Python model analyses room-level heat distribution.
 
 ## Data Flow Through the System
 
@@ -70,11 +75,27 @@ Gap filling bypasses `db.rs` — it writes directly to `simulated_samples` and `
 
 The Octopus module is semi-independent — it reads its own CSV/JSON files and only optionally touches the SQLite database for temperature data.
 
+### Room thermal model path (completely separate)
+
+```
+InfluxDB (pi5data)
+  ├── room temps (zigbee2mqtt/*_temp_humid, emon/emonth2_23/temperature)
+  ├── room humidity (zigbee2mqtt/*_temp_humid)
+  ├── outside temp (ebusd/poll/OutsideTemp)
+  ├── HP state (emon/heatpump/heatmeter_*, ebusd/poll/StatuscodeNum)
+  │
+  └──→ model/house.py fetch → model/data/*.csv
+                                      │
+                    ┌─────────────────┼──────────────────┐
+                    ▼                 ▼                   ▼
+              analyse/fit       equilibrium          moisture
+           (energy balance,   (scipy fsolve for    (AH tracking,
+            cooldown rates)    steady-state temps)  ACH validation)
+```
+
 ### z2m-hub (separate Rust server on pi5data)
 
 All Zigbee automations, DHW tracking/boost, and mobile dashboard are handled by z2m-hub (`~/github/z2m-hub/`). It connects to Z2M via WebSocket and ebusd via TCP. Writes `dhw.remaining_litres` to InfluxDB. Not connected to the Rust analysis tool in this repo.
-
-Previously these were shell scripts in this repo (`dhw-auto-trigger.sh`, `z2m-automations.sh`) and an InfluxDB Flux task — all replaced Mar 2026.
 
 ## Configuration Architecture
 
@@ -92,6 +113,8 @@ The config has six sections:
 | `gas_era` (boiler efficiency, annual totals, monthly data) | analysis.rs, octopus.rs |
 
 Feed definitions include an optional `column` field that maps feed IDs to DataFrame column names. Feeds without a `column` (e.g. humidity, battery, dhw_flag) are synced to SQLite but not loaded into analysis DataFrames.
+
+**Note**: The Python thermal model (`model/house.py`) has its own room/radiator definitions — not connected to `config.toml`. Radiator T50 values appear in both places and must be kept in sync manually.
 
 ## State Machine Design
 
@@ -119,7 +142,30 @@ The operating state classifier in `analysis.rs::classify_states()` is a **determ
 
 The hysteresis zone (14.7–15.0 L/min) prevents rapid switching during the ~3-second diverter valve transition. The machine remembers the pre-defrost state to return correctly after defrost events that can happen at any flow rate.
 
-**Threshold history**: Originally 16.0/15.0 L/min entry/exit. Tightened to 15.0/14.7 in March 2026 because DHW flow dropped from 21.0 to 16.8 L/min due to y-filter sludge buildup. After filter cleaning (19 March 2026), DHW flow recovered to 21.3 L/min, but the tighter thresholds are retained as they're still safe (heating clamped at 14.3 L/min).
+## Room Thermal Model Architecture
+
+`model/house.py` implements a lumped-parameter thermal network with clear separation of concerns:
+
+**Layer 1: Data types** (dataclasses) — pure physical properties
+- `RoomDef`, `RadiatorDef`, `ExternalElement`, `InternalConnection`, `Doorway`, `SolarGlazing`
+
+**Layer 2: Physics** (pure functions) — standard building physics equations
+- `radiator_output()`, `external_loss()`, `ventilation_loss()`, `wall_conduction()`, `doorway_exchange()`, `solar_gain()`, `estimate_thermal_mass()`
+
+**Layer 3: Integration** — combines physics into a complete room balance
+- `room_energy_balance()` — returns dict of all heat flow components for one room
+
+**Layer 4: House definition** — physical constants
+- `build_rooms()` → 13 `RoomDef` instances
+- `build_connections()` → ~25 `InternalConnection` instances
+- `build_doorways()` → ~9 `Doorway` instances
+
+**Layer 5: Analysis commands** — data loading + physics + display
+- `analyse()`, `fit()`, `cmd_equilibrium()`, `moisture_analysis()`, `cmd_rooms()`, `cmd_connections()`
+
+**Key design principle**: All inter-room connections are **symmetric** — defined once and applied to both rooms. This avoids double-counting and makes the connection list authoritative.
+
+**Calibration approach**: Night 1 (24-25 Mar, doors normal, T_out 8.5°C) vs Night 2 (25-26 Mar, all doors closed, T_out 5.0°C). Joint optimisation of two parameters (Cd and landing ACH) against measured cooling rates for all 13 rooms.
 
 ## SQLite Schema
 
@@ -150,36 +196,11 @@ WAL mode is enabled for concurrent read performance. Schema uses `CREATE TABLE I
 | `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs | octopus.rs | Not in config.toml — two sources for temperature correction |
 | Octopus data path hardcoded to `~/github/octopus/data/` | octopus.rs `default_data_dir()` | Moving octopus project breaks analysis |
 | `daily_hp_by_state()` assumes 1-minute sample interval | octopus.rs `SAMPLE_HOURS = 1/60` | Different sample interval → wrong energy |
-| DHW tracking (161L capacity, boost logic) lives in z2m-hub, not this repo | `~/github/z2m-hub/` | Changing usable volume requires updating z2m-hub `DHW_FULL_LITRES` constant |
+| DHW tracking (161L capacity, boost logic) lives in z2m-hub | `~/github/z2m-hub/` | Changing usable volume requires updating z2m-hub `DHW_FULL_LITRES` |
 | gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs TempBinModel | Threshold changes must be consistent between analysis.rs and gaps.rs |
-
-## Room Thermal Model (Python)
-
-Separate from the Rust analysis tool. `model/house.py` implements a lumped-parameter thermal network:
-
-```
-InfluxDB (pi5data)
-  ├── room temps (zigbee2mqtt/*_temp_humid, emon/emonth2_23/temperature)
-  ├── outside temp (ebusd/poll/OutsideTemp)
-  ├── HP state (emon/heatpump/heatmeter_*, ebusd/poll/StatuscodeNum)
-  │
-  └──→ model/house.py fetch → model/data/*.csv
-                                      │
-                              model/house.py analyse/fit
-                                      │
-                              Per-room energy balance,
-                              cooldown rates, thermal mass,
-                              ventilation calibration
-```
-
-The model uses known fabric U×A values (from `Heating needs for the house.xlsx`), known radiator T50 ratings, and measured room temperatures to solve for unknown parameters (ventilation rates, thermal mass, effective radiator output / flow distribution).
-
-**Key calibration points:**
-- **Kitchen** (no radiator) → calibrates open doorway air exchange rate
-- **Sterling** (rad off, door closed) → calibrates sealed room infiltration rate
-- **Bathroom** MVHR (9 L/s, 78% HR) → known ventilation rate, anchors the model
-
-**No connection to Rust tool** — they share the same InfluxDB and emoncms data sources but don't interact. The Rust tool analyses HP performance; the Python model analyses room-level heat distribution.
+| Radiator T50 values duplicated between `config.toml` and `model/house.py` | Both files | Out-of-sync values → inconsistent radiator output calculations |
+| `model/house.py` InfluxDB token hardcoded | `INFLUX_TOKEN` constant | Token rotation requires code change |
+| `model/house.py` ACH values are per-room constants, not connected to any config | `build_rooms()` | Each room's ACH was individually calibrated — changing one room without understanding the joint calibration can break the whole model |
 
 ## External Boundaries
 
@@ -188,8 +209,10 @@ The model uses known fabric U×A values (from `Heating needs for the house.xlsx`
 | emoncms.org | REST API (read key) | API key via `--apikey` or `EMONCMS_APIKEY` |
 | `~/github/octopus/` | File read (CSV + JSON) | Must exist with `data/usage_merged.csv`, `weather.json`, `config.json` |
 | pi5data (10.0.1.230) | SSH/systemd for ebusd-poll.sh; Docker stack (InfluxDB, Grafana, ebusd, etc.) | Docker + systemd running |
+| InfluxDB on pi5data | HTTP API (port 8086) for Python thermal model | pi5data Docker running |
+| Open-Meteo API | HTTP for outside humidity in moisture analysis | Internet access (falls back to 75% RH) |
 | emonpi (10.0.1.117) | Z2M Docker + Mosquitto (MQTT bridge to pi5data) | Running |
-| emondhw (10.0.1.46) | Multical data source (bridged via MQTT to pi5data) | Raspberry Pi on network, emonhub + Mosquitto running |
+| emondhw (10.0.1.46) | Multical data source (bridged via MQTT to pi5data) | Raspberry Pi on network |
 | emonhp (10.0.1.169) | Data source (MBUS + SDM120 → emoncms.org) | Must be running for data sync |
 
 ## Change Propagation
@@ -205,4 +228,7 @@ The model uses known fabric U×A values (from `Heating needs for the house.xlsx`
 | Arotherm model size | All thresholds are model-specific (especially flow rates). The 7kW heating rate overlaps the 5kW DHW rate. |
 | DHW boost/tracking or Z2M automations | Edit z2m-hub (`~/github/z2m-hub/`), cross-compile, deploy to pi5data |
 | DHW usable volume (161L) | Update `DHW_FULL_LITRES` in z2m-hub, update `docs/dhw-cylinder-analysis.md` and AGENTS.md |
-| Monitoring infrastructure | Update `heating-monitoring-setup.md`. |
+| Radiator T50 in config.toml | Also update `model/house.py` `build_rooms()` for the same radiator |
+| Room ventilation ACH in model | Verify against Night 1/Night 2 calibration data. Joint calibration means changing one room's ACH may require adjusting others. |
+| Doorway Cd or landing ACH | These are jointly calibrated — changing one affects the other |
+| Monitoring infrastructure | Update `heating-monitoring-setup.md` |

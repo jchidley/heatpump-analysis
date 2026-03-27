@@ -191,8 +191,8 @@ Key facts for agents:
 - **eBUS heating control**: `write -c 700 Z1OpMode off/auto` toggles heating via ebusd on pi5data. DHW unaffected. Tested 24 Mar 2026. `at` scheduler on pi5data for timed experiments.
 - **Bare CH pipes in floor void**: 2m of 35mm flow + return (bare copper) in the gap between kitchen ceiling and bathroom floor. Heats both rooms (~25W each at MWT=31). Not insulated — insulating would save ~50W continuous.
 - **Morning demand analysis** (117 winter days, Nov 2025–Feb 2026): HP peaks at 4.8kW avg / 7.5kW max during 06:00-08:00 recovery. COP drops from 4.42 (evening steady) to 3.70 (morning recovery). Recovery MWT 38°C vs evening 32°C. DHW cycle at 06:00-07:00 (114/120 days) immediately precedes heating recovery — double stress on HP.
-- **Setback disabled 26 Mar 2026**: `Z1NightTemp` changed from 17°C to 21°C (matches `Z1DayTemp`). Previously had 4°C overnight setback (midnight→05:00) causing recovery spike to 4.8kW/38°C MWT at worst COP. Analysis of 117 winter days showed setback was cost-neutral (£7/winter) but recovery stressed the HP. Without setback: steady 3.5kW/32°C all night, bedrooms cool naturally via closed doors. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888` on pi5data.
-- **Door states**: Bathroom + Office + Shower normally open. Jack&Carol open day/closed night. Elvina/Aldora/Sterling/Leather always closed. Front partial. Kitchen↔Hall↔Conservatory always open.
+- **Setback disabled 26 Mar 2026 (trial)**: `Z1NightTemp` changed from 17°C to 21°C (matches `Z1DayTemp`). Trialling no overnight setback — previously had 4°C setback (midnight→05:00) causing recovery spike to 4.8kW/38°C MWT at worst COP. Analysis of 117 winter days showed setback was cost-neutral (£7/winter) but recovery stressed the HP. Without setback: steady 3.5kW/32°C all night, bedrooms cool naturally via closed doors. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888` on pi5data.
+- **Door states**: Bathroom + Office + Shower normally open. Jack&Carol open day/closed night. Elvina/Aldora/Sterling always closed. Leather↔conservatory SG door open mornings (dog fed in conservatory), closed rest of day and overnight. Front partial. Kitchen↔Hall↔Conservatory always open.
 - **SNZB-02P v2.1.0 bug**: readings freeze at power-on value. v2.2.0 fixes it. Always verify readings vary before trusting.
 
 ## Gotchas
@@ -232,7 +232,7 @@ Key facts for agents:
 - Keep `GAS_DHW_KWH_PER_DAY` and `BOILER_EFFICIENCY` in `octopus.rs` in sync with config.toml `[gas_era]`
 - Human-facing docs: `docs/` (Diátaxis style) — see `docs/code-truth/` for derived-from-code docs
 - This file (`AGENTS.md`) is the single LLM context source. `docs/code-truth/` is for human comprehension.
-- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (written by z2m-hub), Zigbee room sensor data (10× SNZB-02P temp/humidity from Mar 2026, topic `zigbee2mqtt/*_temp_humid`), eBUS data (25+ values every 30s, topics `ebusd/poll/*` and `ebusd/hmu/*`)
+- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (written by z2m-hub), Zigbee room sensor data (12× SNZB-02P temp/humidity from Mar 2026, topic `zigbee2mqtt/*_temp_humid`), eBUS data (25+ values every 30s, topics `ebusd/poll/*` and `ebusd/hmu/*`)
 - Don't modify monitoring infrastructure from this project — use SSH to emonpi/emondhw/emonhp/pi5data directly
 - Don't store credentials in plaintext — use `ak get emon-pi-credentials` at runtime
 - Always verify SNZB-02P sensor readings **vary over time** before using in analysis — stuck readings look like real data
@@ -310,7 +310,7 @@ Remaining outliers: kitchen equilibrium (−2.2°C, needs more doorway exchange)
 |---|---|---|---|---|---|
 | Jack&Carol | 1.89 | 1.00 | +0.89 | 0.80 | Bay window leaks. Fix: draught-strip. |
 | Elvina | 0.71 | 0.22 | +0.49 | 0.70 | Trickle vents voluntary (closeable). Sloping roof acts as wind scoop. |
-| Aldora | 0.37 | 0.28 | +0.09 | 0.30 | Well-sealed flat roof. Mould risk (needs trickle vent). |
+| Aldora | 0.37 | 0.28 | +0.09 | 0.30 | Well-sealed flat roof. Mould risk (has trickle vents but closes them — too cold without rad upgrade). |
 
 **Doorway effects** (Night 1 − Night 2, normalised for outside temp):
 
@@ -321,11 +321,11 @@ Remaining outliers: kitchen equilibrium (−2.2°C, needs more doorway exchange)
 | Shower, Front | +0.08 | Borderline (near 0.05 noise floor) |
 | Office, Conservatory | ~0 | Receive heat through doors — closing doors hurts them |
 
-**Moisture model**: tracks absolute humidity per room. Surface RH uses physics-based calculation (U_max × Rsi × ΔT, not fixed 3°C). Cross-validates ACH_moisture vs ACH_thermal. Aldora remains at mould risk (RH ~59%, needs trickle vent).
+**Moisture model**: tracks absolute humidity per room. Surface RH uses physics-based calculation (U_max × Rsi × ΔT, not fixed 3°C). Cross-validates ACH_moisture vs ACH_thermal. Aldora remains at mould risk (RH ~59%, has trickle vents but keeps them closed because room is too cold — blocked by rad upgrade).
 
 **Bottleneck sequence** (from equilibrium model):
 1. **Elvina** (vents open, ACH=0.70): forces MWT to 49°C at -3°C. Voluntary — close vents to fix (FREE).
-2. **Aldora** (376W towel rad): forces MWT to 47°C. Fix: upgrade to 909W DP DF (~£150, rad available).
+2. **Aldora** (376W towel rad): forces MWT to 47°C. Fix: upgrade to 909W DP DF (FREE, reuse existing rad).
 3. **Bathroom** (996W towel rads, 25.6 W/K external): forces MWT to 45°C. DHW cylinder helps (93W). Hardest to fix.
 
 With all three fixed + J&C draught-proofing + EWI SE wall 30m²: MWT drops to 43°C at -3°C (COP 3.76 vs 3.31 baseline).
@@ -336,7 +336,7 @@ With all three fixed + J&C draught-proofing + EWI SE wall 30m²: MWT drops to 43
 |---|---|---|---|---|---|
 | Current | — | 49°C | 23,670 kWh | £894 | — |
 | + Elvina vents closed | £0 | 47°C | 22,640 kWh | £860 | £34 |
-| + Aldora rad upgrade | ~£150 | 45°C | 22,640 kWh | £860 | £34 |
+| + Aldora rad upgrade | FREE | 45°C | 22,640 kWh | £860 | £34 |
 | + J&C draught-strip | ~£30 | 45°C | 22,170 kWh | £842 | £52 |
 | + EWI SE 30m² | ~£5k | 43°C | 19,139 kWh | £677 | £216 |
 
@@ -355,7 +355,7 @@ See [docs/roadmap.md](docs/roadmap.md) for full details:
 - ~~**Controlled cooldown experiments**~~ — Night 1 (24-25 Mar, doors normal, 7.5°C avg) and Night 2 (25-26 Mar, all doors closed, 5.0°C avg) complete. Calibrated doorway Cd=0.20 and landing chimney ACH=1.30. Bathroom sensor moved from airing cupboard to wall (was 3°C high).
 - ~~**Office + Landing sensors**~~ — added 24 Mar 2026. 13/13 room coverage complete.
 - **Jack&Carol bay window draught-proofing** — moisture-proven leakage: ACH=1.00 even calm (Night 2), ACH=1.89 windy (Night 1). Wind adds 0.89 ACH. Draught strip frame joints. Saves ~60W calm, ~150W windy. Becomes system bottleneck once elvina closes vents.
-- **Aldora rad upgrade** — 909W DP DF replaces 376W towel (rad available). Removes aldora as bottleneck. Trickle vent still needed for mould risk (58.8% RH, Part F required).
+- **Aldora rad upgrade** — 909W DP DF replaces 376W towel (FREE, reuse existing rad). Removes aldora as bottleneck. Unblocks opening trickle vents (currently closed — too cold) for mould risk (58.8% RH).
 - **FRV installation** — model is calibrated. Leather (30°C), front (28°C), shower (25°C) massively overheat at -3°C design day. FRVs on these three 22mm radiators would allow MWT to drop a further 3-5°C, worth more annual savings than the EWI. Calculate exact settings from equilibrium model, install, and verify with sensors.
 - **Sterling floor insulation** — mineral wool between joists (leather ceiling / sterling floor). Sterling occupant prefers cold + opens windows → leather's heat goes straight outside. Insulating stops this: leather retains heat, Sterling gets cold room, HP saves energy. Best single-room intervention after EWI.
 - **EWI on SE wall** — ~30m² solid brick (hall, front, jack&carol, office), U 2.11→0.23. DIY, before next winter. Model predicts: 19% heat demand reduction (23,670→19,139 kWh/yr), MWT drops 49→43°C at -3°C, annual saving £216/yr. HP runs at 84% capacity vs 106% currently. Main benefit is comfort (20°C achievable everywhere) and HP headroom, not payback (£5k DIY — roughly the same as the entire HP+controller+cylinder cost).

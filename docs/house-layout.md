@@ -31,7 +31,7 @@ LOFT (2010 insulated, U=0.15 walls, U=0.066 roof)
   └── STAIRWELL (landing) ─────────────┘
 
 GROUND FLOOR
-  Leather ──SG door── Conservatory
+  Leather ──1930s SG door (single-glazed panels in timber frame, U≈4.4)── Conservatory
   │door closed  │      │open
   ├──wall── Front    Kitchen (no heater)
   │         │part.closed  │open

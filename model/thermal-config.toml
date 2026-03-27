@@ -1,0 +1,49 @@
+# Thermal model calibration config
+# Keep mutable values here, not in code.
+
+[influx]
+url = "http://pi5data:8086"
+org = "home"
+bucket = "energy"
+# Token is read from this environment variable.
+token_env = "INFLUX_TOKEN"
+
+[test_nights]
+# Controlled windows (space-heating OFF, DHW excluded)
+night1_start = "2026-03-24T23:10:00+00:00"
+night1_end   = "2026-03-25T05:05:00+00:00"
+night2_start = "2026-03-25T23:10:00+00:00"
+night2_end   = "2026-03-26T05:05:00+00:00"
+
+[objective]
+# Rooms to ignore in scoring (still reported)
+exclude_rooms = ["landing"]
+
+# Regularization strength for priors (0 = disabled)
+prior_weight = 0.01
+
+[priors]
+# Physically plausible centre points (from prior experiments)
+landing_ach = 1.30
+doorway_cd = 0.20
+
+[bounds]
+leather_ach_min = 0.40
+leather_ach_max = 0.90
+leather_ach_step = 0.05
+
+landing_ach_min = 0.80
+landing_ach_max = 1.60
+landing_ach_step = 0.10
+
+conservatory_ach_min = 1.0
+conservatory_ach_max = 6.0
+conservatory_ach_step = 0.5
+
+office_ach_min = 0.8
+office_ach_max = 4.0
+office_ach_step = 0.2
+
+doorway_cd_min = 0.10
+doorway_cd_max = 0.35
+doorway_cd_step = 0.05

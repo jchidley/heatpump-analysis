@@ -87,13 +87,18 @@ cargo run -- --all-data design-comparison
 - **[docs/hydraulic-analysis.md](docs/hydraulic-analysis.md)** — Pump curves, flow rate degradation, y-filter diagnosis
 - **[docs/dhw-cylinder-analysis.md](docs/dhw-cylinder-analysis.md)** — Cylinder heat exchange, WWHR performance, standby losses
 
+### Building physics
+- **[docs/house-layout.md](docs/house-layout.md)** — Room connectivity, door states, thermal relationships, radiators, pipe topology, ventilation, sensors
+- **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — Room thermal model: methodology, calibration, overnight experiments, equilibrium analysis, moisture model
+
 ### Operations
-- **[docs/dhw-auto-trigger.md](docs/dhw-auto-trigger.md)** — Emergency DHW recharge automation (eBUS + MQTT)
+- **[docs/dhw-auto-trigger.md](docs/dhw-auto-trigger.md)** — Emergency DHW recharge automation (historical — removed Mar 2026, replaced by z2m-hub)
 - **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Full monitoring infrastructure (emonhp, emondhw, pi5data, eBUS, MQTT, InfluxDB, Grafana)
 
 ### Reference
 - **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit and integration status
 - **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements
+- **[docs/rust-migration-plan.md](docs/rust-migration-plan.md)** — Python→Rust migration policy and execution plan
 - **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
 
 ## About This Code

@@ -382,7 +382,8 @@ def build_rooms() -> dict[str, RoomDef]:
         construction="brick_suspended",
         sensor="emon/emonth2_23/temperature",
         ventilation_ach=0.67,  # Derived from Night 2: higher than expected.
-                               # SG door to conservatory leaks, or cellar ventilation.
+                               # Was partly explained by SG door U being 1.9 instead of 4.4.
+                               # May reduce once SG door correction is validated against cold data.
         radiators=[
             RadiatorDef(t50=2376, pipe="22mm"),
             RadiatorDef(t50=2376, pipe="22mm"),
@@ -596,7 +597,7 @@ def build_connections() -> list[InternalConnection]:
         InternalConnection("kitchen", "leather", U_w * 8.0,  "Internal wall"),
         InternalConnection("kitchen", "front",  U_w * 7.84, "Internal wall"),
         InternalConnection("front", "leather",  U_w * 10.0, "Internal wall"),
-        InternalConnection("leather", "conservatory", 1.9 * 4.8, "SG door (closed)"),
+        InternalConnection("leather", "conservatory", 4.4 * 4.8, "1930s SG door (closed, single-glazed panels in timber frame)"),
 
         # ── Ground↔First floor (timber floors) ──
         InternalConnection("hall", "office",    0.25 * 5.28, "Insulated floor (100mm)"),

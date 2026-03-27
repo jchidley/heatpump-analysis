@@ -1,4 +1,4 @@
-<!-- code-truth: 1900ca7+ -->
+<!-- code-truth: 3af9fd0 -->
 
 # Patterns
 
@@ -150,9 +150,34 @@ Modules match their concern directly:
 
 No prefix/suffix conventions (`_service`, `_module`, etc.), no trait abstractions, no generic types. Each module is a flat collection of functions and structs.
 
+## Python Thermal Model Patterns
+
+`model/house.py` follows different conventions from the Rust code:
+
+### Dataclass-based domain model
+Room definitions use `@dataclass` with typed fields. No inheritance. Physical properties only — no analysis results stored on room objects.
+
+### Pure physics functions
+Core calculations (`radiator_output()`, `external_loss()`, `ventilation_loss()`, etc.) are pure functions taking physical parameters and returning watts. No global state, no side effects.
+
+### Symmetric connection definitions
+Internal connections (wall conduction, doorway exchange) are defined **once** per pair of rooms. `room_energy_balance()` iterates all connections and applies them to both sides. This eliminates double-counting bugs.
+
+**Cost to break**: Adding a new connection type would require: (1) a new dataclass, (2) a new physics function, (3) integration into `room_energy_balance()`, (4) a new `build_*()` function.
+
+### Constants at module level, not config file
+Physical constants (`U_INTERNAL_WALL`, `DOORWAY_CD`, `AIR_DENSITY`, etc.) are module-level Python constants. Room-specific values (ACH, occupants) are in `build_rooms()`. Neither is externalised to a config file.
+
+**Cost to break**: Moving to config would require parsing a file at import time and threading values through all functions. Low benefit — these are physics constants, not user-tuneable.
+
+### CSV-based data pipeline
+Data is fetched from InfluxDB, written to CSV, then loaded from CSV. This provides an explicit cache and makes analysis reproducible without network access. Fetch is always explicit (`fetch` command).
+
+**Cost to break**: Low — could switch to in-memory only, but loses the reproducibility and offline capability.
+
 ## Shell Script Pattern (monitoring scripts on pi5data)
 
-The remaining monitoring script (`ebusd-poll.sh`) follows this pattern (previously also `dhw-auto-trigger.sh` and `z2m-automations.sh`, both removed Mar 2026 — replaced by z2m-hub):
+The remaining monitoring script (`ebusd-poll.sh`) follows this pattern:
 - All tunables as shell variables at the top of the file
 - `mosquitto_sub` for event subscription, `mosquitto_pub` for commands, `nc` for eBUS
 - `log()` helper with timestamp prefix
@@ -160,15 +185,16 @@ The remaining monitoring script (`ebusd-poll.sh`) follows this pattern (previous
 - systemd service for lifecycle management (`Restart=always`)
 - Deploy: `scp` to pi5data + `sudo systemctl restart <service>`
 
-**Cost to break**: ebusd-poll.sh runs independently on pi5data. Changes require scp + systemd restart — no CI/CD. Z2M automations and DHW boost/tracking now in z2m-hub (`~/github/z2m-hub/`).
+**Cost to break**: ebusd-poll.sh runs independently on pi5data. Changes require scp + systemd restart — no CI/CD.
 
 ## Notable Absences
 
 | What's missing | Why it matters |
 |---------------|---------------|
-| Tests | No unit, integration, or property tests. Validation by running against real data. |
+| Tests | No unit, integration, or property tests in either Rust or Python. Validation by running against real data. |
 | CI/CD | No automated build, test, or deploy pipeline. |
-| Logging framework | Analysis uses `println!`/`eprintln!` only. |
-| Structured output | All output is terminal-formatted text, not JSON/CSV (except `export` command). |
+| Logging framework | Rust uses `println!`/`eprintln!`. Python uses `print()`. |
+| Structured output | All output is terminal-formatted text, not JSON/CSV (except Rust `export` command). |
 | Migration system | SQLite schema is `CREATE TABLE IF NOT EXISTS`. No versioning. |
 | Async | All I/O is blocking (intentional — see DECISIONS.md). |
+| Shared config between Rust and Python | Radiator T50s and room data exist in both `config.toml` and `model/house.py` independently. |

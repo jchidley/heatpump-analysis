@@ -1,4 +1,4 @@
-<!-- code-truth: 1900ca7+ -->
+<!-- code-truth: 3af9fd0 -->
 
 # Repository Map
 
@@ -8,15 +8,12 @@
 |------|---------|
 | `config.toml` | All domain constants, thresholds, feed IDs, house data, radiator inventory, Arotherm specs, gas-era history |
 | `Cargo.toml` | Dependencies and build configuration |
-| `AGENTS.md` | LLM agent context (canonical project documentation). **Heavily updated Mar 2026** with house layout, room sensors, radiator inventory, MVHR, pipe topology. |
+| `AGENTS.md` | LLM agent context (canonical project documentation). Heavily updated Mar 2026 with calibration results, system costs, intervention analysis. |
 | `CLAUDE.md` | Points to AGENTS.md |
 | `README.md` | Human-facing quick start, command reference, project philosophy |
 | `heatpump.db` | SQLite database (gitignored, created by `sync`) |
 | `heating-monitoring-setup.md` | Full monitoring infrastructure documentation (devices, MQTT topics, eBUS data, credentials) |
 | `.gitmodules` | Six submodules: ebusd, avrdb_firmware, EmonScripts, emonhub, emoncms, emonPiLCD |
-| `Heating needs for the house.xlsx` | Room-by-room U-values, fabric measurements, radiator specs, HDD regression (not in git) |
-| `Utility - Gas Electric-Jack_Laptop.xlsx` | Gas/electric history 2007-2024, PV models, hot water meter, degree days (not in git) |
-| `FRV.pdf` | Flow Regulating Valve datasheet — for radiator balancing (not in git) |
 
 ## Source Modules
 
@@ -58,7 +55,7 @@
 
 ### `src/analysis.rs` — State machine and Polars analysis (950 lines)
 
-This is the largest module. Two concerns:
+This is the largest Rust module. Two concerns:
 
 **1. State classification** (`classify_states()`, `enrich()`)
 - Hysteresis state machine processing rows in time order
@@ -99,30 +96,65 @@ This is the largest module. Two concerns:
 
 ## Python Thermal Model
 
-### `model/house.py` — Room-by-room thermal network model (750+ lines)
+### `model/house.py` — Room-by-room thermal network (1397 lines)
 
 Python script (run via `uv run --with influxdb-client --with numpy --with scipy`). Not part of the Rust build — a separate analysis tool.
 
-- **Room definitions** (`build_house()`): 13 rooms with fabric U×A values, radiator T50 ratings, sensor mappings, door states
-- **Ventilation model** (`VENTILATION` dict): per-room ACH values in three groups:
-  - Measured: bathroom MVHR (9 L/s, 78% HR)
-  - Calibrated from humidity data: Elvina (trickle vents), Jack&Carol (bay window leakage), Aldora (sealed)
-  - Estimated: all others, with bathroom-door-dependent stairwell draft
-- **Pipe topology** (`PIPE_BRANCHES`): 22mm primary vs two 15mm branches
-- **Physics** (`radiator_output()`, `fabric_loss()`, `ventilation_loss()`): standard building physics calculations
-- **Data fetching** (`fetch_data()`): queries InfluxDB on pi5data via influxdb-client Python package
-- **Analysis** (`analyse()`): steady-state energy balance per room
-- **Fitting** (`fit()`): identifies free-cooling periods from eBUS status codes (101/103=standby, 134=DHW) and calculates cooldown rates
+**Data types** (dataclasses):
+- `RadiatorDef`: T50 rating, pipe branch, active flag
+- `ExternalElement`: area, U-value, ground flag
+- `InternalConnection`: symmetric wall/floor/ceiling conduction between two rooms (defined once)
+- `Doorway`: buoyancy-driven convective exchange between two rooms (state: open/closed/partial/chimney)
+- `SolarGlazing`: area, orientation (SW/NE), tilt, g-value, shading factor
+- `RoomDef`: physical properties (floor area, ceiling height, construction, radiators, external fabric, solar, sensor, ACH, heat recovery, occupants)
+
+**Physics functions**:
+- `radiator_output()` — EN442: Q = T50 × (ΔT/50)^1.3
+- `external_loss()` — fabric heat loss to outside/ground
+- `ventilation_loss()` — Q = 0.335 × ACH × V × ΔT × (1 - η)
+- `wall_conduction()` — linear U×A × ΔT through internal walls
+- `doorway_exchange()` — buoyancy-driven bi-directional flow: Q = (Cd/3) × W × √(g×H³×|ΔT|/T_mean) × ρCp × ΔT
+- `occupant_heat()` — 70W sleeping / 100W active per person
+- `solar_gain()` — irradiance × area × g × shading × tilt_factor
+- `estimate_thermal_mass()` — construction-based, from wall/floor/ceiling areas
+- `room_energy_balance()` — complete balance for one room (all components)
+
+**House definition** (`build_rooms()`, `build_connections()`, `build_doorways()`):
+- 13 rooms with full physical properties
+- ~25 internal connections (walls + floors/ceilings)
+- ~9 doorways (including 2 chimney-marked stairwell openings)
+- Pipe topology in `PIPE_BRANCHES` dict
+
+**Analysis commands**:
+- `fetch [hours]` — pulls data from InfluxDB on pi5data to `model/data/*.csv`
+- `rooms` — room summary table (area, thermal mass, T50, ext UA, ACH)
+- `connections` — list all inter-room connections and doorways
+- `analyse` — steady-state energy balance at latest snapshot
+- `fit` — cooldown analysis: measured vs predicted cooling rates during heating-off periods
+- `equilibrium [T_out] [MWT] [solar_sw] [solar_ne]` — solve for steady-state room temps using scipy fsolve
+- `moisture` — overnight humidity analysis with ACH cross-validation
+
+**Calibration constants** (from Night 1/Night 2 experiments, 24-26 Mar 2026):
+- `DOORWAY_CD = 0.20` (discharge coefficient, joint calibration)
+- `U_INTERNAL_WALL = 2.37` (100mm brick + plaster, calculated)
+- `U_TIMBER_FLOOR = 1.58` (uninsulated joists + boards)
+- Landing `ventilation_ach = 1.30` (chimney effect, calibrated)
+- `DHW_CYLINDER_UA = 1.6` W/K (from T1 standby decline measurement)
 
 Data files stored in `model/data/` (gitignored):
 - `room_temps.csv`, `outside_temp.csv`, `hp_state.csv`, `hp_status.csv`
 
 | To change... | Look in... |
 |--------------|-----------|
-| Room fabric or radiator data | `model/house.py` `build_house()` |
-| Ventilation assumptions | `model/house.py` `VENTILATION` dict |
+| Room fabric, radiator, or sensor data | `model/house.py` `build_rooms()` |
+| Internal wall/floor connections | `model/house.py` `build_connections()` |
+| Doorway states or dimensions | `model/house.py` `build_doorways()` |
+| Ventilation assumptions | Individual room `ventilation_ach` in `build_rooms()` |
+| Solar glazing properties | Individual room `solar` list in `build_rooms()` |
+| Physical constants (U_internal, Cd, etc.) | Module-level constants in `model/house.py` |
 | InfluxDB connection | `model/house.py` `INFLUX_*` constants |
-| Free-cooling detection | `model/house.py` `fit()` `SPACE_HEATING_OFF_CODES` |
+| Free-cooling detection | `model/house.py` `fit()` `HEATING_OFF_CODES` |
+| Body heat / moisture rates | `model/house.py` `BODY_HEAT_*`, `MOISTURE_*` constants |
 
 ## Scripts
 
@@ -145,15 +177,14 @@ All deployed to pi5data `/usr/local/bin/` as systemd services.
 | `README.md` | Quick start, command reference, project philosophy | Signpost |
 | `docs/explanation.md` | How the operating model works (state machine, flow rates, gap filling) | Explanation |
 | `docs/hydraulic-analysis.md` | Pump curves, flow degradation, y-filter diagnosis, post-clean results | Explanation |
-| `docs/dhw-auto-trigger.md` | Emergency DHW recharge automation: trigger logic, eBUS commands, deployment | How-to + Explanation |
-| `docs/dhw-cylinder-analysis.md` | Cylinder heat exchange: reheat cycles, standby loss, WWHR, stratification, live remaining-litres tracking, PHE evaluation, temperature optimisation | Explanation |
-| `docs/datasheets/` | Kingspan Albion Ultrasteel Plus AUXSN300ERP PDFs (installation manual, product guide, data fiche) | Reference |
+| `docs/dhw-auto-trigger.md` | Emergency DHW recharge automation (removed, historical) | How-to + Explanation |
+| `docs/dhw-cylinder-analysis.md` | Cylinder heat exchange, standby loss, stratification, live remaining-litres, PHE evaluation, temperature optimisation | Explanation |
 | `docs/octopus-data-inventory.md` | Audit of Octopus data sources, coverage, integration status | Reference |
-| `docs/roadmap.md` | Planned enhancements (eBUS ✅, Octopus ✅, solar PV, degree days ✅, z2m-hub) | Reference |
+| `docs/roadmap.md` | Planned enhancements (eBUS ✅, Octopus ✅, Z2M ✅, room model partially ✅) | Reference |
 | `docs/emonpi-rebuild-status-2026-03-20.md` | emonpi rebuild checklist and status | Reference |
 | `docs/emon-installation-runbook.md` | Generic emon device installation procedure | How-to |
 | `docs/house-layout.md` | Building physics: room connectivity, door states, thermal relationships, radiators, pipe topology, ventilation, sensors, glazing | Explanation |
-| `docs/room-thermal-model.md` | Room thermal model: methodology, calibration rooms, daily experiment, overnight results, HP capacity, EWI analysis, FRV strategy | Explanation |
+| `docs/room-thermal-model.md` | Room thermal model: methodology, calibration, Night 1/2 results, HP capacity, EWI analysis, FRV strategy, solar gain, moisture | Explanation |
 | `docs/code-truth/` | This documentation set (derived from code) | — |
 | `heating-monitoring-setup.md` | Full monitoring infrastructure: devices, MQTT, eBUS, InfluxDB, Grafana, credentials | Reference |
 
@@ -173,12 +204,13 @@ All deployed to pi5data `/usr/local/bin/` as systemd services.
 | Operating thresholds (flow rates, defrost DT, HDD base) | `config.toml` `[thresholds]` |
 | Feed IDs or add new feeds | `config.toml` `[[emoncms.feeds]]` |
 | House thermal properties | `config.toml` `[house]` |
-| Radiator inventory | `config.toml` `[[radiators]]` |
+| Radiator inventory (Rust analysis) | `config.toml` `[[radiators]]` |
 | Gas-era reference data | `config.toml` `[gas_era]` |
 | State machine logic | `src/analysis.rs` `classify_states()` |
 | New analysis subcommand | `src/analysis.rs` (function) + `src/main.rs` (Commands enum + match) |
 | Gap-fill model or strategy | `src/gaps.rs` |
 | Octopus data loading or comparison | `src/octopus.rs` |
+| Room thermal model (fabric, ventilation, equilibrium) | `model/house.py` |
 | DHW boost/tracking | `~/github/z2m-hub/` (z2m-hub Rust server) |
 | eBUS polling values | `scripts/ebusd-poll.sh` |
 | Z2M automations | `~/github/z2m-hub/` (z2m-hub Rust server) |

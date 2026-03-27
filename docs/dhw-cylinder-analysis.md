@@ -498,7 +498,7 @@ From 181 cycles over 90 days of emoncms data (pre-dating the InfluxDB setup):
 
 ## DHW remaining litres — live tracking
 
-An InfluxDB Flux task (`DHW Remaining Litres`) runs every minute, computing how much usable hot water remains in the cylinder since the last DHW charge event.
+**Update (March 2026):** The original InfluxDB Flux task has been **disabled** — replaced by DHW tracking in z2m-hub (`~/github/z2m-hub/`), which polls ebusd directly via TCP, detects charge completion (scheduled → 161L, manual boost → +50%), and tracks usage via Multical volume register. z2m-hub writes `dhw.remaining_litres` to InfluxDB. The approach described below is the historical Flux task implementation for reference.
 
 ### How it works
 

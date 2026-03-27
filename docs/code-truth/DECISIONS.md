@@ -1,4 +1,4 @@
-<!-- code-truth: 1900ca7+ -->
+<!-- code-truth: 3af9fd0 -->
 
 # Decisions
 
@@ -17,7 +17,7 @@
 **Alternatives rejected**:
 - *Flow temperature > 38°C for DHW*: Missed ramp-up periods, late-stage DHW, and mild-weather DHW. Abandoned early.
 - *DHW_flag feed (512889)*: Only has data until December 2024. Cannot be used for the full dataset.
-- *eBUS StatuscodeNum*: Now available (104=heating, 134=DHW, 516=defrost) but not yet integrated into analysis. Could replace or validate the flow-rate state machine. See `heating-monitoring-setup.md` for eBUS data availability.
+- *eBUS StatuscodeNum*: Now available (104=heating, 134=DHW, 516=defrost) but not yet integrated into analysis. Could replace or validate the flow-rate state machine.
 
 **Consequences**: Any new classification approach must be validated against 448k+ running samples. The existing state machine produces COP figures consistent with manufacturer expectations.
 
@@ -79,15 +79,39 @@
 
 **Consequences**: After y-filter cleaning (19 March 2026), DHW flow recovered to 21.3 L/min. The tighter thresholds are retained as they're safe with clamped heating. Should be reviewed if system changes (e.g., different HP model where heating flow rate could reach 15+ L/min).
 
+### D20: Symmetric internal connections in thermal model
+
+**Status:** active
+
+**What**: All wall/floor/ceiling conduction and doorway exchange between rooms is defined **once** per pair (as `InternalConnection` or `Doorway`), not in each room's definition.
+
+**Why**: Prevents double-counting. If room A loses 50W to room B through a shared wall, room B gains 50W from room A — it's one physical quantity. Defining in both rooms would double the transfer. The symmetric approach makes the connection list authoritative.
+
+**Where**: `model/house.py` `build_connections()`, `build_doorways()`, `room_energy_balance()`
+
+**Consequences**: Adding a new room requires defining all its connections in `build_connections()` and doorways in `build_doorways()`, not just the room definition.
+
+### D21: Chimney effect as landing ACH, not pairwise doorway exchange
+
+**Status:** active
+
+**What**: The stairwell chimney (hall→landing→shower) is modelled as increased ventilation ACH for landing (1.30), not as doorway-driven buoyancy exchange.
+
+**Why**: Pairwise buoyancy exchange between adjacent rooms doesn't capture multi-storey stack-driven flow. The chimney draws air from ground floor through first floor to loft — it's a whole-building phenomenon. Calibrated from Night 1 vs Night 2: RMSE=0.057°C/h with chimney ACH, vs poor fit with pairwise doorways.
+
+**Where**: `model/house.py` — landing `ventilation_ach=1.30`, stairwell doorways marked `state="chimney"` (returns 0 in `doorway_exchange()`)
+
+**Consequences**: Changing door states doesn't affect the chimney — it's always present. In reality, closing the hall→landing doorway would reduce chimney flow, but this isn't modelled.
+
 ## Pragmatic Decisions
 
 ### D3: No tests
 
 **Status:** active
 
-**What**: No unit or integration tests. Validation is done by running analysis against the full real dataset and checking output.
+**What**: No unit or integration tests in either Rust or Python. Validation is done by running analysis against real data and checking output.
 
-**Why**: The core logic (state machine, COP calculations, degree days) operates on real-world data with complex interactions. Mock data would not capture the subtleties (e.g. defrost during DHW, diverter valve transition timing). The full dataset serves as the integration test.
+**Why**: The core logic (state machine, COP calculations, degree days) operates on real-world data with complex interactions. Mock data would not capture the subtleties. The full dataset serves as the integration test. The Python thermal model is validated against two controlled overnight experiments.
 
 **Risk**: Regressions can only be caught by re-running commands and comparing output. No CI guard.
 
@@ -141,39 +165,35 @@
 
 **Risk**: Schema and feed ID conventions must stay consistent between the two modules.
 
-### D13: Monitoring scripts as shell on pi5data (not Python, not integrated into Rust CLI)
+### D13: Monitoring scripts as shell on pi5data
 
 **Status:** active (updated March 2026)
 
-**What**: DHW auto-trigger, eBUS polling, and Z2M automations run as standalone shell scripts on pi5data, not integrated into the Rust CLI.
+**What**: eBUS polling runs as a standalone shell script on pi5data. Z2M automations and DHW tracking moved to z2m-hub Rust server.
 
-**Why**: They need to run 24/7 on pi5data (the central hub). The Rust CLI runs on a development machine. Different deployment targets, different lifecycle. Shell scripts (`mosquitto_sub`, `mosquitto_pub`, `nc`) are sufficient — no Python runtime needed.
+**Why**: ebusd-poll.sh needs to run 24/7 on pi5data (the central hub). Shell (`mosquitto_pub`, `nc`) is sufficient for read-poll-publish. z2m-hub replaced shell scripts for more complex logic (state tracking, WebSocket, HTTP dashboard).
 
 **Where**: `scripts/ebusd-poll.sh` — deployed to `/usr/local/bin/` on pi5data as systemd service.
 
-**History**: Originally `ebusd-poll.py` in Docker, replaced by shell script on pi5data in March 2026. `dhw-auto-trigger.sh` and `z2m-automations.sh` also used this pattern but were removed Mar 2026 — replaced by z2m-hub Rust server (`~/github/z2m-hub/`).
-
-**Consequences**: ebusd-poll.sh constants are in the shell script, not config.toml. Z2M automations and DHW scripts moved to z2m-hub (Mar 2026).
+**Consequences**: ebusd-poll.sh constants are in the shell script, not config.toml.
 
 ### D14: DHW remaining litres — moved to z2m-hub (March 2026)
 
 **Status:** active
 
-**What**: Originally an InfluxDB Flux task (id `1071306263e06000`, every 1m). **Disabled Mar 2026** due to null crash when no water drawn after charge. Replaced by DHW tracking in z2m-hub (`~/github/z2m-hub/`), which polls ebusd directly via TCP, detects charge completion (scheduled → 161L, manual boost → +50%), and tracks usage via Multical volume register.
+**What**: Originally an InfluxDB Flux task. Disabled Mar 2026. Replaced by DHW tracking in z2m-hub, which polls ebusd directly via TCP, detects charge completion, and tracks usage via Multical volume register.
 
-**Why**: Provides real-time visibility into DHW capacity so household members can make informed decisions about whether to trigger a manual boost charge. Replaces guesswork with data.
+**Where**: z2m-hub `~/github/z2m-hub/`, writes `dhw.remaining_litres` to InfluxDB
 
-**Where**: InfluxDB on pi5data, documented in `docs/dhw-cylinder-analysis.md`
-
-**Consequences**: The 161L capacity constant now lives in z2m-hub (`DHW_FULL_LITRES`). z2m-hub writes `dhw.remaining_litres` to InfluxDB for Grafana/historical display.
+**Consequences**: The 161L capacity constant lives in z2m-hub (`DHW_FULL_LITRES`).
 
 ### D15: PHE + secondary return rejected (March 2026)
 
 **Status:** rejected
 
-**What**: Plate heat exchanger on HP primary side with secondary pump injecting heated DHW at the secondary return (F, 1519mm). Evaluated but not implemented.
+**What**: Plate heat exchanger on HP primary side with secondary pump. Evaluated but not implemented.
 
-**Why rejected**: COP doesn't change (HP operating point is unaffected — same total heat, same flow target). The T1 dip during early charging is only 0.3°C. Maximum saving ~£7-8/year vs complexity, fouling risk, and additional failure points. The coil-in-coil heat exchanger is already 90-95% efficient.
+**Why rejected**: COP doesn't change. Maximum saving ~£7-8/year vs complexity, fouling risk, and additional failure points.
 
 **Where**: Analysis in `docs/dhw-cylinder-analysis.md`
 
@@ -181,51 +201,79 @@
 
 **Status:** active
 
-**What**: The current 45°C `HwcTempDesired` is the right setting. Analysis shows cost per shower is nearly constant (±5%) across the entire 40-51°C range because higher temp = worse COP but less hot water drawn per shower. The two effects cancel.
-
-**Why**: People always mix to their comfortable temperature regardless of tank setting. 45°C is ~1°C above the practical minimum for a 42°C shower preference with pipe losses. Handles bath + shower with margin. Increasing doesn't help (HP already skips unnecessary charges).
+**What**: The current 45°C `HwcTempDesired` is the right setting. Cost per shower is nearly constant (±5%) across 40-51°C because higher temp = worse COP but less hot water drawn.
 
 **Where**: Analysis in `docs/dhw-cylinder-analysis.md`
 
-### D17: eBUS OutsideTemp as primary, Met Office as control (March 2026)
+### D17: eBUS OutsideTemp as primary, Met Office as control
 
 **Status:** active
 
-**What**: Use `ebusd/poll/OutsideTemp` (Arotherm OAT sensor, every 30s) as the primary outside temperature for real-time analysis. emoncms feed 503093 (Met Office hourly) serves as a control/cross-check.
+**What**: `ebusd/poll/OutsideTemp` (30s resolution) for real-time analysis. emoncms feed 503093 (Met Office hourly) as control.
 
-**Why**: The Arotherm OAT sensor is local, real-time (30s resolution), and directly relevant (it's what the HP uses for weather compensation). Met Office data is hourly and from a remote station — often stale and can diverge by several degrees during rapid temperature changes.
+**Where**: `model/house.py` uses eBUS. Rust analysis tool uses emoncms (historical).
 
-**Where**: `model/house.py` uses eBUS. Rust analysis tool still uses emoncms feed 503093 (historical analysis). AGENTS.md documents the hierarchy.
-
-### D18: Python for thermal model, not Rust (March 2026)
+### D18: Python for thermal model, not Rust
 
 **Status:** active (may migrate key calculations to Rust later)
 
-**What**: The room thermal model is in Python (`model/house.py`), not added to the Rust analysis tool.
+**What**: Room thermal model in Python, not added to the Rust tool.
 
-**Why**: Exploration speed. The model parameters are still being calibrated against sensor data. Python with NumPy/SciPy allows rapid iteration — changing room definitions, ventilation assumptions, fitting algorithms without recompilation. Once the model stabilises, key calculations may be migrated to a Rust subcommand.
+**Why**: Exploration speed. Parameters still being calibrated. Python with NumPy/SciPy allows rapid iteration without recompilation. Once stable, key calculations may migrate to Rust.
 
 **Where**: `model/house.py`, `docs/room-thermal-model.md`
 
-### D19: SNZB-02P v2.2.0 mandatory, clean InfluxDB after OTA (March 2026)
+### D19: SNZB-02P v2.2.0 mandatory
 
 **Status:** active
 
-**What**: All SONOFF SNZB-02P sensors must be on firmware v2.2.0 (8704). v2.1.0 (8448) has a known bug causing readings to freeze at power-on value. OTA updates flood InfluxDB with ~4 readings/sec of spam — delete the OTA period data afterwards.
-
-**Why**: Four sensors deployed on v2.1.0 showed stuck readings (conservatory at 13.2°C for 3 days, front at 18.0°C). This led to an entirely incorrect heat loss analysis (conservatory as "heat black hole"). The v2.2.0 firmware fixes the sensor IC lockup. Always verify readings vary before trusting them.
+**What**: All sensors must be on v2.2.0 (8704). v2.1.0 has a bug causing readings to freeze.
 
 **Where**: Z2M OTA, InfluxDB cleanup via `influx delete`
+
+### D22: Doorway Cd=0.20 and landing ACH=1.30 jointly calibrated
+
+**Status:** active
+
+**What**: These two parameters were calibrated together against Night 1 (doors normal) vs Night 2 (all doors closed) cooling rates for all 13 rooms. RMSE=0.057°C/h.
+
+**Why**: Doorway exchange and chimney effect interact — warm air from ground floor rises through doorways and stairwell. Changing either parameter independently breaks the fit for multiple rooms.
+
+**Where**: `model/house.py` `DOORWAY_CD`, landing `ventilation_ach`
+
+**Consequences**: Don't tune one without re-running the joint calibration. Night 1 data: T_out avg 8.5°C, doors normal. Night 2 data: T_out avg 5.0°C, all doors closed.
+
+### D23: Setback disabled (26 March 2026, trial)
+
+**Status:** active (trial)
+
+**What**: `Z1NightTemp` changed from 17°C to 21°C (matches `Z1DayTemp`). Trialling no overnight setback.
+
+**Why**: Analysis of 117 winter days (Nov 2025–Feb 2026) showed setback was cost-neutral (£7/winter saving) but recovery stressed the HP: 4.8kW/38°C MWT vs 3.5kW/32°C steady. Without setback, bedrooms cool naturally via closed doors (losing ~2°C overnight from thermal mass).
+
+**Where**: eBUS on pi5data. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888`
+
+### D24: Solar gain calibrated from PV P3 channel
+
+**Status:** active
+
+**What**: Solar irradiance estimated from EmonPi2 P3 CT channel (PV + Powerwall). Scaling factor 0.087 W/m² per W calibrated from elvina's temperature response.
+
+**Why**: No pyranometer available. PV generation is a reasonable proxy for solar irradiance on the same (SW) face. P3 reads 6.7kW peak for 3.08kWp array — includes Powerwall discharge, so absolute values are wrong, but relative profile is correct.
+
+**Where**: `model/house.py` `solar_gain()`, room `solar` lists in `build_rooms()`
+
+**Consequences**: ⚠ P3 CT scaling is incorrect. Don't use absolute P3 values. The calibrated shading factors absorb the scaling error for equilibrium/warmup analysis.
 
 ## Open Questions
 
 - **`fill_gap_interpolate()` hardcoded IDs**: The linear interpolation path in gaps.rs still uses hardcoded feed ID strings. Should be migrated to use `config().emoncms.feed_id()` for consistency.
 - **Octopus data path**: `~/github/octopus/data/` is hardcoded in `default_data_dir()`. Should this move to config.toml?
-- **`--all-data` start timestamp**: `resolve_time_range()` in main.rs hardcodes `1_729_555_200` (Oct 22 2024) as the earliest data, duplicating the value in `config.toml`. These should be unified.
+- **`--all-data` start timestamp**: `resolve_time_range()` in main.rs hardcodes `1_729_555_200` (Oct 22 2024), duplicating the value in `config.toml`. Should be unified.
 - **ERA5 bias correction location**: `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs, not in config.toml. Should it be externalised?
-- **eBUS state machine validation**: With eBUS now providing definitive operating mode (StatuscodeNum), the flow-rate state machine could be validated or replaced. The thermal model already uses StatuscodeNum to identify free-cooling periods.
-- **dhw-auto-trigger removed**: Both the Python (`dhw-auto-trigger.py`) and shell (`dhw-auto-trigger.sh`) versions removed Mar 2026. DHW boost now manual via z2m-hub dashboard. The `.py` file remains in repo but should not be deployed.
-- **Thermal model needs cold weather data**: The model structure is validated but thermal mass and ventilation parameters need calibration from colder nights (2°C or below). The 0.1°C sensor resolution limits precision at mild ΔTs. A cold snap is expected imminently.
-- **Elvina insulation vs ventilation**: Initially suspected poorly fitted sloping roof insulation. Trickle vents being open is the likely cause of faster-than-expected cooling. Needs data with vents open vs closed to distinguish.
-- **Aldora moisture risk**: Humidity reaches 61% overnight with one occupied person. Room is too well sealed — needs trickle vent or periodic door opening. Sensor data will confirm if this is a nightly pattern.
-- **Thermal model and Rust tool should share room definitions**: `config.toml` has radiator data, `model/house.py` has fabric and ventilation data. These could be unified into config.toml for consistency.
+- **eBUS state machine validation**: With eBUS providing definitive operating mode (StatuscodeNum), the flow-rate state machine could be validated or replaced. The thermal model already uses StatuscodeNum for free-cooling detection.
+- **Thermal model and Rust tool should share room definitions**: `config.toml` has radiator data, `model/house.py` has fabric and ventilation data. These could be unified into config.toml for consistency, but the Python model is still actively evolving.
+- **Kitchen equilibrium undershoot**: Model predicts kitchen 2.2°C colder than measured — likely needs more doorway exchange from hall/conservatory. [UNCERTAIN]
+- **Shower equilibrium overshoot**: Model predicts shower 2.1°C warmer than measured — may be losing heat to ventilation not captured by the calibrated ACH. [UNCERTAIN]
+- **P3 CT scaling**: Reads 6.7kW for 3.08kWp array. Needs fixing in emonpi config — wrong CT ratio or Powerwall discharge contributing. Currently worked around by calibrated scaling factor. [UNCERTAIN]
+- **Body heat uncertainty in ACH derivation**: 2 people × 70W = 140W ±50% → ±0.4 ACH uncertainty. Thermal-derived ACH for jackcarol (0.29) vs moisture-derived (1.00) disagrees significantly. Moisture method captures inter-room exchange too, making comparison non-trivial. [UNCERTAIN]
