@@ -337,329 +337,101 @@ def solar_gain(room: RoomDef, irradiance_sw: float = 0.0, irradiance_ne: float =
 # House definition
 # ---------------------------------------------------------------------------
 
+def _thermal_geometry_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "data" / "canonical" / "thermal_geometry.json"
+
+
+_THERMAL_GEOMETRY: dict | None = None
+
+
+def load_thermal_geometry() -> dict:
+    global _THERMAL_GEOMETRY
+    if _THERMAL_GEOMETRY is None:
+        path = _thermal_geometry_path()
+        _THERMAL_GEOMETRY = json.loads(path.read_text())
+    return _THERMAL_GEOMETRY
+
+
+# ---------------------------------------------------------------------------
+# House definition (loaded from canonical geometry file)
+# ---------------------------------------------------------------------------
+
 def build_rooms() -> dict[str, RoomDef]:
-    """Define all rooms — physical properties only."""
+    """Define all rooms from canonical geometry file (no hardcoded dimensions)."""
+    geo = load_thermal_geometry()
+    rooms: dict[str, RoomDef] = {}
 
-    rooms = {}
-
-    # ── GROUND FLOOR ──────────────────────────────────────────────
-
-    rooms["hall"] = RoomDef(
-        name="hall", floor="Gnd", floor_area=9.72, ceiling_height=2.6,
-        construction="brick_suspended",
-        sensor="zigbee2mqtt/hall_temp_humid",
-        ventilation_ach=0.10,  # Derived from Night 2: fabric still overstated (loft
-                               # stairwell walls/floor now internal but ext wall area
-                               # 16.8m² may be too high). Set to minimum infiltration.
-        radiators=[RadiatorDef(t50=2376, pipe="15mm_branch1")],
-        external_fabric=[
-            ExternalElement("External Wall (solid brick)", 16.80, 2.11),
-            ExternalElement("Ground Floor (suspended timber)", 9.72, 0.75, to_ground=True),
-            ExternalElement("Windows (old double)", 1.92, 1.9),
-            # Loft stairwell section is INSIDE the envelope — walls/floor/ceiling
-            # are internal to heated loft rooms, not external.
-            # Only the loft windows are external (glazing to outside).
-            ExternalElement("Loft Windows (stairwell)", 1.44, 1.5),
-        ],
-        solar=[SolarGlazing(1.92, "SW", g_value=0.7, shading=0.15)],  # old DG, mostly shaded
-    )
-
-    rooms["kitchen"] = RoomDef(
-        name="kitchen", floor="Gnd", floor_area=8.8, ceiling_height=2.6,
-        sensor="zigbee2mqtt/kitchen_temp_humid",
-        ventilation_ach=0.10,  # Derived from Night 2: fabric overstated (solid floor
-                               # U may be lower than 0.50, or ext wall area wrong).
-        radiators=[],  # No radiator
-        external_fabric=[
-            ExternalElement("External Wall (solid brick)", 8.96, 2.11),
-            ExternalElement("Ground Floor (1930s solid + tile)", 8.8, 0.50, to_ground=True),
-            ExternalElement("Windows (old double)", 1.44, 1.9),
-        ],
-    )
-
-    rooms["leather"] = RoomDef(
-        name="leather", floor="Gnd", floor_area=17.0, ceiling_height=2.6,
-        construction="brick_suspended",
-        sensor="emon/emonth2_23/temperature",
-        ventilation_ach=0.67,  # Derived from Night 2: higher than expected.
-                               # Was partly explained by SG door U being 1.9 instead of 4.4.
-                               # May reduce once SG door correction is validated against cold data.
-        radiators=[
-            RadiatorDef(t50=2376, pipe="22mm"),
-            RadiatorDef(t50=2376, pipe="22mm"),
-        ],
-        external_fabric=[
-            # No external walls — fully internal room
-            # Spiral cellar below — not ventilated void, ~12-15°C conditioned
-            ExternalElement("Ground Floor (over spiral cellar)", 17.0, 0.50, to_ground=True),
-        ],
-    )
-
-    rooms["front"] = RoomDef(
-        name="front", floor="Gnd", floor_area=16.34, ceiling_height=2.6,
-        construction="brick_suspended",
-        sensor="zigbee2mqtt/front_temp_humid",
-        ventilation_ach=0.75,  # Derived from Night 2: bay window leaks (same as J&C).
-        radiators=[
-            RadiatorDef(t50=2425, pipe="15mm_branch1"),  # horizontal
-            RadiatorDef(t50=2376, pipe="22mm"),           # vertical
-        ],
-        external_fabric=[
-            ExternalElement("External Wall (solid brick, bay)", 8.14, 2.11),
-            ExternalElement("Ground Floor (suspended timber)", 16.34, 0.75, to_ground=True),
-            ExternalElement("Windows (new double, bay)", 7.2, 1.2),
-        ],
-        solar=[SolarGlazing(7.2, "SW", g_value=0.7, shading=0.20)],  # bay window, partly shaded by reveals/neighbour
-    )
-
-    rooms["conservatory"] = RoomDef(
-        name="conservatory", floor="Gnd", floor_area=21.0, ceiling_height=2.6,
-        sensor="zigbee2mqtt/conservatory_temp_humid",
-        ventilation_ach=1.00,  # Derived from Night 2: glazed structure leaks significantly.
-        radiators=[
-            RadiatorDef(t50=2833, pipe="22mm"),
-            RadiatorDef(t50=2867, pipe="22mm"),
-        ],
-        external_fabric=[
-            ExternalElement("External Wall (DG, yr 2000)", 15.4, 0.5),
-            ExternalElement("Ground Floor (yr 2000 concrete slab)", 21.0, 0.40, to_ground=True),
-            ExternalElement("Glazed Roof (DG)", 21.0, 2.4),
-            ExternalElement("Windows (DG)", 9.0, 1.9),
-        ],
-        solar=[
-            SolarGlazing(21.0, "NE", tilt="horizontal", g_value=0.7, shading=0.14),  # glazed roof, heavily shaded from ~11am
-            SolarGlazing(9.0, "NE", g_value=0.7, shading=0.14),  # NE windows, morning only, same shading
-        ],
-    )
-
-    # ── FIRST FLOOR ───────────────────────────────────────────────
-
-    rooms["sterling"] = RoomDef(
-        name="sterling", floor="1st", floor_area=18.0, ceiling_height=2.4,
-        sensor="zigbee2mqtt/Sterling_temp_humid",
-        ventilation_ach=0.05,  # Derived from Night 2: near-zero (fabric overstated —
-                               # ext wall 6.12m² + windows 2.52m² may be too high,
-                               # or leather floor heat understated).
-        radiators=[RadiatorDef(t50=1176, pipe="22mm", active=False)],
-        external_fabric=[
-            # Ceiling is below heated loft — modelled as internal connection, not external
-            ExternalElement("External Wall (solid brick)", 6.12, 2.11),
-            ExternalElement("Windows (triple, flat wall)", 2.52, 1.0),
-        ],
-    )
-
-    rooms["jackcarol"] = RoomDef(
-        name="jackcarol", floor="1st", floor_area=14.28, ceiling_height=2.4,
-        sensor="zigbee2mqtt/jackcarol_temp_humid",
-        ventilation_ach=0.29,  # Derived from Night 2 cooldown (calm, doors closed).
-                               # Moisture-validated: 1.00 calm, 1.89 windy. But thermal
-                               # derivation gives 0.29 — difference is body heat uncertainty
-                               # (2 people × 70W = 140W, ±50% = ±70W → ±0.4 ACH).
-                               # Fix: draught-strip bay window frame joints.
-        overnight_occupants=2,
-        radiators=[RadiatorDef(t50=1950, pipe="15mm_branch2")],
-        external_fabric=[
-            # Ceiling is below heated loft — modelled as internal connection, not external
-            ExternalElement("External Wall (solid brick, bay)", 6.69, 2.11),
-            ExternalElement("Windows (new double, bay)", 6.75, 1.2),
-        ],
-        solar=[SolarGlazing(6.75, "SW", g_value=0.7, shading=0.20)],  # bay window, blind mostly down but set back, partially open
-    )
-
-    rooms["bathroom"] = RoomDef(
-        name="bathroom", floor="1st", floor_area=18.0, ceiling_height=2.4,
-        sensor="zigbee2mqtt/bathroom_temp_humid",
-        ventilation_ach=0.75,  # MVHR: 9 L/s = 32.4 m³/h / 43.2 m³.
-                               # Night 2 derivation negative → fabric overstated
-                               # (ext wall area 10.92m² may include interior faces).
-                               # Keep MVHR spec value.
-        heat_recovery=0.78,    # Vent-Axia Tempra LP
-        radiators=[
-            RadiatorDef(t50=614, pipe="22mm"),
-            RadiatorDef(t50=382, pipe="22mm"),
-        ],
-        external_fabric=[
-            # Ceiling is below heated loft — modelled as internal connection, not external
-            ExternalElement("External Wall (solid brick)", 10.92, 2.11),
-            ExternalElement("Windows (triple, flat wall)", 2.52, 1.0),
-        ],
-    )
-
-    rooms["office"] = RoomDef(
-        name="office", floor="1st", floor_area=5.28, ceiling_height=2.4,
-        sensor="zigbee2mqtt/office_temp_humid",
-        ventilation_ach=1.20,  # Derived from Night 2: much leakier than expected.
-                               # Solid brick walls + old window frame — high infiltration.
-        radiators=[RadiatorDef(t50=1345, pipe="15mm_branch2")],
-        external_fabric=[
-            # Ceiling is below elvina — modelled as internal connection, not external
-            ExternalElement("External Wall (solid brick)", 8.94, 2.11),
-            ExternalElement("Windows (new double)", 2.1, 1.2),
-        ],
-        solar=[SolarGlazing(2.1, "SW", g_value=0.7, shading=0.05)],  # fabric blind fully covers window
-    )
-
-    rooms["landing"] = RoomDef(
-        name="landing", floor="1st", floor_area=6.0, ceiling_height=2.4,
-        construction="timber",
-        sensor="zigbee2mqtt/landing_temp_humid",
-        ventilation_ach=1.30,  # Chimney effect: calibrated from Night 1 vs Night 2.
-                               # Night 2 derivation negative → fabric overstated
-                               # (ext wall 3m² may be wrong). But chimney ACH=1.30
-                               # is the dominant term and was directly measured.
-                               # Stairwell doorways disabled in build_doorways().
-        radiators=[],  # No radiator
-        external_fabric=[
-            ExternalElement("External wall (small section)", 3.0, 2.11),
-        ],
-    )
-
-    # ── LOFT (2010 standard) ──────────────────────────────────────
-
-    rooms["elvina"] = RoomDef(
-        name="elvina", floor="Loft", floor_area=27.5, ceiling_height=2.2,
-        construction="timber",
-        sensor="zigbee2mqtt/elvina_temp_humid",
-        ventilation_ach=0.51,  # Derived from Night 2 cooldown (calm, doors closed).
-                               # Moisture-validated: 0.71 windy (Night 1), 0.22 calm (Night 2).
-                               # Thermal derivation: 0.51 (includes fabric model uncertainty).
-                               # Trickle vents OPEN (occupant's choice, closeable).
-                               # Wind adds ~0.5 ACH via sloping roof vents.
-                               # Floor area needs verification (sloping roof, 20-30m²).
-        overnight_occupants=1,
-        radiators=[RadiatorDef(t50=909, pipe="22mm")],
-        external_fabric=[
-            ExternalElement("External Wall (insulated)", 53.73, 0.15),
-            ExternalElement("Roof (sloping)", 26.64, 0.066),
-            ExternalElement("Velux", 0.858, 1.0),
-            ExternalElement("Windows", 2.37, 1.6),
-        ],
-        solar=[
-            SolarGlazing(0.858, "SW", tilt="sloping", g_value=0.7),   # Velux on SW sloping roof
-            SolarGlazing(2.37, "SW", g_value=0.7),                     # SW windows
-        ],
-    )
-
-    rooms["aldora"] = RoomDef(
-        name="aldora", floor="Loft", floor_area=14.0, ceiling_height=2.2,
-        construction="timber",
-        sensor="zigbee2mqtt/aldora_temp_humid",
-        ventilation_ach=0.30,  # Moisture-validated. Similar both nights (0.37/0.28)
-                               # — well-sealed flat roof, minimal wind sensitivity.
-                               # Still at mould risk: RH ~59%, needs trickle vent.
-        overnight_occupants=1,
-        radiators=[RadiatorDef(t50=376, pipe="22mm")],
-        external_fabric=[
-            ExternalElement("External Wall (insulated)", 30.84, 0.15),
-            ExternalElement("Roof (flat)", 13.57, 0.066),
-            ExternalElement("Velux", 0.429, 1.0),
-            ExternalElement("Windows", 2.16, 1.5),
-        ],
-        solar=[
-            SolarGlazing(0.429, "NE", tilt="horizontal", g_value=0.5),  # Velux, flat roof
-            SolarGlazing(2.16, "NE", g_value=0.5),                      # NE windows, triple
-        ],
-    )
-
-    rooms["shower"] = RoomDef(
-        name="shower", floor="Loft", floor_area=4.14, ceiling_height=2.2,
-        construction="timber",
-        sensor="zigbee2mqtt/shower_temp_humid",
-        ventilation_ach=0.05,  # Derived from Night 2: near-zero (tiny room, well-insulated,
-                               # fabric loss alone exceeds measured total).
-        radiators=[RadiatorDef(t50=752, pipe="22mm")],
-        external_fabric=[
-            ExternalElement("External Wall (insulated)", 19.62, 0.15),
-            ExternalElement("Roof (insulated)", 3.71, 0.066),
-            ExternalElement("Velux", 0.429, 1.0),
-            ExternalElement("Windows", 0.84, 1.5),
-        ],
-    )
+    for r in geo["rooms"]:
+        rooms[r["name"]] = RoomDef(
+            name=r["name"],
+            floor=r["floor"],
+            floor_area=float(r["floor_area"]),
+            ceiling_height=float(r["ceiling_height"]),
+            construction=r.get("construction", "brick"),
+            sensor=r.get("sensor", ""),
+            ventilation_ach=float(r.get("ventilation_ach", 0.0)),
+            heat_recovery=float(r.get("heat_recovery", 0.0)),
+            overnight_occupants=int(r.get("overnight_occupants", 0)),
+            radiators=[
+                RadiatorDef(
+                    t50=float(rad["t50"]),
+                    pipe=rad.get("pipe", "22mm"),
+                    active=bool(rad.get("active", True)),
+                )
+                for rad in r.get("radiators", [])
+            ],
+            external_fabric=[
+                ExternalElement(
+                    description=e["description"],
+                    area=float(e["area"]),
+                    u_value=float(e["u_value"]),
+                    to_ground=bool(e.get("to_ground", False)),
+                )
+                for e in r.get("external_fabric", [])
+            ],
+            solar=[
+                SolarGlazing(
+                    area=float(s["area"]),
+                    orientation=s["orientation"],
+                    tilt=s.get("tilt", "vertical"),
+                    g_value=float(s.get("g_value", 0.7)),
+                    shading=float(s.get("shading", 1.0)),
+                )
+                for s in r.get("solar", [])
+            ],
+        )
 
     return rooms
 
 
 def build_connections() -> list[InternalConnection]:
-    """Define all internal wall/floor/ceiling connections — ONCE each.
-
-    Each connection has a single U×A value that applies symmetrically.
-    Wall U-value = 2.37 W/m²K (100mm brick + plaster both sides).
-    Floor U-value = 1.58 W/m²K (uninsulated timber joists).
-    """
-    U_w = U_INTERNAL_WALL   # 2.37
-    U_f = U_TIMBER_FLOOR    # 1.58
-
+    """Define all internal wall/floor/ceiling connections from canonical geometry file."""
+    geo = load_thermal_geometry()
     return [
-        # ── Ground floor internal walls ──
-        InternalConnection("hall", "kitchen",   U_w * 6.0,  "Internal wall"),
-        InternalConnection("hall", "leather",   U_w * 5.0,  "Internal wall"),
-        InternalConnection("hall", "front",     U_w * 7.72, "Internal wall"),
-        InternalConnection("kitchen", "leather", U_w * 8.0,  "Internal wall"),
-        InternalConnection("kitchen", "front",  U_w * 7.84, "Internal wall"),
-        InternalConnection("front", "leather",  U_w * 10.0, "Internal wall"),
-        InternalConnection("leather", "conservatory", 4.4 * 4.8, "1930s SG door (closed, single-glazed panels in timber frame)"),
-
-        # ── Ground↔First floor (timber floors) ──
-        InternalConnection("hall", "office",    0.25 * 5.28, "Insulated floor (100mm)"),
-        InternalConnection("kitchen", "bathroom", U_f * 8.8,  "Timber floor/ceiling"),
-        InternalConnection("front", "jackcarol", U_f * 14.28, "Timber floor/ceiling"),
-        InternalConnection("leather", "sterling", U_f * 17.0,  "Timber floor/ceiling"),
-
-        # ── First floor internal walls ──
-        InternalConnection("sterling", "bathroom", U_w * 6.0,  "Internal wall"),
-        InternalConnection("sterling", "jackcarol", U_w * 10.0, "Internal wall"),
-        InternalConnection("sterling", "landing", U_w * 4.0,  "Internal wall"),
-        InternalConnection("jackcarol", "office", U_w * 6.0,  "Internal wall"),
-        InternalConnection("jackcarol", "landing", U_w * 4.0, "Internal wall"),
-        InternalConnection("bathroom", "landing", U_w * 4.0,  "Internal wall"),
-        InternalConnection("office", "landing",  U_w * 3.0,  "Internal wall"),
-
-        # ── Hall stairwell to loft rooms (insulated, small) ──
-        InternalConnection("hall", "elvina",    0.15 * 5.66, "Insulated stud wall"),
-
-        # ── First floor ceiling to loft (insulated, U=0.44) ──
-        # Previously modelled as external — WRONG. Loft is heated (16-20°C).
-        # Stacking (confirmed):
-        #   Loft:    Aldora | Elvina     | Shower
-        #   1st:     Sterling | Jack&Carol | Bathroom
-        #   Ground:  Leather  | Front      | Kitchen
-        # Office is above part of Hall; part of Elvina is above Office.
-        InternalConnection("bathroom", "shower",   0.44 * 18.0, "Insulated ceiling/floor"),
-        InternalConnection("sterling", "aldora",   0.44 * 18.0, "Insulated ceiling/floor"),
-        InternalConnection("jackcarol", "elvina",  0.44 * 14.28, "Insulated ceiling/floor"),
-        InternalConnection("office", "elvina",     0.44 * 5.28, "Insulated ceiling/floor"),
-        # Office+Landing also connected to hall via insulated floor (U=0.25) — already above
+        InternalConnection(
+            room_a=c["room_a"],
+            room_b=c["room_b"],
+            ua=float(c["ua"]),
+            description=c.get("description", ""),
+        )
+        for c in geo.get("connections", [])
     ]
 
 
 def build_doorways() -> list[Doorway]:
-    """Define all doorways and stairwell openings.
-
-    State reflects NORMAL operating conditions (Night 1 config).
-    Night 2 experiment closes all doors.
-    """
+    """Define all doorway/stairwell openings from canonical geometry file."""
+    geo = load_thermal_geometry()
     return [
-        # Ground floor
-        Doorway("hall", "kitchen",      0.8, 2.0, "open"),
-        Doorway("kitchen", "conservatory", 0.8, 2.0, "open"),
-        Doorway("hall", "front",        0.8, 2.0, "partial"),
-
-        # Stairwell — chimney effect modelled as landing ACH, not pairwise exchange.
-        # Marked "chimney" so doorway_exchange() returns 0.
-        Doorway("hall", "landing",      0.9, 2.5, "chimney"),  # stairwell void
-        Doorway("landing", "shower",    0.7, 2.0, "chimney"),  # loft stairs
-
-        # First floor doors
-        Doorway("landing", "bathroom",  0.8, 2.0, "open"),
-        Doorway("landing", "office",    0.8, 2.0, "open"),
-        Doorway("landing", "jackcarol", 0.8, 2.0, "closed"),   # closed at night
-        Doorway("landing", "sterling",  0.8, 2.0, "closed"),
+        Doorway(
+            room_a=d["room_a"],
+            room_b=d["room_b"],
+            width=float(d["width"]),
+            height=float(d["height"]),
+            state=d["state"],
+        )
+        for d in geo.get("doorways", [])
     ]
 
-
-# ---------------------------------------------------------------------------
-# Pipe topology
-# ---------------------------------------------------------------------------
 
 PIPE_BRANCHES = {
     "22mm": [

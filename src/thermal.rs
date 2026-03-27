@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset};
 use serde::Deserialize;
@@ -146,6 +146,82 @@ fn thermal_mass_plaster(area: f64) -> f64 { 17.0 * area }
 fn thermal_mass_furniture(area: f64) -> f64 { 15.0 * area }
 fn thermal_mass_timber_stud(area: f64) -> f64 { 10.0 * area }
 
+#[derive(Debug, Deserialize)]
+struct GeometryFile {
+    rooms: Vec<GeometryRoom>,
+    connections: Vec<GeometryConnection>,
+    doorways: Vec<GeometryDoorway>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeometryRoom {
+    name: String,
+    floor: String,
+    floor_area: f64,
+    ceiling_height: f64,
+    construction: String,
+    sensor: String,
+    ventilation_ach: f64,
+    heat_recovery: f64,
+    overnight_occupants: i32,
+    radiators: Vec<GeometryRadiator>,
+    external_fabric: Vec<GeometryExternalElement>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeometryRadiator {
+    t50: f64,
+    #[serde(default = "default_true")]
+    active: bool,
+}
+
+fn default_true() -> bool { true }
+
+#[derive(Debug, Deserialize)]
+struct GeometryExternalElement {
+    description: String,
+    area: f64,
+    u_value: f64,
+    #[serde(default)]
+    to_ground: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeometryConnection {
+    room_a: String,
+    room_b: String,
+    ua: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeometryDoorway {
+    room_a: String,
+    room_b: String,
+    width: f64,
+    height: f64,
+    state: String,
+}
+
+fn thermal_geometry_path() -> PathBuf {
+    Path::new("data/canonical/thermal_geometry.json").to_path_buf()
+}
+
+fn load_thermal_geometry() -> ThermalResult<GeometryFile> {
+    let path = thermal_geometry_path();
+    let txt = fs::read_to_string(&path).map_err(|source| ThermalError::ConfigRead {
+        path: path.display().to_string(),
+        source,
+    })?;
+    serde_json::from_str(&txt).map_err(|source| ThermalError::GeometryParse {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
 pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
     let cfg_txt = fs::read_to_string(config_path).map_err(|source| ThermalError::ConfigRead {
         path: config_path.display().to_string(),
@@ -161,9 +237,9 @@ pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
     let night2_start = influx::parse_dt(&cfg.test_nights.night2_start)?;
     let night2_end = influx::parse_dt(&cfg.test_nights.night2_end)?;
 
-    let mut rooms = build_rooms();
-    let connections = build_connections();
-    let doors_n1 = build_doorways();
+    let mut rooms = build_rooms()?;
+    let connections = build_connections()?;
+    let doors_n1 = build_doorways()?;
     let doors_n2 = doors_all_closed_except_chimney(&doors_n1);
 
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
@@ -567,197 +643,72 @@ fn radiator_output(t50: f64, mwt: f64, room_temp: f64) -> f64 {
     }
 }
 
-fn build_rooms() -> BTreeMap<String, RoomDef> {
+fn build_rooms() -> ThermalResult<BTreeMap<String, RoomDef>> {
+    let geo = load_thermal_geometry()?;
     let mut rooms = BTreeMap::new();
 
-    rooms.insert("hall".into(), RoomDef {
-        name: "hall", floor: "Gnd", floor_area: 9.72, ceiling_height: 2.6, construction: "brick_suspended",
-        sensor_topic: "zigbee2mqtt/hall_temp_humid", ventilation_ach: 0.10, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![RadiatorDef { t50: 2376.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 16.80, u_value: 2.11, to_ground: false },
-            ExternalElement { description: "Ground Floor", area: 9.72, u_value: 0.75, to_ground: true },
-            ExternalElement { description: "Windows", area: 1.92, u_value: 1.9, to_ground: false },
-            ExternalElement { description: "Loft Windows", area: 1.44, u_value: 1.5, to_ground: false },
-        ],
-    });
+    for r in geo.rooms {
+        let name = leak(r.name);
+        let room = RoomDef {
+            name,
+            floor: leak(r.floor),
+            floor_area: r.floor_area,
+            ceiling_height: r.ceiling_height,
+            construction: leak(r.construction),
+            radiators: r
+                .radiators
+                .into_iter()
+                .map(|rad| RadiatorDef {
+                    t50: rad.t50,
+                    active: rad.active,
+                })
+                .collect(),
+            external_fabric: r
+                .external_fabric
+                .into_iter()
+                .map(|e| ExternalElement {
+                    description: leak(e.description),
+                    area: e.area,
+                    u_value: e.u_value,
+                    to_ground: e.to_ground,
+                })
+                .collect(),
+            sensor_topic: leak(r.sensor),
+            ventilation_ach: r.ventilation_ach,
+            heat_recovery: r.heat_recovery,
+            overnight_occupants: r.overnight_occupants,
+        };
+        rooms.insert(name.to_string(), room);
+    }
 
-    rooms.insert("kitchen".into(), RoomDef {
-        name: "kitchen", floor: "Gnd", floor_area: 8.8, ceiling_height: 2.6, construction: "brick",
-        sensor_topic: "zigbee2mqtt/kitchen_temp_humid", ventilation_ach: 0.10, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 8.96, u_value: 2.11, to_ground: false },
-            ExternalElement { description: "Ground Floor", area: 8.8, u_value: 0.50, to_ground: true },
-            ExternalElement { description: "Windows", area: 1.44, u_value: 1.9, to_ground: false },
-        ],
-    });
-
-    rooms.insert("leather".into(), RoomDef {
-        name: "leather", floor: "Gnd", floor_area: 17.0, ceiling_height: 2.6, construction: "brick_suspended",
-        sensor_topic: "emon/emonth2_23/temperature", ventilation_ach: 0.67, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![
-            RadiatorDef { t50: 2376.0, active: true },
-            RadiatorDef { t50: 2376.0, active: true },
-        ],
-        external_fabric: vec![ExternalElement { description: "Ground Floor", area: 17.0, u_value: 0.50, to_ground: true }],
-    });
-
-    rooms.insert("front".into(), RoomDef {
-        name: "front", floor: "Gnd", floor_area: 16.34, ceiling_height: 2.6, construction: "brick_suspended",
-        sensor_topic: "zigbee2mqtt/front_temp_humid", ventilation_ach: 0.75, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![RadiatorDef { t50: 2425.0, active: true }, RadiatorDef { t50: 2376.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 8.14, u_value: 2.11, to_ground: false },
-            ExternalElement { description: "Ground Floor", area: 16.34, u_value: 0.75, to_ground: true },
-            ExternalElement { description: "Windows", area: 7.2, u_value: 1.2, to_ground: false },
-        ],
-    });
-
-    rooms.insert("conservatory".into(), RoomDef {
-        name: "conservatory", floor: "Gnd", floor_area: 21.0, ceiling_height: 2.6, construction: "brick",
-        sensor_topic: "zigbee2mqtt/conservatory_temp_humid", ventilation_ach: 1.00, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![RadiatorDef { t50: 2833.0, active: true }, RadiatorDef { t50: 2867.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 15.4, u_value: 0.5, to_ground: false },
-            ExternalElement { description: "Ground Floor", area: 21.0, u_value: 0.40, to_ground: true },
-            ExternalElement { description: "Glazed Roof", area: 21.0, u_value: 2.4, to_ground: false },
-            ExternalElement { description: "Windows", area: 9.0, u_value: 1.9, to_ground: false },
-        ],
-    });
-
-    rooms.insert("sterling".into(), RoomDef {
-        name: "sterling", floor: "1st", floor_area: 18.0, ceiling_height: 2.4, construction: "brick",
-        sensor_topic: "zigbee2mqtt/Sterling_temp_humid", ventilation_ach: 0.05, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![RadiatorDef { t50: 1176.0, active: false }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 6.12, u_value: 2.11, to_ground: false },
-            ExternalElement { description: "Windows", area: 2.52, u_value: 1.0, to_ground: false },
-        ],
-    });
-
-    rooms.insert("jackcarol".into(), RoomDef {
-        name: "jackcarol", floor: "1st", floor_area: 14.28, ceiling_height: 2.4, construction: "brick",
-        sensor_topic: "zigbee2mqtt/jackcarol_temp_humid", ventilation_ach: 0.29, heat_recovery: 0.0, overnight_occupants: 2,
-        radiators: vec![RadiatorDef { t50: 1950.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 6.69, u_value: 2.11, to_ground: false },
-            ExternalElement { description: "Windows", area: 6.75, u_value: 1.2, to_ground: false },
-        ],
-    });
-
-    rooms.insert("bathroom".into(), RoomDef {
-        name: "bathroom", floor: "1st", floor_area: 18.0, ceiling_height: 2.4, construction: "brick",
-        sensor_topic: "zigbee2mqtt/bathroom_temp_humid", ventilation_ach: 0.75, heat_recovery: 0.78, overnight_occupants: 0,
-        radiators: vec![RadiatorDef { t50: 614.0, active: true }, RadiatorDef { t50: 382.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 10.92, u_value: 2.11, to_ground: false },
-            ExternalElement { description: "Windows", area: 2.52, u_value: 1.0, to_ground: false },
-        ],
-    });
-
-    rooms.insert("office".into(), RoomDef {
-        name: "office", floor: "1st", floor_area: 5.28, ceiling_height: 2.4, construction: "brick",
-        sensor_topic: "zigbee2mqtt/office_temp_humid", ventilation_ach: 1.20, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![RadiatorDef { t50: 1345.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 8.94, u_value: 2.11, to_ground: false },
-            ExternalElement { description: "Windows", area: 2.1, u_value: 1.2, to_ground: false },
-        ],
-    });
-
-    rooms.insert("landing".into(), RoomDef {
-        name: "landing", floor: "1st", floor_area: 6.0, ceiling_height: 2.4, construction: "timber",
-        sensor_topic: "zigbee2mqtt/landing_temp_humid", ventilation_ach: 1.30, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![],
-        external_fabric: vec![ExternalElement { description: "External Wall", area: 3.0, u_value: 2.11, to_ground: false }],
-    });
-
-    rooms.insert("elvina".into(), RoomDef {
-        name: "elvina", floor: "Loft", floor_area: 27.5, ceiling_height: 2.2, construction: "timber",
-        sensor_topic: "zigbee2mqtt/elvina_temp_humid", ventilation_ach: 0.51, heat_recovery: 0.0, overnight_occupants: 1,
-        radiators: vec![RadiatorDef { t50: 909.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 53.73, u_value: 0.15, to_ground: false },
-            ExternalElement { description: "Roof", area: 26.64, u_value: 0.066, to_ground: false },
-            ExternalElement { description: "Velux", area: 0.858, u_value: 1.0, to_ground: false },
-            ExternalElement { description: "Windows", area: 2.37, u_value: 1.6, to_ground: false },
-        ],
-    });
-
-    rooms.insert("aldora".into(), RoomDef {
-        name: "aldora", floor: "Loft", floor_area: 14.0, ceiling_height: 2.2, construction: "timber",
-        sensor_topic: "zigbee2mqtt/aldora_temp_humid", ventilation_ach: 0.30, heat_recovery: 0.0, overnight_occupants: 1,
-        radiators: vec![RadiatorDef { t50: 376.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 30.84, u_value: 0.15, to_ground: false },
-            ExternalElement { description: "Roof", area: 13.57, u_value: 0.066, to_ground: false },
-            ExternalElement { description: "Velux", area: 0.429, u_value: 1.0, to_ground: false },
-            ExternalElement { description: "Windows", area: 2.16, u_value: 1.5, to_ground: false },
-        ],
-    });
-
-    rooms.insert("shower".into(), RoomDef {
-        name: "shower", floor: "Loft", floor_area: 4.14, ceiling_height: 2.2, construction: "timber",
-        sensor_topic: "zigbee2mqtt/shower_temp_humid", ventilation_ach: 0.05, heat_recovery: 0.0, overnight_occupants: 0,
-        radiators: vec![RadiatorDef { t50: 752.0, active: true }],
-        external_fabric: vec![
-            ExternalElement { description: "External Wall", area: 19.62, u_value: 0.15, to_ground: false },
-            ExternalElement { description: "Roof", area: 3.71, u_value: 0.066, to_ground: false },
-            ExternalElement { description: "Velux", area: 0.429, u_value: 1.0, to_ground: false },
-            ExternalElement { description: "Windows", area: 0.84, u_value: 1.5, to_ground: false },
-        ],
-    });
-
-    rooms
+    Ok(rooms)
 }
 
-fn build_connections() -> Vec<InternalConnection> {
-    let u_w = 2.37;
-    let u_f = 1.58;
-    vec![
-        InternalConnection { room_a: "hall", room_b: "kitchen", ua: u_w * 6.0 },
-        InternalConnection { room_a: "hall", room_b: "leather", ua: u_w * 5.0 },
-        InternalConnection { room_a: "hall", room_b: "front", ua: u_w * 7.72 },
-        InternalConnection { room_a: "kitchen", room_b: "leather", ua: u_w * 8.0 },
-        InternalConnection { room_a: "kitchen", room_b: "front", ua: u_w * 7.84 },
-        InternalConnection { room_a: "front", room_b: "leather", ua: u_w * 10.0 },
-        InternalConnection { room_a: "leather", room_b: "conservatory", ua: 4.4 * 4.8 },
-
-        InternalConnection { room_a: "hall", room_b: "office", ua: 0.25 * 5.28 },
-        InternalConnection { room_a: "kitchen", room_b: "bathroom", ua: u_f * 8.8 },
-        InternalConnection { room_a: "front", room_b: "jackcarol", ua: u_f * 14.28 },
-        InternalConnection { room_a: "leather", room_b: "sterling", ua: u_f * 17.0 },
-
-        InternalConnection { room_a: "sterling", room_b: "bathroom", ua: u_w * 6.0 },
-        InternalConnection { room_a: "sterling", room_b: "jackcarol", ua: u_w * 10.0 },
-        InternalConnection { room_a: "sterling", room_b: "landing", ua: u_w * 4.0 },
-        InternalConnection { room_a: "jackcarol", room_b: "office", ua: u_w * 6.0 },
-        InternalConnection { room_a: "jackcarol", room_b: "landing", ua: u_w * 4.0 },
-        InternalConnection { room_a: "bathroom", room_b: "landing", ua: u_w * 4.0 },
-        InternalConnection { room_a: "office", room_b: "landing", ua: u_w * 3.0 },
-
-        InternalConnection { room_a: "hall", room_b: "elvina", ua: 0.15 * 5.66 },
-
-        InternalConnection { room_a: "bathroom", room_b: "shower", ua: 0.44 * 18.0 },
-        InternalConnection { room_a: "sterling", room_b: "aldora", ua: 0.44 * 18.0 },
-        InternalConnection { room_a: "jackcarol", room_b: "elvina", ua: 0.44 * 14.28 },
-        InternalConnection { room_a: "office", room_b: "elvina", ua: 0.44 * 5.28 },
-    ]
+fn build_connections() -> ThermalResult<Vec<InternalConnection>> {
+    let geo = load_thermal_geometry()?;
+    Ok(geo
+        .connections
+        .into_iter()
+        .map(|c| InternalConnection {
+            room_a: leak(c.room_a),
+            room_b: leak(c.room_b),
+            ua: c.ua,
+        })
+        .collect())
 }
 
-fn build_doorways() -> Vec<Doorway> {
-    vec![
-        Doorway { room_a: "hall", room_b: "kitchen", width: 0.8, height: 2.0, state: "open" },
-        Doorway { room_a: "kitchen", room_b: "conservatory", width: 0.8, height: 2.0, state: "open" },
-        Doorway { room_a: "hall", room_b: "front", width: 0.8, height: 2.0, state: "partial" },
-
-        Doorway { room_a: "hall", room_b: "landing", width: 0.9, height: 2.5, state: "chimney" },
-        Doorway { room_a: "landing", room_b: "shower", width: 0.7, height: 2.0, state: "chimney" },
-
-        Doorway { room_a: "landing", room_b: "bathroom", width: 0.8, height: 2.0, state: "open" },
-        Doorway { room_a: "landing", room_b: "office", width: 0.8, height: 2.0, state: "open" },
-        Doorway { room_a: "landing", room_b: "jackcarol", width: 0.8, height: 2.0, state: "closed" },
-        Doorway { room_a: "landing", room_b: "sterling", width: 0.8, height: 2.0, state: "closed" },
-    ]
+fn build_doorways() -> ThermalResult<Vec<Doorway>> {
+    let geo = load_thermal_geometry()?;
+    Ok(geo
+        .doorways
+        .into_iter()
+        .map(|d| Doorway {
+            room_a: leak(d.room_a),
+            room_b: leak(d.room_b),
+            width: d.width,
+            height: d.height,
+            state: leak(d.state),
+        })
+        .collect())
 }
+

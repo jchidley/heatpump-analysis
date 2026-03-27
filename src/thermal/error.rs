@@ -9,6 +9,8 @@ pub enum ThermalError {
     ConfigRead { path: String, source: std::io::Error },
     #[error("failed to parse thermal config {path}: {source}")]
     ConfigParse { path: String, source: toml::de::Error },
+    #[error("failed to parse thermal geometry {path}: {source}")]
+    GeometryParse { path: String, source: serde_json::Error },
     #[error("missing environment variable {0}")]
     MissingEnv(String),
     #[error("failed to parse datetime '{value}': {source}")]

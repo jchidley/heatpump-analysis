@@ -1,0 +1,783 @@
+{
+  "rooms": [
+    {
+      "name": "aldora",
+      "floor": "Loft",
+      "floor_area": 14.0,
+      "ceiling_height": 2.2,
+      "construction": "timber",
+      "sensor": "zigbee2mqtt/aldora_temp_humid",
+      "ventilation_ach": 0.3,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 1,
+      "radiators": [
+        {
+          "t50": 376,
+          "pipe": "22mm",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (insulated)",
+          "area": 30.84,
+          "u_value": 0.15,
+          "to_ground": false
+        },
+        {
+          "description": "Roof (flat)",
+          "area": 13.57,
+          "u_value": 0.066,
+          "to_ground": false
+        },
+        {
+          "description": "Velux",
+          "area": 0.429,
+          "u_value": 1.0,
+          "to_ground": false
+        },
+        {
+          "description": "Windows",
+          "area": 2.16,
+          "u_value": 1.5,
+          "to_ground": false
+        }
+      ],
+      "solar": [
+        {
+          "area": 0.429,
+          "orientation": "NE",
+          "tilt": "horizontal",
+          "g_value": 0.5,
+          "shading": 1.0
+        },
+        {
+          "area": 2.16,
+          "orientation": "NE",
+          "tilt": "vertical",
+          "g_value": 0.5,
+          "shading": 1.0
+        }
+      ]
+    },
+    {
+      "name": "bathroom",
+      "floor": "1st",
+      "floor_area": 18.0,
+      "ceiling_height": 2.4,
+      "construction": "brick",
+      "sensor": "zigbee2mqtt/bathroom_temp_humid",
+      "ventilation_ach": 0.75,
+      "heat_recovery": 0.78,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 614,
+          "pipe": "22mm",
+          "active": true
+        },
+        {
+          "t50": 382,
+          "pipe": "22mm",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (solid brick)",
+          "area": 10.92,
+          "u_value": 2.11,
+          "to_ground": false
+        },
+        {
+          "description": "Windows (triple, flat wall)",
+          "area": 2.52,
+          "u_value": 1.0,
+          "to_ground": false
+        }
+      ],
+      "solar": []
+    },
+    {
+      "name": "conservatory",
+      "floor": "Gnd",
+      "floor_area": 21.0,
+      "ceiling_height": 2.6,
+      "construction": "brick",
+      "sensor": "zigbee2mqtt/conservatory_temp_humid",
+      "ventilation_ach": 1.0,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 2833,
+          "pipe": "22mm",
+          "active": true
+        },
+        {
+          "t50": 2867,
+          "pipe": "22mm",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (DG, yr 2000)",
+          "area": 15.4,
+          "u_value": 0.5,
+          "to_ground": false
+        },
+        {
+          "description": "Ground Floor (yr 2000 concrete slab)",
+          "area": 21.0,
+          "u_value": 0.4,
+          "to_ground": true
+        },
+        {
+          "description": "Glazed Roof (DG)",
+          "area": 21.0,
+          "u_value": 2.4,
+          "to_ground": false
+        },
+        {
+          "description": "Windows (DG)",
+          "area": 9.0,
+          "u_value": 1.9,
+          "to_ground": false
+        }
+      ],
+      "solar": [
+        {
+          "area": 21.0,
+          "orientation": "NE",
+          "tilt": "horizontal",
+          "g_value": 0.7,
+          "shading": 0.14
+        },
+        {
+          "area": 9.0,
+          "orientation": "NE",
+          "tilt": "vertical",
+          "g_value": 0.7,
+          "shading": 0.14
+        }
+      ]
+    },
+    {
+      "name": "elvina",
+      "floor": "Loft",
+      "floor_area": 27.5,
+      "ceiling_height": 2.2,
+      "construction": "timber",
+      "sensor": "zigbee2mqtt/elvina_temp_humid",
+      "ventilation_ach": 0.51,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 1,
+      "radiators": [
+        {
+          "t50": 909,
+          "pipe": "22mm",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (insulated)",
+          "area": 53.73,
+          "u_value": 0.15,
+          "to_ground": false
+        },
+        {
+          "description": "Roof (sloping)",
+          "area": 26.64,
+          "u_value": 0.066,
+          "to_ground": false
+        },
+        {
+          "description": "Velux",
+          "area": 0.858,
+          "u_value": 1.0,
+          "to_ground": false
+        },
+        {
+          "description": "Windows",
+          "area": 2.3688,
+          "u_value": 1.6,
+          "to_ground": false
+        }
+      ],
+      "solar": [
+        {
+          "area": 0.858,
+          "orientation": "SW",
+          "tilt": "sloping",
+          "g_value": 0.7,
+          "shading": 1.0
+        },
+        {
+          "area": 2.3688,
+          "orientation": "SW",
+          "tilt": "vertical",
+          "g_value": 0.7,
+          "shading": 1.0
+        }
+      ]
+    },
+    {
+      "name": "front",
+      "floor": "Gnd",
+      "floor_area": 16.34,
+      "ceiling_height": 2.6,
+      "construction": "brick_suspended",
+      "sensor": "zigbee2mqtt/front_temp_humid",
+      "ventilation_ach": 0.75,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 2425,
+          "pipe": "15mm_branch1",
+          "active": true
+        },
+        {
+          "t50": 2376,
+          "pipe": "22mm",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (solid brick, bay)",
+          "area": 8.14,
+          "u_value": 2.11,
+          "to_ground": false
+        },
+        {
+          "description": "Ground Floor (suspended timber)",
+          "area": 16.34,
+          "u_value": 0.75,
+          "to_ground": true
+        },
+        {
+          "description": "Windows (new double, bay)",
+          "area": 7.2,
+          "u_value": 1.2,
+          "to_ground": false
+        }
+      ],
+      "solar": [
+        {
+          "area": 7.2,
+          "orientation": "SW",
+          "tilt": "vertical",
+          "g_value": 0.7,
+          "shading": 0.2
+        }
+      ]
+    },
+    {
+      "name": "hall",
+      "floor": "Gnd",
+      "floor_area": 9.72,
+      "ceiling_height": 2.6,
+      "construction": "brick_suspended",
+      "sensor": "zigbee2mqtt/hall_temp_humid",
+      "ventilation_ach": 0.1,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 2376,
+          "pipe": "15mm_branch1",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (solid brick)",
+          "area": 16.8,
+          "u_value": 2.11,
+          "to_ground": false
+        },
+        {
+          "description": "Ground Floor (suspended timber)",
+          "area": 9.72,
+          "u_value": 0.75,
+          "to_ground": true
+        },
+        {
+          "description": "Windows (old double)",
+          "area": 1.92,
+          "u_value": 1.9,
+          "to_ground": false
+        },
+        {
+          "description": "Loft Windows (stairwell)",
+          "area": 1.44,
+          "u_value": 1.5,
+          "to_ground": false
+        }
+      ],
+      "solar": [
+        {
+          "area": 1.92,
+          "orientation": "SW",
+          "tilt": "vertical",
+          "g_value": 0.7,
+          "shading": 0.15
+        }
+      ]
+    },
+    {
+      "name": "jackcarol",
+      "floor": "1st",
+      "floor_area": 14.28,
+      "ceiling_height": 2.4,
+      "construction": "brick",
+      "sensor": "zigbee2mqtt/jackcarol_temp_humid",
+      "ventilation_ach": 0.29,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 2,
+      "radiators": [
+        {
+          "t50": 1950,
+          "pipe": "15mm_branch2",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (solid brick, bay)",
+          "area": 6.69,
+          "u_value": 2.11,
+          "to_ground": false
+        },
+        {
+          "description": "Windows (new double, bay)",
+          "area": 6.75,
+          "u_value": 1.2,
+          "to_ground": false
+        }
+      ],
+      "solar": [
+        {
+          "area": 6.75,
+          "orientation": "SW",
+          "tilt": "vertical",
+          "g_value": 0.7,
+          "shading": 0.2
+        }
+      ]
+    },
+    {
+      "name": "kitchen",
+      "floor": "Gnd",
+      "floor_area": 8.8,
+      "ceiling_height": 2.6,
+      "construction": "brick",
+      "sensor": "zigbee2mqtt/kitchen_temp_humid",
+      "ventilation_ach": 0.1,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [],
+      "external_fabric": [
+        {
+          "description": "External Wall (solid brick)",
+          "area": 8.96,
+          "u_value": 2.11,
+          "to_ground": false
+        },
+        {
+          "description": "Ground Floor (1930s solid + tile)",
+          "area": 8.8,
+          "u_value": 0.5,
+          "to_ground": true
+        },
+        {
+          "description": "Windows (old double)",
+          "area": 1.44,
+          "u_value": 1.9,
+          "to_ground": false
+        }
+      ],
+      "solar": []
+    },
+    {
+      "name": "landing",
+      "floor": "1st",
+      "floor_area": 6.0,
+      "ceiling_height": 2.4,
+      "construction": "timber",
+      "sensor": "zigbee2mqtt/landing_temp_humid",
+      "ventilation_ach": 1.3,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [],
+      "external_fabric": [
+        {
+          "description": "External wall (small section)",
+          "area": 3.0,
+          "u_value": 2.11,
+          "to_ground": false
+        }
+      ],
+      "solar": []
+    },
+    {
+      "name": "leather",
+      "floor": "Gnd",
+      "floor_area": 17.0,
+      "ceiling_height": 2.6,
+      "construction": "brick_suspended",
+      "sensor": "emon/emonth2_23/temperature",
+      "ventilation_ach": 0.67,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 2376,
+          "pipe": "22mm",
+          "active": true
+        },
+        {
+          "t50": 2376,
+          "pipe": "22mm",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "Ground Floor (over spiral cellar)",
+          "area": 17.0,
+          "u_value": 0.5,
+          "to_ground": true
+        }
+      ],
+      "solar": []
+    },
+    {
+      "name": "office",
+      "floor": "1st",
+      "floor_area": 5.28,
+      "ceiling_height": 2.4,
+      "construction": "brick",
+      "sensor": "zigbee2mqtt/office_temp_humid",
+      "ventilation_ach": 1.2,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 1345,
+          "pipe": "15mm_branch2",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (solid brick)",
+          "area": 8.94,
+          "u_value": 2.11,
+          "to_ground": false
+        },
+        {
+          "description": "Windows (new double)",
+          "area": 2.1,
+          "u_value": 1.2,
+          "to_ground": false
+        }
+      ],
+      "solar": [
+        {
+          "area": 2.1,
+          "orientation": "SW",
+          "tilt": "vertical",
+          "g_value": 0.7,
+          "shading": 0.05
+        }
+      ]
+    },
+    {
+      "name": "shower",
+      "floor": "Loft",
+      "floor_area": 4.14,
+      "ceiling_height": 2.2,
+      "construction": "timber",
+      "sensor": "zigbee2mqtt/shower_temp_humid",
+      "ventilation_ach": 0.05,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 752,
+          "pipe": "22mm",
+          "active": true
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (insulated)",
+          "area": 19.62,
+          "u_value": 0.15,
+          "to_ground": false
+        },
+        {
+          "description": "Roof (insulated)",
+          "area": 3.71,
+          "u_value": 0.066,
+          "to_ground": false
+        },
+        {
+          "description": "Velux",
+          "area": 0.429,
+          "u_value": 1.0,
+          "to_ground": false
+        },
+        {
+          "description": "Windows",
+          "area": 0.84,
+          "u_value": 1.5,
+          "to_ground": false
+        }
+      ],
+      "solar": []
+    },
+    {
+      "name": "sterling",
+      "floor": "1st",
+      "floor_area": 18.0,
+      "ceiling_height": 2.4,
+      "construction": "brick",
+      "sensor": "zigbee2mqtt/Sterling_temp_humid",
+      "ventilation_ach": 0.05,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [
+        {
+          "t50": 1176,
+          "pipe": "22mm",
+          "active": false
+        }
+      ],
+      "external_fabric": [
+        {
+          "description": "External Wall (solid brick)",
+          "area": 6.12,
+          "u_value": 2.11,
+          "to_ground": false
+        },
+        {
+          "description": "Windows (triple, flat wall)",
+          "area": 2.52,
+          "u_value": 1.0,
+          "to_ground": false
+        }
+      ],
+      "solar": []
+    }
+  ],
+  "connections": [
+    {
+      "room_a": "bathroom",
+      "room_b": "landing",
+      "ua": 9.48,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "bathroom",
+      "room_b": "shower",
+      "ua": 7.92,
+      "description": "Insulated ceiling/floor"
+    },
+    {
+      "room_a": "front",
+      "room_b": "jackcarol",
+      "ua": 22.5624,
+      "description": "Timber floor/ceiling"
+    },
+    {
+      "room_a": "front",
+      "room_b": "leather",
+      "ua": 23.700000000000003,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "hall",
+      "room_b": "elvina",
+      "ua": 0.849,
+      "description": "Insulated stud wall"
+    },
+    {
+      "room_a": "hall",
+      "room_b": "front",
+      "ua": 18.296400000000002,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "hall",
+      "room_b": "kitchen",
+      "ua": 14.22,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "hall",
+      "room_b": "leather",
+      "ua": 11.850000000000001,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "hall",
+      "room_b": "office",
+      "ua": 1.32,
+      "description": "Insulated floor (100mm)"
+    },
+    {
+      "room_a": "jackcarol",
+      "room_b": "elvina",
+      "ua": 6.2832,
+      "description": "Insulated ceiling/floor"
+    },
+    {
+      "room_a": "jackcarol",
+      "room_b": "landing",
+      "ua": 9.48,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "jackcarol",
+      "room_b": "office",
+      "ua": 14.22,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "kitchen",
+      "room_b": "bathroom",
+      "ua": 13.904000000000002,
+      "description": "Timber floor/ceiling"
+    },
+    {
+      "room_a": "kitchen",
+      "room_b": "front",
+      "ua": 18.5808,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "kitchen",
+      "room_b": "leather",
+      "ua": 18.96,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "leather",
+      "room_b": "conservatory",
+      "ua": 21.12,
+      "description": "1930s SG door (closed, single-glazed panels in timber frame)"
+    },
+    {
+      "room_a": "leather",
+      "room_b": "sterling",
+      "ua": 26.86,
+      "description": "Timber floor/ceiling"
+    },
+    {
+      "room_a": "office",
+      "room_b": "elvina",
+      "ua": 2.3232,
+      "description": "Insulated ceiling/floor"
+    },
+    {
+      "room_a": "office",
+      "room_b": "landing",
+      "ua": 7.11,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "sterling",
+      "room_b": "aldora",
+      "ua": 7.92,
+      "description": "Insulated ceiling/floor"
+    },
+    {
+      "room_a": "sterling",
+      "room_b": "bathroom",
+      "ua": 14.22,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "sterling",
+      "room_b": "jackcarol",
+      "ua": 23.700000000000003,
+      "description": "Internal wall"
+    },
+    {
+      "room_a": "sterling",
+      "room_b": "landing",
+      "ua": 9.48,
+      "description": "Internal wall"
+    }
+  ],
+  "doorways": [
+    {
+      "room_a": "hall",
+      "room_b": "front",
+      "width": 0.8,
+      "height": 2.0,
+      "state": "partial"
+    },
+    {
+      "room_a": "hall",
+      "room_b": "kitchen",
+      "width": 0.8,
+      "height": 2.0,
+      "state": "open"
+    },
+    {
+      "room_a": "hall",
+      "room_b": "landing",
+      "width": 0.9,
+      "height": 2.5,
+      "state": "chimney"
+    },
+    {
+      "room_a": "kitchen",
+      "room_b": "conservatory",
+      "width": 0.8,
+      "height": 2.0,
+      "state": "open"
+    },
+    {
+      "room_a": "landing",
+      "room_b": "bathroom",
+      "width": 0.8,
+      "height": 2.0,
+      "state": "open"
+    },
+    {
+      "room_a": "landing",
+      "room_b": "jackcarol",
+      "width": 0.8,
+      "height": 2.0,
+      "state": "closed"
+    },
+    {
+      "room_a": "landing",
+      "room_b": "office",
+      "width": 0.8,
+      "height": 2.0,
+      "state": "open"
+    },
+    {
+      "room_a": "landing",
+      "room_b": "shower",
+      "width": 0.7,
+      "height": 2.0,
+      "state": "chimney"
+    },
+    {
+      "room_a": "landing",
+      "room_b": "sterling",
+      "width": 0.8,
+      "height": 2.0,
+      "state": "closed"
+    }
+  ]
+}
