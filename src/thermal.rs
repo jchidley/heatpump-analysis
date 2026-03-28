@@ -3,9 +3,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use chrono::{DateTime, FixedOffset};
-use serde::Deserialize;
+use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone, Utc};
+use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 mod error;
 mod influx;
@@ -20,6 +23,10 @@ struct ThermalConfig {
     objective: ObjectiveCfg,
     priors: PriorsCfg,
     bounds: BoundsCfg,
+    #[serde(default)]
+    wind: WindCfg,
+    #[serde(default)]
+    validation: ValidationCfg,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +59,24 @@ struct PriorsCfg {
     doorway_cd: f64,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct WindCfg {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    latitude: f64,
+    #[serde(default)]
+    longitude: f64,
+    #[serde(default)]
+    ach_per_ms: f64,
+    #[serde(default = "default_wind_max_multiplier")]
+    max_multiplier: f64,
+}
+
+fn default_wind_max_multiplier() -> f64 {
+    2.5
+}
+
 #[derive(Debug, Deserialize)]
 struct BoundsCfg {
     leather_ach_min: f64,
@@ -75,6 +100,170 @@ struct BoundsCfg {
     doorway_cd_step: f64,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ValidationCfg {
+    #[serde(default)]
+    windows: Vec<ValidationWindowCfg>,
+    #[serde(default)]
+    thresholds: ValidationThresholdsCfg,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ValidationWindowCfg {
+    name: String,
+    start: String,
+    end: String,
+    #[serde(default = "default_door_state")]
+    door_state: String,
+}
+
+fn default_door_state() -> String {
+    "normal".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct ValidationThresholdsCfg {
+    #[serde(default = "default_rmse_max")]
+    rmse_max: f64,
+    #[serde(default = "default_bias_abs_max")]
+    bias_abs_max: f64,
+    #[serde(default = "default_within_1c_min")]
+    within_1c_min: f64,
+}
+
+impl Default for ValidationThresholdsCfg {
+    fn default() -> Self {
+        Self {
+            rmse_max: default_rmse_max(),
+            bias_abs_max: default_bias_abs_max(),
+            within_1c_min: default_within_1c_min(),
+        }
+    }
+}
+
+fn default_rmse_max() -> f64 {
+    0.7
+}
+fn default_bias_abs_max() -> f64 {
+    0.3
+}
+fn default_within_1c_min() -> f64 {
+    0.8
+}
+
+#[derive(Debug, Clone)]
+struct ParsedWindow {
+    name: String,
+    start: DateTime<FixedOffset>,
+    end: DateTime<FixedOffset>,
+    door_state: String,
+}
+
+#[derive(Debug, Clone)]
+struct CalibrationResult {
+    final_score: f64,
+    base_score: f64,
+    leather_ach: f64,
+    landing_ach: f64,
+    conservatory_ach: f64,
+    office_ach: f64,
+    doorway_cd: f64,
+    pred1: HashMap<String, f64>,
+    pred2: HashMap<String, f64>,
+    r1: f64,
+    r2: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct RoomResidual {
+    room: String,
+    measured: f64,
+    predicted: f64,
+    residual: f64,
+    abs_residual: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct Metrics {
+    rooms_count: usize,
+    rmse: f64,
+    mae: f64,
+    bias: f64,
+    max_abs_error: f64,
+    within_0_5c: f64,
+    within_1_0c: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct WindowValidation {
+    name: String,
+    start: String,
+    end: String,
+    door_state: String,
+    outside_avg_c: f64,
+    wind_avg_ms: f64,
+    wind_multiplier: f64,
+    metrics: Metrics,
+    pass: bool,
+    residuals: Vec<RoomResidual>,
+}
+
+#[derive(Debug, Serialize)]
+struct ThresholdResult {
+    rmse_max: f64,
+    bias_abs_max: f64,
+    within_1c_min: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct ValidationSummary {
+    thresholds: ThresholdResult,
+    aggregate_metrics: Metrics,
+    aggregate_pass: bool,
+    windows: Vec<WindowValidation>,
+}
+
+#[derive(Debug, Serialize)]
+struct GitMeta {
+    sha: Option<String>,
+    dirty: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CalibrationArtifact {
+    schema_version: u32,
+    generated_at_utc: String,
+    command: String,
+    config_path: String,
+    config_sha256: String,
+    git: GitMeta,
+    calibration_windows: Vec<ArtifactWindow>,
+    calibration: ArtifactCalibration,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation: Option<ValidationSummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct ArtifactWindow {
+    name: String,
+    start: String,
+    end: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ArtifactCalibration {
+    leather_ach: f64,
+    landing_ach: f64,
+    conservatory_ach: f64,
+    office_ach: f64,
+    doorway_cd: f64,
+    rmse_night1: f64,
+    rmse_night2: f64,
+    base_score: f64,
+    final_score: f64,
+    night1: Vec<RoomResidual>,
+    night2: Vec<RoomResidual>,
+}
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -137,14 +326,30 @@ const DHW_CYLINDER_TEMP: f64 = 44.0;
 const DHW_PIPE_LOSS_W: f64 = 42.0;
 const DHW_SHOWER_W: f64 = 16.0;
 
-fn thermal_mass_air(vol_m3: f64) -> f64 { 1.2 * vol_m3 }
-fn thermal_mass_brick_int(area: f64) -> f64 { 72.0 * area }
-fn thermal_mass_brick_ext(area: f64) -> f64 { 72.0 * area }
-fn thermal_mass_concrete(area: f64) -> f64 { 200.0 * area }
-fn thermal_mass_timber_floor(area: f64) -> f64 { 50.0 * area }
-fn thermal_mass_plaster(area: f64) -> f64 { 17.0 * area }
-fn thermal_mass_furniture(area: f64) -> f64 { 15.0 * area }
-fn thermal_mass_timber_stud(area: f64) -> f64 { 10.0 * area }
+fn thermal_mass_air(vol_m3: f64) -> f64 {
+    1.2 * vol_m3
+}
+fn thermal_mass_brick_int(area: f64) -> f64 {
+    72.0 * area
+}
+fn thermal_mass_brick_ext(area: f64) -> f64 {
+    72.0 * area
+}
+fn thermal_mass_concrete(area: f64) -> f64 {
+    200.0 * area
+}
+fn thermal_mass_timber_floor(area: f64) -> f64 {
+    50.0 * area
+}
+fn thermal_mass_plaster(area: f64) -> f64 {
+    17.0 * area
+}
+fn thermal_mass_furniture(area: f64) -> f64 {
+    15.0 * area
+}
+fn thermal_mass_timber_stud(area: f64) -> f64 {
+    10.0 * area
+}
 
 #[derive(Debug, Deserialize)]
 struct GeometryFile {
@@ -175,7 +380,9 @@ struct GeometryRadiator {
     active: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Deserialize)]
 struct GeometryExternalElement {
@@ -222,30 +429,395 @@ fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
 
+#[derive(Debug, Deserialize)]
+struct OpenMeteoHourly {
+    time: Vec<String>,
+    wind_speed_10m: Vec<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenMeteoResponse {
+    hourly: OpenMeteoHourly,
+}
+
+fn fetch_open_meteo_wind(
+    latitude: f64,
+    longitude: f64,
+    start: DateTime<FixedOffset>,
+    end: DateTime<FixedOffset>,
+) -> Vec<(DateTime<FixedOffset>, f64)> {
+    let start_date = start.date_naive().to_string();
+    let end_date = end.date_naive().to_string();
+    let url = format!(
+        "https://archive-api.open-meteo.com/v1/archive?latitude={latitude}&longitude={longitude}&start_date={start_date}&end_date={end_date}&hourly=wind_speed_10m&wind_speed_unit=ms&timezone=UTC"
+    );
+
+    let resp = match Client::new().get(&url).send() {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let parsed: OpenMeteoResponse = match resp.json() {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    parsed
+        .hourly
+        .time
+        .iter()
+        .zip(parsed.hourly.wind_speed_10m.iter())
+        .filter_map(|(t, v)| {
+            let naive = NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M").ok()?;
+            let utc = Utc.from_utc_datetime(&naive);
+            let fixed: DateTime<FixedOffset> = utc.with_timezone(&FixedOffset::east_opt(0)?);
+            Some((fixed, *v))
+        })
+        .collect()
+}
+
+fn wind_multiplier_for_window(
+    wind_cfg: &WindCfg,
+    wind_points: &[(DateTime<FixedOffset>, f64)],
+    start: DateTime<FixedOffset>,
+    end: DateTime<FixedOffset>,
+) -> (f64, f64) {
+    if !wind_cfg.enabled {
+        return (1.0, 0.0);
+    }
+    let vals: Vec<f64> = wind_points
+        .iter()
+        .filter(|(t, _)| *t >= start && *t <= end)
+        .map(|(_, v)| *v)
+        .collect();
+
+    if vals.is_empty() {
+        return (1.0, 0.0);
+    }
+
+    let avg = vals.iter().sum::<f64>() / vals.len() as f64;
+    let mult = (1.0 + wind_cfg.ach_per_ms * avg).clamp(0.1, wind_cfg.max_multiplier);
+    (mult, avg)
+}
+
 pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
+    let (cfg_txt, cfg) = load_thermal_config(config_path)?;
+    let setup = prepare_calibration(&cfg)?;
+    let result = run_grid_search(
+        &cfg,
+        setup.rooms.clone(),
+        &setup.connections,
+        &setup.doors_n1,
+        &setup.doors_n2,
+        &setup.meas1,
+        &setup.avg1,
+        setup.outside1,
+        setup.wind_mult_n1,
+        &setup.meas2,
+        &setup.avg2,
+        setup.outside2,
+        setup.wind_mult_n2,
+    )?;
+
+    println!("Config: {}", config_path.display());
+    println!(
+        "Night1: {} -> {} (outside avg {:.1}°C)",
+        setup.night1_start, setup.night1_end, setup.outside1
+    );
+    println!(
+        "Night2: {} -> {} (outside avg {:.1}°C)",
+        setup.night2_start, setup.night2_end, setup.outside2
+    );
+    println!(
+        "Exclude rooms in objective: {:?}",
+        cfg.objective.exclude_rooms
+    );
+    if cfg.wind.enabled {
+        println!(
+            "Wind model: enabled lat={:.4} lon={:.4} ach_per_ms={:.3} max_mult={:.2}",
+            cfg.wind.latitude, cfg.wind.longitude, cfg.wind.ach_per_ms, cfg.wind.max_multiplier
+        );
+        println!(
+            "  Night1 wind avg={:.2} m/s -> vent multiplier x{:.3}",
+            setup.wind_avg_n1, setup.wind_mult_n1
+        );
+        println!(
+            "  Night2 wind avg={:.2} m/s -> vent multiplier x{:.3}",
+            setup.wind_avg_n2, setup.wind_mult_n2
+        );
+    }
+
+    println!("\n========================================================================");
+    println!("BEST FIT (direct Influx + config-driven bounds)");
+    println!("========================================================================");
+    println!("leather_ach      = {:.2}", result.leather_ach);
+    println!("landing_ach      = {:.2}", result.landing_ach);
+    println!("conservatory_ach = {:.2}", result.conservatory_ach);
+    println!("office_ach       = {:.2}", result.office_ach);
+    println!("doorway_cd       = {:.2}", result.doorway_cd);
+    println!("rmse_night1      = {:.4}", result.r1);
+    println!("rmse_night2      = {:.4}", result.r2);
+    println!("base_score       = {:.4}", result.base_score);
+    println!("final_score      = {:.4}", result.final_score);
+
+    report::print_table("Night 1 fit", &setup.meas1, &result.pred1);
+    report::print_table("Night 2 fit", &setup.meas2, &result.pred2);
+
+    let artifact = build_artifact(
+        "thermal-calibrate",
+        config_path,
+        &cfg_txt,
+        &cfg,
+        &setup,
+        &result,
+        None,
+    )?;
+    let artifact_path = write_artifact("thermal-calibrate", &artifact)?;
+    println!("\nWrote calibration artifact: {}", artifact_path.display());
+
+    Ok(())
+}
+
+pub fn validate(config_path: &Path) -> ThermalResult<()> {
+    let (cfg_txt, cfg) = load_thermal_config(config_path)?;
+    if cfg.validation.windows.is_empty() {
+        return Err(ThermalError::NoValidationWindows);
+    }
+
+    let setup = prepare_calibration(&cfg)?;
+    let result = run_grid_search(
+        &cfg,
+        setup.rooms.clone(),
+        &setup.connections,
+        &setup.doors_n1,
+        &setup.doors_n2,
+        &setup.meas1,
+        &setup.avg1,
+        setup.outside1,
+        setup.wind_mult_n1,
+        &setup.meas2,
+        &setup.avg2,
+        setup.outside2,
+        setup.wind_mult_n2,
+    )?;
+
+    let mut rooms = build_rooms()?;
+    set_calibration_params(
+        &mut rooms,
+        result.leather_ach,
+        result.landing_ach,
+        result.conservatory_ach,
+        result.office_ach,
+    )?;
+
+    let parsed_windows = parse_validation_windows(&cfg.validation.windows)?;
+    let earliest_val = parsed_windows.iter().map(|w| w.start).min().unwrap();
+    let latest_val = parsed_windows.iter().map(|w| w.end).max().unwrap();
+
+    let wind_points = if cfg.wind.enabled {
+        fetch_open_meteo_wind(
+            cfg.wind.latitude,
+            cfg.wind.longitude,
+            earliest_val,
+            latest_val,
+        )
+    } else {
+        Vec::new()
+    };
+
+    let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
+    let token = std::env::var(&cfg.influx.token_env)
+        .map_err(|_| ThermalError::MissingEnv(cfg.influx.token_env.clone()))?;
+
+    let room_rows = influx::query_room_temps(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &sensor_topics,
+        &earliest_val,
+        &latest_val,
+    )?;
+
+    let outside_rows = influx::query_outside_temp(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &earliest_val,
+        &latest_val,
+    )?;
+
+    let room_series = build_room_series(&room_rows, &rooms)?;
+    let doors_normal = build_doorways()?;
+    let doors_closed = doors_all_closed_except_chimney(&doors_normal);
+
+    let exclude_rooms: HashSet<String> = cfg.objective.exclude_rooms.iter().cloned().collect();
+    let mut window_results = Vec::new();
+
+    println!("Config: {}", config_path.display());
+    println!(
+        "Calibrated params: leather_ach={:.2}, landing_ach={:.2}, conservatory_ach={:.2}, office_ach={:.2}, doorway_cd={:.2}",
+        result.leather_ach, result.landing_ach, result.conservatory_ach, result.office_ach, result.doorway_cd
+    );
+
+    for window in parsed_windows {
+        let (wind_mult, wind_avg) =
+            wind_multiplier_for_window(&cfg.wind, &wind_points, window.start, window.end);
+        let (measured, avg_temps, outside_avg) =
+            measured_rates(&room_series, &outside_rows, window.start, window.end)?;
+        let doorways = match window.door_state.as_str() {
+            "closed_except_chimney" | "all_closed_except_chimney" | "closed" => &doors_closed,
+            _ => &doors_normal,
+        };
+        let predicted = predict_rates(
+            &rooms,
+            &setup.connections,
+            doorways,
+            &avg_temps,
+            outside_avg,
+            result.doorway_cd,
+            wind_mult,
+        );
+
+        report::print_table(
+            &format!("Validation {}", window.name),
+            &measured,
+            &predicted,
+        );
+        let residuals = residuals_for_rooms(&measured, &predicted, Some(&exclude_rooms));
+        let metrics = compute_metrics(&residuals);
+        let pass = metrics.rmse <= cfg.validation.thresholds.rmse_max
+            && metrics.bias.abs() <= cfg.validation.thresholds.bias_abs_max
+            && metrics.within_1_0c >= cfg.validation.thresholds.within_1c_min;
+
+        println!(
+            "  {}: rmse={:.3}, mae={:.3}, bias={:+.3}, within_1C={:.1}% => {}",
+            window.name,
+            metrics.rmse,
+            metrics.mae,
+            metrics.bias,
+            metrics.within_1_0c * 100.0,
+            if pass { "PASS" } else { "FAIL" }
+        );
+
+        window_results.push(WindowValidation {
+            name: window.name,
+            start: window.start.to_rfc3339(),
+            end: window.end.to_rfc3339(),
+            door_state: window.door_state,
+            outside_avg_c: outside_avg,
+            wind_avg_ms: wind_avg,
+            wind_multiplier: wind_mult,
+            metrics,
+            pass,
+            residuals,
+        });
+    }
+
+    let mut all_residuals = Vec::new();
+    for w in &window_results {
+        all_residuals.extend(w.residuals.iter().map(|r| r.residual));
+    }
+    let aggregate_metrics = compute_metrics_from_values(&all_residuals);
+    let aggregate_pass = aggregate_metrics.rmse <= cfg.validation.thresholds.rmse_max
+        && aggregate_metrics.bias.abs() <= cfg.validation.thresholds.bias_abs_max
+        && aggregate_metrics.within_1_0c >= cfg.validation.thresholds.within_1c_min;
+
+    println!("\nValidation aggregate:");
+    println!(
+        "  rmse={:.3}, mae={:.3}, bias={:+.3}, within_1C={:.1}% => {}",
+        aggregate_metrics.rmse,
+        aggregate_metrics.mae,
+        aggregate_metrics.bias,
+        aggregate_metrics.within_1_0c * 100.0,
+        if aggregate_pass { "PASS" } else { "FAIL" }
+    );
+
+    let validation = ValidationSummary {
+        thresholds: ThresholdResult {
+            rmse_max: cfg.validation.thresholds.rmse_max,
+            bias_abs_max: cfg.validation.thresholds.bias_abs_max,
+            within_1c_min: cfg.validation.thresholds.within_1c_min,
+        },
+        aggregate_metrics,
+        aggregate_pass,
+        windows: window_results,
+    };
+
+    let artifact = build_artifact(
+        "thermal-validate",
+        config_path,
+        &cfg_txt,
+        &cfg,
+        &setup,
+        &result,
+        Some(validation),
+    )?;
+    let artifact_path = write_artifact("thermal-validate", &artifact)?;
+    println!("\nWrote validation artifact: {}", artifact_path.display());
+
+    Ok(())
+}
+
+struct CalibrationSetup {
+    rooms: BTreeMap<String, RoomDef>,
+    connections: Vec<InternalConnection>,
+    doors_n1: Vec<Doorway>,
+    doors_n2: Vec<Doorway>,
+    night1_start: DateTime<FixedOffset>,
+    night1_end: DateTime<FixedOffset>,
+    night2_start: DateTime<FixedOffset>,
+    night2_end: DateTime<FixedOffset>,
+    wind_mult_n1: f64,
+    wind_avg_n1: f64,
+    wind_mult_n2: f64,
+    wind_avg_n2: f64,
+    meas1: HashMap<String, f64>,
+    avg1: HashMap<String, f64>,
+    outside1: f64,
+    meas2: HashMap<String, f64>,
+    avg2: HashMap<String, f64>,
+    outside2: f64,
+}
+
+fn load_thermal_config(config_path: &Path) -> ThermalResult<(String, ThermalConfig)> {
     let cfg_txt = fs::read_to_string(config_path).map_err(|source| ThermalError::ConfigRead {
         path: config_path.display().to_string(),
         source,
     })?;
-    let cfg: ThermalConfig = toml::from_str(&cfg_txt).map_err(|source| ThermalError::ConfigParse {
-        path: config_path.display().to_string(),
-        source,
-    })?;
+    let cfg: ThermalConfig =
+        toml::from_str(&cfg_txt).map_err(|source| ThermalError::ConfigParse {
+            path: config_path.display().to_string(),
+            source,
+        })?;
+    Ok((cfg_txt, cfg))
+}
 
+fn prepare_calibration(cfg: &ThermalConfig) -> ThermalResult<CalibrationSetup> {
     let night1_start = influx::parse_dt(&cfg.test_nights.night1_start)?;
     let night1_end = influx::parse_dt(&cfg.test_nights.night1_end)?;
     let night2_start = influx::parse_dt(&cfg.test_nights.night2_start)?;
     let night2_end = influx::parse_dt(&cfg.test_nights.night2_end)?;
 
-    let mut rooms = build_rooms()?;
+    let rooms = build_rooms()?;
     let connections = build_connections()?;
     let doors_n1 = build_doorways()?;
     let doors_n2 = doors_all_closed_except_chimney(&doors_n1);
 
-    let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
     let earliest = night1_start.min(night2_start);
     let latest = night1_end.max(night2_end);
 
+    let wind_points = if cfg.wind.enabled {
+        fetch_open_meteo_wind(cfg.wind.latitude, cfg.wind.longitude, earliest, latest)
+    } else {
+        Vec::new()
+    };
+    let (wind_mult_n1, wind_avg_n1) =
+        wind_multiplier_for_window(&cfg.wind, &wind_points, night1_start, night1_end);
+    let (wind_mult_n2, wind_avg_n2) =
+        wind_multiplier_for_window(&cfg.wind, &wind_points, night2_start, night2_end);
+
+    let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
     let token = std::env::var(&cfg.influx.token_env)
         .map_err(|_| ThermalError::MissingEnv(cfg.influx.token_env.clone()))?;
 
@@ -269,55 +841,137 @@ pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
     )?;
 
     let room_series = build_room_series(&room_rows, &rooms)?;
+    let (meas1, avg1, outside1) =
+        measured_rates(&room_series, &outside_rows, night1_start, night1_end)?;
+    let (meas2, avg2, outside2) =
+        measured_rates(&room_series, &outside_rows, night2_start, night2_end)?;
 
-    let (meas1, avg1, outside1) = measured_rates(&room_series, &outside_rows, night1_start, night1_end)?;
-    let (meas2, avg2, outside2) = measured_rates(&room_series, &outside_rows, night2_start, night2_end)?;
+    Ok(CalibrationSetup {
+        rooms,
+        connections,
+        doors_n1,
+        doors_n2,
+        night1_start,
+        night1_end,
+        night2_start,
+        night2_end,
+        wind_mult_n1,
+        wind_avg_n1,
+        wind_mult_n2,
+        wind_avg_n2,
+        meas1,
+        avg1,
+        outside1,
+        meas2,
+        avg2,
+        outside2,
+    })
+}
 
+#[allow(clippy::too_many_arguments)]
+fn run_grid_search(
+    cfg: &ThermalConfig,
+    mut rooms: BTreeMap<String, RoomDef>,
+    connections: &[InternalConnection],
+    doors_n1: &[Doorway],
+    doors_n2: &[Doorway],
+    meas1: &HashMap<String, f64>,
+    avg1: &HashMap<String, f64>,
+    outside1: f64,
+    wind_mult_n1: f64,
+    meas2: &HashMap<String, f64>,
+    avg2: &HashMap<String, f64>,
+    outside2: f64,
+    wind_mult_n2: f64,
+) -> ThermalResult<CalibrationResult> {
     let exclude_rooms: HashSet<String> = cfg.objective.exclude_rooms.iter().cloned().collect();
-
-    println!("Config: {}", config_path.display());
-    println!(
-        "Night1: {} -> {} (outside avg {:.1}°C)",
-        night1_start, night1_end, outside1
-    );
-    println!(
-        "Night2: {} -> {} (outside avg {:.1}°C)",
-        night2_start, night2_end, outside2
-    );
-    println!("Exclude rooms in objective: {:?}", cfg.objective.exclude_rooms);
-
     let mut best: Option<FitState> = None;
 
-    for leather_ach in frange(cfg.bounds.leather_ach_min, cfg.bounds.leather_ach_max, cfg.bounds.leather_ach_step) {
-        for landing_ach in frange(cfg.bounds.landing_ach_min, cfg.bounds.landing_ach_max, cfg.bounds.landing_ach_step) {
-            for conservatory_ach in frange(cfg.bounds.conservatory_ach_min, cfg.bounds.conservatory_ach_max, cfg.bounds.conservatory_ach_step) {
-                for office_ach in frange(cfg.bounds.office_ach_min, cfg.bounds.office_ach_max, cfg.bounds.office_ach_step) {
-                    for doorway_cd in frange(cfg.bounds.doorway_cd_min, cfg.bounds.doorway_cd_max, cfg.bounds.doorway_cd_step) {
-                        set_calibration_params(&mut rooms, leather_ach, landing_ach, conservatory_ach, office_ach)?;
+    for leather_ach in frange(
+        cfg.bounds.leather_ach_min,
+        cfg.bounds.leather_ach_max,
+        cfg.bounds.leather_ach_step,
+    ) {
+        for landing_ach in frange(
+            cfg.bounds.landing_ach_min,
+            cfg.bounds.landing_ach_max,
+            cfg.bounds.landing_ach_step,
+        ) {
+            for conservatory_ach in frange(
+                cfg.bounds.conservatory_ach_min,
+                cfg.bounds.conservatory_ach_max,
+                cfg.bounds.conservatory_ach_step,
+            ) {
+                for office_ach in frange(
+                    cfg.bounds.office_ach_min,
+                    cfg.bounds.office_ach_max,
+                    cfg.bounds.office_ach_step,
+                ) {
+                    for doorway_cd in frange(
+                        cfg.bounds.doorway_cd_min,
+                        cfg.bounds.doorway_cd_max,
+                        cfg.bounds.doorway_cd_step,
+                    ) {
+                        set_calibration_params(
+                            &mut rooms,
+                            leather_ach,
+                            landing_ach,
+                            conservatory_ach,
+                            office_ach,
+                        )?;
 
-                        let pred1 = predict_rates(&rooms, &connections, &doors_n1, &avg1, outside1, doorway_cd);
-                        let pred2 = predict_rates(&rooms, &connections, &doors_n2, &avg2, outside2, doorway_cd);
-
-                        let r1 = report::rmse(&meas1, &pred1, &exclude_rooms);
-                        let r2 = report::rmse(&meas2, &pred2, &exclude_rooms);
-                        let base_score = (r1 + r2) / 2.0;
-                        let prior_penalty = cfg.objective.prior_weight * (
-                            ((landing_ach - cfg.priors.landing_ach) / 0.3).powi(2)
-                                + ((doorway_cd - cfg.priors.doorway_cd) / 0.08).powi(2)
+                        let pred1 = predict_rates(
+                            &rooms,
+                            connections,
+                            doors_n1,
+                            avg1,
+                            outside1,
+                            doorway_cd,
+                            wind_mult_n1,
                         );
+                        let pred2 = predict_rates(
+                            &rooms,
+                            connections,
+                            doors_n2,
+                            avg2,
+                            outside2,
+                            doorway_cd,
+                            wind_mult_n2,
+                        );
+
+                        let r1 = report::rmse(meas1, &pred1, &exclude_rooms);
+                        let r2 = report::rmse(meas2, &pred2, &exclude_rooms);
+                        let base_score = (r1 + r2) / 2.0;
+                        let prior_penalty = cfg.objective.prior_weight
+                            * (((landing_ach - cfg.priors.landing_ach) / 0.3).powi(2)
+                                + ((doorway_cd - cfg.priors.doorway_cd) / 0.08).powi(2));
                         let final_score = base_score + prior_penalty;
 
                         match &best {
                             None => {
                                 best = Some((
-                                    final_score, leather_ach, landing_ach, conservatory_ach, office_ach, doorway_cd,
-                                    base_score, pred1, pred2,
+                                    final_score,
+                                    leather_ach,
+                                    landing_ach,
+                                    conservatory_ach,
+                                    office_ach,
+                                    doorway_cd,
+                                    base_score,
+                                    pred1,
+                                    pred2,
                                 ));
                             }
                             Some((best_score, ..)) if final_score < *best_score => {
                                 best = Some((
-                                    final_score, leather_ach, landing_ach, conservatory_ach, office_ach, doorway_cd,
-                                    base_score, pred1, pred2,
+                                    final_score,
+                                    leather_ach,
+                                    landing_ach,
+                                    conservatory_ach,
+                                    office_ach,
+                                    doorway_cd,
+                                    base_score,
+                                    pred1,
+                                    pred2,
                                 ));
                             }
                             _ => {}
@@ -328,29 +982,203 @@ pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
         }
     }
 
-    let (final_score, leather_ach, landing_ach, conservatory_ach, office_ach, doorway_cd, base_score, pred1, pred2) =
-        best.ok_or(ThermalError::NoCalibrationCandidates)?;
+    let (
+        final_score,
+        leather_ach,
+        landing_ach,
+        conservatory_ach,
+        office_ach,
+        doorway_cd,
+        base_score,
+        pred1,
+        pred2,
+    ) = best.ok_or(ThermalError::NoCalibrationCandidates)?;
 
-    let r1 = report::rmse(&meas1, &pred1, &exclude_rooms);
-    let r2 = report::rmse(&meas2, &pred2, &exclude_rooms);
+    let r1 = report::rmse(meas1, &pred1, &exclude_rooms);
+    let r2 = report::rmse(meas2, &pred2, &exclude_rooms);
 
-    println!("\n========================================================================");
-    println!("BEST FIT (direct Influx + config-driven bounds)");
-    println!("========================================================================");
-    println!("leather_ach      = {:.2}", leather_ach);
-    println!("landing_ach      = {:.2}", landing_ach);
-    println!("conservatory_ach = {:.2}", conservatory_ach);
-    println!("office_ach       = {:.2}", office_ach);
-    println!("doorway_cd       = {:.2}", doorway_cd);
-    println!("rmse_night1      = {:.4}", r1);
-    println!("rmse_night2      = {:.4}", r2);
-    println!("base_score       = {:.4}", base_score);
-    println!("final_score      = {:.4}", final_score);
+    Ok(CalibrationResult {
+        final_score,
+        base_score,
+        leather_ach,
+        landing_ach,
+        conservatory_ach,
+        office_ach,
+        doorway_cd,
+        pred1,
+        pred2,
+        r1,
+        r2,
+    })
+}
 
-    report::print_table("Night 1 fit", &meas1, &pred1);
-    report::print_table("Night 2 fit", &meas2, &pred2);
+fn parse_validation_windows(raw: &[ValidationWindowCfg]) -> ThermalResult<Vec<ParsedWindow>> {
+    let mut out = Vec::new();
+    for w in raw {
+        out.push(ParsedWindow {
+            name: w.name.clone(),
+            start: influx::parse_dt(&w.start)?,
+            end: influx::parse_dt(&w.end)?,
+            door_state: w.door_state.clone(),
+        });
+    }
+    Ok(out)
+}
 
-    Ok(())
+fn residuals_for_rooms(
+    measured: &HashMap<String, f64>,
+    predicted: &HashMap<String, f64>,
+    exclude: Option<&HashSet<String>>,
+) -> Vec<RoomResidual> {
+    let mut out = Vec::new();
+    let mut keys: Vec<_> = measured.keys().cloned().collect();
+    keys.sort();
+
+    for room in keys {
+        if exclude.is_some_and(|x| x.contains(&room)) {
+            continue;
+        }
+        let measured_v = measured.get(&room).copied().unwrap_or(0.0);
+        let predicted_v = predicted.get(&room).copied().unwrap_or(f64::NAN);
+        if predicted_v.is_nan() {
+            continue;
+        }
+        let residual = predicted_v - measured_v;
+        out.push(RoomResidual {
+            room,
+            measured: measured_v,
+            predicted: predicted_v,
+            residual,
+            abs_residual: residual.abs(),
+        });
+    }
+
+    out
+}
+
+fn compute_metrics(residuals: &[RoomResidual]) -> Metrics {
+    let values: Vec<f64> = residuals.iter().map(|r| r.residual).collect();
+    compute_metrics_from_values(&values)
+}
+
+fn compute_metrics_from_values(values: &[f64]) -> Metrics {
+    if values.is_empty() {
+        return Metrics {
+            rooms_count: 0,
+            rmse: 999.0,
+            mae: 999.0,
+            bias: 0.0,
+            max_abs_error: 999.0,
+            within_0_5c: 0.0,
+            within_1_0c: 0.0,
+        };
+    }
+
+    let n = values.len() as f64;
+    let sq = values.iter().map(|v| v * v).sum::<f64>();
+    let abs_sum = values.iter().map(|v| v.abs()).sum::<f64>();
+    let bias = values.iter().sum::<f64>() / n;
+    let max_abs = values.iter().map(|v| v.abs()).fold(0.0, f64::max);
+    let within_05 = values.iter().filter(|v| v.abs() <= 0.5).count() as f64 / n;
+    let within_10 = values.iter().filter(|v| v.abs() <= 1.0).count() as f64 / n;
+
+    Metrics {
+        rooms_count: values.len(),
+        rmse: (sq / n).sqrt(),
+        mae: abs_sum / n,
+        bias,
+        max_abs_error: max_abs,
+        within_0_5c: within_05,
+        within_1_0c: within_10,
+    }
+}
+
+fn config_sha256(cfg_txt: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(cfg_txt.as_bytes());
+    let digest = hasher.finalize();
+    format!("{:x}", digest)
+}
+
+fn git_meta() -> GitMeta {
+    let sha = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let dirty = Command::new("git")
+        .args(["diff", "--quiet", "HEAD", "--"])
+        .status()
+        .map(|s| !s.success())
+        .unwrap_or(false);
+
+    GitMeta { sha, dirty }
+}
+
+fn build_artifact(
+    command: &str,
+    config_path: &Path,
+    cfg_txt: &str,
+    cfg: &ThermalConfig,
+    setup: &CalibrationSetup,
+    result: &CalibrationResult,
+    validation: Option<ValidationSummary>,
+) -> ThermalResult<CalibrationArtifact> {
+    let calibration = ArtifactCalibration {
+        leather_ach: result.leather_ach,
+        landing_ach: result.landing_ach,
+        conservatory_ach: result.conservatory_ach,
+        office_ach: result.office_ach,
+        doorway_cd: result.doorway_cd,
+        rmse_night1: result.r1,
+        rmse_night2: result.r2,
+        base_score: result.base_score,
+        final_score: result.final_score,
+        night1: residuals_for_rooms(&setup.meas1, &result.pred1, None),
+        night2: residuals_for_rooms(&setup.meas2, &result.pred2, None),
+    };
+
+    Ok(CalibrationArtifact {
+        schema_version: 1,
+        generated_at_utc: Utc::now().to_rfc3339(),
+        command: command.to_string(),
+        config_path: config_path.display().to_string(),
+        config_sha256: config_sha256(cfg_txt),
+        git: git_meta(),
+        calibration_windows: vec![
+            ArtifactWindow {
+                name: "night1".to_string(),
+                start: cfg.test_nights.night1_start.clone(),
+                end: cfg.test_nights.night1_end.clone(),
+            },
+            ArtifactWindow {
+                name: "night2".to_string(),
+                start: cfg.test_nights.night2_start.clone(),
+                end: cfg.test_nights.night2_end.clone(),
+            },
+        ],
+        calibration,
+        validation,
+    })
+}
+
+fn write_artifact(prefix: &str, artifact: &CalibrationArtifact) -> ThermalResult<PathBuf> {
+    let dir = Path::new("artifacts").join("thermal");
+    fs::create_dir_all(&dir).map_err(|source| ThermalError::ArtifactWrite {
+        path: dir.display().to_string(),
+        source,
+    })?;
+    let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let path = dir.join(format!("{}-{}.json", prefix, ts));
+    let json = serde_json::to_string_pretty(artifact).map_err(ThermalError::ArtifactSerialize)?;
+    fs::write(&path, json).map_err(|source| ThermalError::ArtifactWrite {
+        path: path.display().to_string(),
+        source,
+    })?;
+    Ok(path)
 }
 
 fn set_calibration_params(
@@ -386,6 +1214,7 @@ fn predict_rates(
     avg_temps: &HashMap<String, f64>,
     outside_temp: f64,
     doorway_cd: f64,
+    wind_multiplier: f64,
 ) -> HashMap<String, f64> {
     let mut out = HashMap::new();
     for (room_name, room) in rooms {
@@ -393,7 +1222,16 @@ fn predict_rates(
             continue;
         }
         let c = estimate_thermal_mass(room, connections);
-        let bal = room_energy_balance(room, avg_temps[room_name], outside_temp, avg_temps, connections, doorways, doorway_cd);
+        let bal = room_energy_balance(
+            room,
+            avg_temps[room_name],
+            outside_temp,
+            avg_temps,
+            connections,
+            doorways,
+            doorway_cd,
+            wind_multiplier,
+        );
         let rate = if c > 0.0 { -bal * 3.6 / c } else { 0.0 };
         out.insert(room_name.clone(), rate);
     }
@@ -464,7 +1302,9 @@ fn build_room_series(
     let mut out: HashMap<String, Vec<(DateTime<FixedOffset>, f64)>> = HashMap::new();
     for (t, topic, value) in room_rows {
         if let Some(room) = by_topic.get(topic.as_str()) {
-            out.entry((*room).to_string()).or_default().push((*t, *value));
+            out.entry((*room).to_string())
+                .or_default()
+                .push((*t, *value));
         }
     }
 
@@ -539,6 +1379,22 @@ fn estimate_thermal_mass(room: &RoomDef, connections: &[InternalConnection]) -> 
     c
 }
 
+fn virtual_room_temp(name: &str, all_temps: &HashMap<String, f64>) -> Option<f64> {
+    if let Some(t) = all_temps.get(name) {
+        return Some(*t);
+    }
+    if name == "top_landing" {
+        match (all_temps.get("landing"), all_temps.get("shower")) {
+            (Some(a), Some(b)) => Some((a + b) / 2.0),
+            (Some(a), None) => Some(*a),
+            (None, Some(b)) => Some(*b),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
 fn room_energy_balance(
     room: &RoomDef,
     room_temp: f64,
@@ -547,12 +1403,20 @@ fn room_energy_balance(
     connections: &[InternalConnection],
     doorways: &[Doorway],
     doorway_cd: f64,
+    wind_multiplier: f64,
 ) -> f64 {
     let name = room.name;
     let vol = room.floor_area * room.ceiling_height;
 
     let q_ext = -external_loss(&room.external_fabric, room_temp, outside_temp);
-    let q_vent = -ventilation_loss(room.ventilation_ach, vol, room_temp, outside_temp, room.heat_recovery);
+    let q_vent = -ventilation_loss(
+        room.ventilation_ach,
+        vol,
+        room_temp,
+        outside_temp,
+        room.heat_recovery,
+        wind_multiplier,
+    );
 
     let q_rad = 0.0; // cooldown calibration assumes mwt=0
     let q_body = room.overnight_occupants as f64 * BODY_HEAT_SLEEPING_W;
@@ -560,18 +1424,20 @@ fn room_energy_balance(
 
     let mut q_dhw = 0.0;
     if name == "bathroom" {
-        q_dhw = DHW_CYLINDER_UA * (DHW_CYLINDER_TEMP - room_temp).max(0.0) + DHW_PIPE_LOSS_W + DHW_SHOWER_W;
+        q_dhw = DHW_CYLINDER_UA * (DHW_CYLINDER_TEMP - room_temp).max(0.0)
+            + DHW_PIPE_LOSS_W
+            + DHW_SHOWER_W;
     }
 
     let mut q_walls = 0.0;
     for conn in connections {
         if conn.room_a == name {
-            if let Some(other_t) = all_temps.get(conn.room_b) {
-                q_walls -= wall_conduction(conn.ua, room_temp, *other_t);
+            if let Some(other_t) = virtual_room_temp(conn.room_b, all_temps) {
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t);
             }
         } else if conn.room_b == name {
-            if let Some(other_t) = all_temps.get(conn.room_a) {
-                q_walls -= wall_conduction(conn.ua, room_temp, *other_t);
+            if let Some(other_t) = virtual_room_temp(conn.room_a, all_temps) {
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t);
             }
         }
     }
@@ -579,12 +1445,12 @@ fn room_energy_balance(
     let mut q_doors = 0.0;
     for door in doorways {
         if door.room_a == name {
-            if let Some(other_t) = all_temps.get(door.room_b) {
-                q_doors -= doorway_exchange(door, room_temp, *other_t, doorway_cd);
+            if let Some(other_t) = virtual_room_temp(door.room_b, all_temps) {
+                q_doors -= doorway_exchange(door, room_temp, other_t, doorway_cd);
             }
         } else if door.room_b == name {
-            if let Some(other_t) = all_temps.get(door.room_a) {
-                q_doors -= doorway_exchange(door, room_temp, *other_t, doorway_cd);
+            if let Some(other_t) = virtual_room_temp(door.room_a, all_temps) {
+                q_doors -= doorway_exchange(door, room_temp, other_t, doorway_cd);
             }
         }
     }
@@ -596,14 +1462,30 @@ fn external_loss(elements: &[ExternalElement], room_temp: f64, outside_temp: f64
     elements
         .iter()
         .map(|e| {
-            let ref_temp = if e.to_ground { GROUND_TEMP_C } else { outside_temp };
+            let ref_temp = if e.to_ground {
+                GROUND_TEMP_C
+            } else {
+                outside_temp
+            };
             e.u_value * e.area * (room_temp - ref_temp)
         })
         .sum()
 }
 
-fn ventilation_loss(ach: f64, volume: f64, room_temp: f64, outside_temp: f64, heat_recovery: f64) -> f64 {
-    VENT_FACTOR * ach * volume * (room_temp - outside_temp) * (1.0 - heat_recovery)
+fn ventilation_loss(
+    ach: f64,
+    volume: f64,
+    room_temp: f64,
+    outside_temp: f64,
+    heat_recovery: f64,
+    wind_multiplier: f64,
+) -> f64 {
+    VENT_FACTOR
+        * ach
+        * wind_multiplier
+        * volume
+        * (room_temp - outside_temp)
+        * (1.0 - heat_recovery)
 }
 
 fn wall_conduction(ua: f64, temp_a: f64, temp_b: f64) -> f64 {
@@ -611,7 +1493,7 @@ fn wall_conduction(ua: f64, temp_a: f64, temp_b: f64) -> f64 {
 }
 
 fn doorway_exchange(door: &Doorway, temp_a: f64, temp_b: f64, doorway_cd: f64) -> f64 {
-    if door.state == "closed" || door.state == "chimney" {
+    if door.state == "closed" {
         return 0.0;
     }
 
@@ -626,9 +1508,10 @@ fn doorway_exchange(door: &Doorway, temp_a: f64, temp_b: f64, doorway_cd: f64) -
         width *= 0.5;
     }
 
-    let flow = (doorway_cd / 3.0)
-        * width
-        * (DOORWAY_G * door.height.powi(3) * dt.abs() / t_mean).sqrt();
+    // "chimney" doorways are now modelled explicitly as buoyancy links
+    // (hall↔landing and landing↔top-landing proxy), not disabled.
+    let flow =
+        (doorway_cd / 3.0) * width * (DOORWAY_G * door.height.powi(3) * dt.abs() / t_mean).sqrt();
 
     flow * AIR_DENSITY * AIR_CP * dt
 }
@@ -711,4 +1594,3 @@ fn build_doorways() -> ThermalResult<Vec<Doorway>> {
         })
         .collect())
 }
-

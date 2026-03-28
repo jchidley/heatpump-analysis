@@ -9,9 +9,9 @@ mod thermal;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use polars::prelude::SerWriter;
 use chrono::{NaiveDate, Utc};
 use clap::{Parser, Subcommand};
+use polars::prelude::SerWriter;
 
 #[derive(Parser)]
 #[command(name = "heatpump-analysis")]
@@ -101,12 +101,21 @@ enum Commands {
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
     },
+    /// Validate calibrated thermal model on holdout windows (beyond calibration nights)
+    ThermalValidate {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+    },
 }
 
 impl Cli {
     /// Get the API client, failing if no key was provided.
     fn require_client(&self) -> Result<emoncms::Client> {
-        anyhow::ensure!(!self.apikey.is_empty(), "This command requires --apikey or EMONCMS_APIKEY");
+        anyhow::ensure!(
+            !self.apikey.is_empty(),
+            "This command requires --apikey or EMONCMS_APIKEY"
+        );
         Ok(emoncms::Client::new(&self.apikey))
     }
 
@@ -172,8 +181,7 @@ fn main() -> Result<()> {
         Commands::DbStatus => {
             let conn = cli.require_db()?;
 
-            let total: u64 =
-                conn.query_row("SELECT COUNT(*) FROM samples", [], |r| r.get(0))?;
+            let total: u64 = conn.query_row("SELECT COUNT(*) FROM samples", [], |r| r.get(0))?;
 
             let (min_ts, max_ts): (i64, i64) = conn.query_row(
                 "SELECT COALESCE(MIN(timestamp), 0), COALESCE(MAX(timestamp), 0) FROM samples",
@@ -328,14 +336,12 @@ fn main() -> Result<()> {
             match output {
                 Some(path) => {
                     let mut file = std::fs::File::create(&path)?;
-                    polars::prelude::CsvWriter::new(&mut file)
-                        .finish(&mut df)?;
+                    polars::prelude::CsvWriter::new(&mut file).finish(&mut df)?;
                     eprintln!("Wrote {} rows to {}", df.height(), path);
                 }
                 None => {
                     let mut stdout = std::io::stdout();
-                    polars::prelude::CsvWriter::new(&mut stdout)
-                        .finish(&mut df)?;
+                    polars::prelude::CsvWriter::new(&mut stdout).finish(&mut df)?;
                 }
             }
         }
@@ -395,11 +401,7 @@ fn main() -> Result<()> {
                 None
             };
 
-            octopus::print_gas_vs_hp(
-                &consumption,
-                &weather,
-                hp_by_state.as_deref(),
-            )?;
+            octopus::print_gas_vs_hp(&consumption, &weather, hp_by_state.as_deref())?;
         }
 
         Commands::Baseload => {
@@ -442,23 +444,20 @@ fn main() -> Result<()> {
         Commands::ThermalCalibrate { ref config } => {
             thermal::calibrate(std::path::Path::new(config))?;
         }
+
+        Commands::ThermalValidate { ref config } => {
+            thermal::validate(std::path::Path::new(config))?;
+        }
     }
 
     Ok(())
 }
 
 /// Load a DataFrame from the local database.
-fn load_dataframe(
-    cli: &Cli,
-    start: i64,
-    end: i64,
-) -> Result<polars::prelude::DataFrame> {
+fn load_dataframe(cli: &Cli, start: i64, end: i64) -> Result<polars::prelude::DataFrame> {
     let conn = cli.require_db()?;
     if cli.include_simulated {
-        eprintln!(
-            "Loading from {} (including simulated)",
-            cli.db.display()
-        );
+        eprintln!("Loading from {} (including simulated)", cli.db.display());
         db::load_dataframe_with_simulated(&conn, start, end)
     } else {
         eprintln!("Loading from {}", cli.db.display());
@@ -472,10 +471,7 @@ fn resolve_time_range(cli: &Cli) -> Result<(i64, i64)> {
         Some(s) => {
             let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
                 .map_err(|e| anyhow::anyhow!("Invalid --to date '{}': {}", s, e))?;
-            d.and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc()
-                .timestamp()
+            d.and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp()
         }
         None => Utc::now().timestamp(),
     };
@@ -487,10 +483,7 @@ fn resolve_time_range(cli: &Cli) -> Result<(i64, i64)> {
             Some(s) => {
                 let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
                     .map_err(|e| anyhow::anyhow!("Invalid --from date '{}': {}", s, e))?;
-                d.and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc()
-                    .timestamp()
+                d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()
             }
             None => end - (cli.days as i64 * 86400),
         }

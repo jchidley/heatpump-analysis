@@ -47,3 +47,21 @@ office_ach_step = 0.2
 doorway_cd_min = 0.10
 doorway_cd_max = 0.35
 doorway_cd_step = 0.05
+
+[validation.thresholds]
+# Pass/fail checks for holdout validation windows.
+rmse_max = 0.7
+bias_abs_max = 0.3
+within_1c_min = 0.8
+
+[[validation.windows]]
+name = "holdout_night3_normal_doors"
+start = "2026-03-26T23:10:00+00:00"
+end = "2026-03-27T05:05:00+00:00"
+door_state = "normal"
+
+[[validation.windows]]
+name = "holdout_night4_closed_except_chimney"
+start = "2026-03-27T23:10:00+00:00"
+end = "2026-03-28T05:05:00+00:00"
+door_state = "closed_except_chimney"

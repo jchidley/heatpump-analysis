@@ -6,11 +6,20 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ThermalError {
     #[error("failed to read thermal config {path}: {source}")]
-    ConfigRead { path: String, source: std::io::Error },
+    ConfigRead {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("failed to parse thermal config {path}: {source}")]
-    ConfigParse { path: String, source: toml::de::Error },
+    ConfigParse {
+        path: String,
+        source: toml::de::Error,
+    },
     #[error("failed to parse thermal geometry {path}: {source}")]
-    GeometryParse { path: String, source: serde_json::Error },
+    GeometryParse {
+        path: String,
+        source: serde_json::Error,
+    },
     #[error("missing environment variable {0}")]
     MissingEnv(String),
     #[error("failed to parse datetime '{value}': {source}")]
@@ -45,6 +54,15 @@ pub enum ThermalError {
     MissingRoom(&'static str),
     #[error("no calibration candidates evaluated")]
     NoCalibrationCandidates,
+    #[error("no validation windows configured (add [[validation.windows]] to config)")]
+    NoValidationWindows,
+    #[error("failed to serialize thermal artifact JSON: {0}")]
+    ArtifactSerialize(serde_json::Error),
+    #[error("failed to write thermal artifact {path}: {source}")]
+    ArtifactWrite {
+        path: String,
+        source: std::io::Error,
+    },
 }
 
 pub type ThermalResult<T> = std::result::Result<T, ThermalError>;
@@ -52,14 +70,4 @@ pub type TempSeries = HashMap<String, Vec<(DateTime<FixedOffset>, f64)>>;
 pub type ScalarMap = HashMap<String, f64>;
 pub type MeasuredRates = (ScalarMap, ScalarMap, f64);
 
-pub type FitState = (
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    f64,
-    ScalarMap,
-    ScalarMap,
-);
+pub type FitState = (f64, f64, f64, f64, f64, f64, f64, ScalarMap, ScalarMap);
