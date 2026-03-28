@@ -50,6 +50,10 @@ pub enum ThermalError {
     },
     #[error("no outside temperature data in calibration window")]
     NoOutsideData,
+    #[error("no HP status data in diagnostics window")]
+    NoStatusData,
+    #[error("no cooldown periods found in diagnostics window")]
+    NoCooldownPeriods,
     #[error("missing room '{0}'")]
     MissingRoom(&'static str),
     #[error("no calibration candidates evaluated")]

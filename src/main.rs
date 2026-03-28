@@ -107,6 +107,12 @@ enum Commands {
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
     },
+    /// Run period-by-period cooldown fit diagnostics (Rust parity with Python fit)
+    ThermalFitDiagnostics {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+    },
 }
 
 impl Cli {
@@ -447,6 +453,10 @@ fn main() -> Result<()> {
 
         Commands::ThermalValidate { ref config } => {
             thermal::validate(std::path::Path::new(config))?;
+        }
+
+        Commands::ThermalFitDiagnostics { ref config } => {
+            thermal::fit_diagnostics(std::path::Path::new(config))?;
         }
     }
 

@@ -26,7 +26,10 @@ pub fn query_room_temps(
         if *t == "emon/emonth2_23/temperature" {
             conditions.push(format!("(r.topic == \"{}\" and r._field == \"value\")", t));
         } else {
-            conditions.push(format!("(r.topic == \"{}\" and r._field == \"temperature\")", t));
+            conditions.push(format!(
+                "(r.topic == \"{}\" and r._field == \"temperature\")",
+                t
+            ));
         }
     }
 
@@ -108,13 +111,55 @@ pub fn query_outside_temp(
     Ok(out)
 }
 
+pub fn query_status_codes(
+    influx_url: &str,
+    org: &str,
+    bucket: &str,
+    token: &str,
+    start: &DateTime<FixedOffset>,
+    stop: &DateTime<FixedOffset>,
+) -> ThermalResult<Vec<(DateTime<FixedOffset>, i32)>> {
+    let flux = format!(
+        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r.topic == \"ebusd/poll/StatuscodeNum\")\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
+        bucket,
+        start.to_rfc3339(),
+        stop.to_rfc3339(),
+    );
+
+    let rows = query_flux_csv(influx_url, org, token, &flux)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let time_str = row.get("_time").ok_or(ThermalError::MissingColumn {
+            column: "_time",
+            context: "status row",
+        })?;
+        let t = parse_dt(time_str)?;
+
+        let value_str = row.get("_value").ok_or(ThermalError::MissingColumn {
+            column: "_value",
+            context: "status row",
+        })?;
+        let value_f: f64 = value_str.parse().map_err(|_| ThermalError::FloatParse {
+            context: "status _value",
+            value: value_str.clone(),
+        })?;
+        out.push((t, value_f.round() as i32));
+    }
+    out.sort_by_key(|(t, _)| *t);
+    Ok(out)
+}
+
 fn query_flux_csv(
     influx_url: &str,
     org: &str,
     token: &str,
     flux: &str,
 ) -> ThermalResult<Vec<HashMap<String, String>>> {
-    let url = format!("{}/api/v2/query?org={}", influx_url.trim_end_matches('/'), org);
+    let url = format!(
+        "{}/api/v2/query?org={}",
+        influx_url.trim_end_matches('/'),
+        org
+    );
     let body = serde_json::json!({
         "query": flux,
         "type": "flux"
