@@ -68,9 +68,15 @@ Python files inside git submodules (`emonhub/`, `emoncms/`, `EmonScripts/`, `emo
 
 - Rust CLI is the canonical analytics tool for emoncms/SQLite workflows.
 - Thermal modelling/calibration originated in Python.
-- A Rust `thermal-calibrate` command now exists and reads data directly from InfluxDB using TOML config.
+- Rust thermal commands now implemented:
+  - `thermal-calibrate`
+  - `thermal-validate` (holdout windows + pass/fail thresholds)
+  - `thermal-fit-diagnostics` (period-by-period cooldown diagnostics parity)
+- Thermal runs now produce structured JSON artifacts under `artifacts/thermal/` including params, residuals, config hash, and git metadata.
 - Thermal code now has typed domain errors (`thermal::error::ThermalError`) and partial module split (`error`, `influx`, `report`) under `src/thermal/`.
-- Remaining thermal migration work is primarily `model` + `calibration` module extraction, validation/reporting hardening, and full lint-gate compliance across the whole project.
+- Canonical geometry is now consumed by Rust/Python with explicit stair-stack links (`hall→landing→top_landing→shower`) and plan-constrained internal wall UAs.
+- Optional public wind input (Open-Meteo) is available in Rust calibration config (`[wind]`); currently default-disabled because baseline 2-night fit was better without wind multiplier.
+- Remaining migration work is focused on command parity for `rooms`/`analyse`/`connections`/`equilibrium`/`moisture`, module decomposition, and lint/CI hardening.
 
 ## Target architecture
 
@@ -102,7 +108,13 @@ Python files inside git submodules (`emonhub/`, `emoncms/`, `EmonScripts/`, `emo
 ### Commands (target)
 
 - `thermal-calibrate` (implemented)
-- `thermal-validate` (planned)
+- `thermal-validate` (implemented)
+- `thermal-fit-diagnostics` (implemented)
+- `thermal-rooms` (planned)
+- `thermal-analyse` (planned)
+- `thermal-connections` (planned)
+- `thermal-equilibrium` (planned)
+- `thermal-moisture` (planned / lower priority)
 - `thermal-report` (planned)
 - `thermal-snapshot export|import` (planned, explicit + signed-off)
 
@@ -140,17 +152,19 @@ Target shape:
 
 ## Migration phases
 
-## Phase 1 — Freeze Python, establish Rust parity (in progress)
+## Phase 1 — Freeze Python, establish Rust parity (mostly complete)
 
 - [x] Add Rust `thermal-calibrate`
 - [x] Move calibration controls to TOML
 - [x] Use direct InfluxDB reads by default
 - [x] Introduce typed thermal domain errors (`thiserror`) and remove internal `anyhow` use in thermal modules
 - [x] Begin module split (`error`, `influx`, `report`)
+- [x] Add Rust `thermal-validate` for holdout nights
+- [x] Add Rust `thermal-fit-diagnostics` for period-by-period cooldown QA
 - [ ] Match/verify all relevant formulas vs `model/house.py`
 - [ ] Document intentional deltas
 
-Deliverable: Rust command produces equivalent calibration outputs for controlled test windows with typed, auditable error handling.
+Deliverable: Rust commands produce equivalent calibration + validation + cooldown diagnostics with typed, auditable error handling.
 
 ## Phase 2 — Port model capabilities from `house.py`
 
@@ -175,16 +189,17 @@ Port, in this order:
 
 Deliverable: all required outputs previously produced by Python are available via Rust commands.
 
-## Phase 3 — Validation hardening
+## Phase 3 — Validation hardening (in progress)
 
-- [ ] Golden test windows encoded in config
-- [ ] Deterministic run artifacts (JSON) with:
+- [x] Golden test windows encoded in config
+- [x] Deterministic run artifacts (JSON) with:
   - git SHA
   - config hash
   - window definitions
   - fitted params
   - residual metrics by room
 - [ ] Regression checks in CI (where feasible)
+- [ ] Add baseline comparison tooling (artifact-to-artifact diff and thresholds)
 
 Deliverable: reproducible, auditable calibration history.
 
@@ -246,9 +261,13 @@ Until full migration is complete:
 
 ## Immediate next actions
 
-1. Complete thermal module split: extract `model.rs` and `calibration.rs` from `src/thermal.rs`.
-2. Implement `thermal-validate` using Night 3 as holdout.
-3. Add JSON artifact output for calibration runs (git SHA, config hash, windows, params, residuals).
-4. Enforce lint gates in workflow (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check`) and clear current project-wide clippy failures.
-5. Mark `model/house.py` and `model/calibrate.py` as legacy once parity is confirmed.
-6. After Rust parity, execute Phase 5 input revalidation (XLSX + house-plan photos) before declaring model stable.
+1. Port `rooms` summary to Rust (`thermal-rooms`) for day-to-day model sanity checks.
+2. Port `analyse` summary to Rust (`thermal-analyse`) for daily energy-balance QA.
+3. Port `connections` view to Rust (`thermal-connections`) for topology debugging parity.
+4. Port equilibrium solver to Rust (`thermal-equilibrium`) to preserve intervention planning workflows.
+5. Decide moisture migration timing: either keep Python temporarily or port to `thermal-moisture` for full retirement.
+6. Complete thermal module split: extract `model.rs`, `calibration.rs`, `validation.rs`, `diagnostics.rs` from `src/thermal.rs`.
+7. Enforce lint gates in workflow (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check`) and clear current project-wide clippy failures.
+8. Add CI regression checks using saved thermal artifacts (fail on metric drift beyond threshold).
+9. Mark `model/house.py` and `model/calibrate.py` as legacy once command parity is confirmed.
+10. After Rust parity, execute Phase 5 input revalidation (XLSX + house-plan photos) before declaring model stable.
