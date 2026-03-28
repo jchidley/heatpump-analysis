@@ -303,14 +303,29 @@ Until full migration is complete:
 
 ## Immediate next actions
 
-1. Port `rooms` summary to Rust (`thermal-rooms`) for day-to-day model sanity checks.
-2. Port `analyse` summary to Rust (`thermal-analyse`) for daily energy-balance QA.
-3. Port `connections` view to Rust (`thermal-connections`) for topology debugging parity.
-4. Port equilibrium solver to Rust (`thermal-equilibrium`) to preserve intervention planning workflows.
-5. Decide moisture migration timing: either keep Python temporarily or port to `thermal-moisture` for full retirement.
-6. Complete thermal module split: extract `model.rs`, `calibration.rs`, `validation.rs`, `diagnostics.rs` from `src/thermal.rs`.
+### Remaining Python→Rust ports (5 commands)
+
+1. **`thermal-rooms`** — Room summary table (area, volume, thermal mass, T50, ext UA, ACH, pipe branch). Pure geometry, no InfluxDB. Low complexity.
+2. **`thermal-connections`** — Internal wall UA + doorway table. Pure geometry. Low complexity.
+3. **`thermal-analyse`** — Live energy balance snapshot: query latest room temps + HP state from InfluxDB, compute per-room heat flows at current instant. Medium complexity. High daily-use value. Most of the code exists in `thermal-operational`.
+4. **`thermal-equilibrium`** — Steady-state solver: given T_out + MWT, find room temps where all energy balances = 0. Python uses `scipy.fsolve` (Newton). Rust options: Gauss-Seidel relaxation (well-conditioned system), or `argmin`/`nalgebra` crate. High complexity, high strategic value (intervention planning).
+5. **`thermal-moisture`** — Overnight humidity analysis: AH tracking, surface RH, ACH cross-validation. Needs humidity queries + Magnus formula + Open-Meteo. Medium complexity. Lower priority — used occasionally for mould risk.
+
+After all 5 are ported, mark `model/house.py` as legacy and retire Python from the thermal model.
+
+### Infrastructure and quality
+
+6. Complete thermal module split: extract `model.rs`, `calibration.rs`, `validation.rs`, `diagnostics.rs` from `src/thermal.rs` (~3000 lines).
 7. Enforce lint gates in workflow (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check`) and clear current project-wide clippy failures.
 8. Maintain and review thermal regression baselines (`artifacts/thermal/baselines/*`) when intentional model changes are made.
    - Use `scripts/refresh-thermal-baselines.sh` after generating fresh artifacts.
-9. Mark `model/house.py` and `model/calibrate.py` as legacy once command parity is confirmed.
-10. After Rust parity, execute Phase 5 input revalidation (XLSX + house-plan photos) before declaring model stable.
+9. Add `thermal-operational` baseline to regression CI once operational output stabilises.
+
+### Model improvements (identified from operational validation, 28 Mar 2026)
+
+10. **Kitchen**: positive bias +0.245 — bare CH pipes in floor void provide unmodelled heat (~25W each side). Add pipe heat term to kitchen + bathroom energy balance.
+11. **Bathroom**: positive bias +0.250 — shower events add heat; door regime changes coupling. Consider shower-event detection from DHW flow data.
+12. **Office**: RMSE 1.020 — small room coupled to landing chimney. Will improve when landing chimney model is fixed.
+13. **Landing chimney**: current ACH-to-outside model is structurally wrong for heated operation (wrong sign 9/14 periods). Needs bidirectional inter-floor air exchange model replacing outdoor ventilation assumption.
+14. **Conservatory solar**: Open-Meteo NE irradiance is approximate. Future SE solar array (perpendicular to ground, pointing SE) will provide direct measurement. Architecture ready in `solar_gain_full`.
+15. **Wind sensitivity**: conservatory ACH varies 2-8× with wind. Optional wind model exists (`[wind]` config) but disabled. Consider per-room wind coupling for leaky rooms.
