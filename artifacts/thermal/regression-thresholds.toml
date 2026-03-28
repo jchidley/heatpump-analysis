@@ -1,0 +1,29 @@
+# Thermal artifact regression gates.
+# Used by src/bin/thermal-regression-check.rs and CI script.
+
+[global]
+enforce_command_match = true
+enforce_config_sha256_match = true
+
+[calibrate]
+# Allow small drift from baseline calibration artifact.
+final_score_abs_delta_max = 0.05
+rmse_night1_abs_delta_max = 0.05
+rmse_night2_abs_delta_max = 0.05
+param_abs_delta_max = 0.25
+
+[validate]
+# Aggregate holdout metrics should stay close to baseline.
+aggregate_rmse_abs_delta_max = 0.05
+aggregate_bias_abs_delta_max = 0.10
+aggregate_within_1c_drop_max = 0.03
+require_aggregate_pass = true
+
+[fit_diagnostics]
+# Cooldown parity gates.
+rmse_abs_delta_max = 0.05
+mae_abs_delta_max = 0.05
+median_ratio_abs_delta_max = 0.30
+records_count_drop_max = 0.15
+true_cooling_count_drop_max = 0.15
+param_abs_delta_max = 0.25

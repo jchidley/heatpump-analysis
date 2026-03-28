@@ -33,7 +33,15 @@ Also includes shell-based monitoring scripts deployed to pi5data, and extensive 
 | Octopus summary | `cargo run -- octopus` |
 | Gas vs HP comparison | `cargo run -- --all-data gas-vs-hp` |
 | Baseload analysis | `cargo run -- --all-data baseload` |
-| **Room thermal model** | |
+| **Rust thermal model** | |
+| Calibrate (cooldown) | `cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml` |
+| Validate (holdout) | `cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml` |
+| Fit diagnostics | `cargo run --bin heatpump-analysis -- thermal-fit-diagnostics --config model/thermal-config.toml` |
+| Operational validation | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
+| Snapshot export | `cargo run --bin heatpump-analysis -- thermal-snapshot export --config model/thermal-config.toml --signoff-reason "reason" --approved-by-human` |
+| Regression check | `bash scripts/thermal-regression-ci.sh` |
+| Refresh baselines | `bash scripts/refresh-thermal-baselines.sh` |
+| **Python thermal model (legacy)** | |
 | Fetch sensor data | `uv run --with influxdb-client --with numpy --with scipy python model/house.py fetch [hours]` |
 | Room summary | `uv run --with influxdb-client --with numpy --with scipy python model/house.py rooms` |
 | Energy balance | `uv run --with influxdb-client --with numpy --with scipy python model/house.py analyse` |
@@ -56,7 +64,9 @@ db.rs         → SQLite storage + DataFrame loading
 analysis.rs   → State machine + all Polars queries (no DB/API dependency)
 gaps.rs       → Gap detection + synthetic data (accesses SQLite directly)
 octopus.rs    → Octopus Energy integration + gas-vs-HP comparison
-main.rs       → CLI routing (20 subcommands)
+main.rs       → CLI routing (25+ subcommands)
+thermal.rs    → Thermal model: calibration, validation, operational, solar, snapshot
+thermal/      → Thermal submodules (error.rs, influx.rs, report.rs)
 scripts/      → Shell scripts deployed to pi5data (DHW trigger, eBUS polling)
 ```
 
@@ -144,6 +154,29 @@ Operating states classified by flow rate (Arotherm 5kW fixed pump = 14.3 L/min):
 
 Thresholds in `config.toml` `[thresholds]`. Originally 16.0/15.0 for DHW — tightened to 15.0/14.7 in March 2026 due to y-filter sludge reducing DHW flow. Safe because heating is software-clamped at 14.3. See `docs/hydraulic-analysis.md`.
 
+### eBUS state classification (Rust thermal model)
+
+The Rust `thermal-operational` command uses **`ebusd/poll/BuildingCircuitFlow`** (L/h) as the primary HP state classifier — NOT `StatuscodeNum`.
+
+| BuildingCircuitFlow | L/min | State | Notes |
+|---|---|---|---|
+| > 900 L/h | > 15.0 | **DHW** | ~1240 L/h = 20.7 L/min, diverter to cylinder |
+| 780–900 L/h | 13–15 | **Heating** | ~860 L/h = 14.3 L/min, normal CH circuit |
+| < 100 L/h | < 1.7 | **Off** | Standby/idle |
+
+**⚠ eBUS `StatuscodeNum` is unreliable for DHW detection.** Code 134 ("off/frost standby") appears during the entire 1–2 hour DHW cycle when the diverter switches flow to the cylinder. Code 34 (actual DHW code) appears only briefly (~10 min) during transitions. Mean-aggregating status codes (e.g., `mean(34, 100) = 67`) produces garbage — always use `last()` aggregation for status codes.
+
+Arotherm eBUS status codes observed (Mar 2026):
+- **34**: DHW (brief transition, ~90 min total in 4 days)
+- **100**: Off/standby (~620 min)
+- **101**: Standby warm (~205 min)
+- **103**: Pump overrun (~6 min)
+- **104**: Heating (~3989 min = 66h)
+- **107**: Heating transition (~12 min)
+- **133**: Frost protection (~5 min)
+- **134**: Off/frost standby (~800 min) — **also appears during DHW!**
+- **516**: DHW variant (~15 min)
+
 ## Feed Notes
 
 - `503101` (indoor_temp) = emonth2 sensor in **Leather room only**, not whole-house
@@ -221,6 +254,12 @@ Key facts for agents:
 - **Bathroom sensor was in airing cupboard until 25 Mar 2026 21:00.** All bathroom temp/humidity data before this time reads ~3°C high and humidity ~15% low. Moved to open wall. Historical bathroom data should NOT be used for model calibration without correction.
 - SNZB-02P OTA updates flood InfluxDB with ~4 readings/sec of spam during transfer. Delete the OTA period data from InfluxDB after each update.
 - `Heating needs for the house.xlsx`: Leather "Windows" uses ΔT=19°C but faces conservatory (internal, actual ΔT ≈ 0.5°C). All internal wall ΔT=5°C assumptions overestimate by 2-10× vs measured ~1.5°C.
+- **eBUS `StatuscodeNum` is unreliable for DHW detection** — code 134 appears during both standby AND active DHW heating. Use `BuildingCircuitFlow` (> 900 L/h = DHW, 780–900 = heating, < 100 = off). Never mean-aggregate status codes — use `last()`.
+- **PV calibration 0.087 is for the sloping PV plane**, not vertical. Divide by 1.4 to get vertical irradiance. Rust code handles this in `pv_to_sw_vertical_irradiance()`. Don't apply a tilt factor on top of 0.087 for sloping windows — that double-counts.
+- **Conservatory is not a modelable room** for heating purposes. 30m² of glass, sub-hour thermal time constant, massive solar/wind sensitivity, variable door coupling. Exclude from scoring. Use its sensor as a NE weather proxy.
+- **Landing chimney model breaks during heating** — predicts wrong sign 9/14 periods. ACH=1.30 to outside is correct for cooldown calibration but wrong for operational use where stairwell convection reverses. Keep excluded from scoring.
+- **Two binaries in the workspace** — `cargo run` is ambiguous. Use `cargo run --bin heatpump-analysis -- ...` for the main CLI, `cargo run --bin thermal-regression-check -- ...` for regression checks.
+- **`emon/heatpump/heatmeter_FlowRate`** reads ~1 L/min constantly — it's the DHW circuit heat meter, NOT the main CH circuit. Useless for state classification. Use `ebusd/poll/BuildingCircuitFlow` instead.
 
 ## Boundaries
 
@@ -272,7 +311,7 @@ Ground:  Leather   | Front         | Kitchen   (+ Conservatory, Hall)
 ```
 1st-floor ceilings are INTERNAL connections to loft rooms (U=0.44), not external.
 
-**Model accuracy (26 Mar 2026)**:
+**Model accuracy — cooldown calibration (26 Mar 2026, Python)**:
 
 | Mode | RMSE | Good | All within range |
 |---|---|---|---|
@@ -280,11 +319,36 @@ Ground:  Leather   | Front         | Kitchen   (+ Conservatory, Hall)
 | Warmup (8h) | 1.16°C | 7/13 | 11/13 (<2°C) |
 | Equilibrium | 1.2°C | 7/13 | 11/13 (<2°C) |
 
-Remaining outliers: kitchen equilibrium (−2.2°C, needs more doorway exchange), shower equilibrium (+2.1°C, same), elvina warmup (solar gain not modelled).
+**Model accuracy — operational validation (28 Mar 2026, Rust `thermal-operational`)**:
+
+Scored rooms = 11 (excluding conservatory + landing). 4-day range, 28 segments, BCF-based state classification, PV+Open-Meteo solar.
+
+| HP State | N records | RMSE °C/hr | MAE | Bias |
+|---|---|---|---|---|
+| **Off** | 40 | **0.128** | 0.096 | +0.001 |
+| **DHW** | 83 | **0.266** | 0.173 | +0.126 |
+| **Heating** | 117 | 0.472 | 0.223 | -0.006 |
+| **All** | 240 | **0.368** | 0.185 | +0.041 |
+
+Per-room (scored, all states): leather 0.100, sterling 0.059, hall 0.149, jackcarol 0.174, elvina 0.193, front 0.203, aldora 0.215 — all good. Shower 0.261, bathroom 0.383, kitchen 0.536 — mediocre (unmodelled heat sources). Office 1.020 — poor (coupled to landing chimney).
+
+Key insight: **every DHW cycle (~2h, twice daily) is a free cooldown experiment** — radiators off, rooms cool naturally. DHW periods provide ~4h/day of validation data.
+
+**Excluded rooms** (`model/thermal-config.toml` `exclude_rooms`):
+- **Conservatory**: glazed buffer (30m² glass), massive solar/wind sensitivity, untargetable by heating. RMSE 0.686 even with solar model. Gets +6°C in morning from NE sun, cools all afternoon. Variable door coupling to house changes thermal circuit topology.
+- **Landing**: chimney model structurally wrong for operational mode — gets wrong sign 9/14 periods. ACH=1.30 models stairwell airflow as outdoor ventilation loss, but it's actually bidirectional inter-floor air exchange. During heating, warm air rises and *heats* landing; model predicts *cooling*. Valid for cooldown calibration (weaker convection), invalid for operational use.
+
+Remaining outliers in scored rooms: kitchen (bare pipes in floor void, no radiator), bathroom (shower events, variable door regime), office (small room coupled to landing chimney).
 
 **Commands**: `fetch [hours]`, `rooms`, `connections`, `analyse`, `fit`, `equilibrium [T_out] [MWT] [solar_sw] [solar_ne]`, `moisture`
 
-**Solar gain model** (added 26 Mar 2026): `SolarGlazing` per room with area, orientation (SW/NE), tilt, g-value, shading factor. Calibrated from PV (EmonPi2 P3) vs room temp rise. Elvina's solar (1000W at 400 W/m²) exceeds her radiator (909W T50). Warmup RMSE: elvina 4.1→1.2°C. Key shading: office 0.05 (fabric blind), jack&carol 0.20 (blind set back), conservatory 0.14 (NE, shaded from ~11:00). House faces SW (front). **⚠ P3 CT scaling incorrect** — reads 6.7kW for 3.08kWp array. Scaling factor 0.087 W/m² per W calibrated from elvina's temp response. CT ratio needs fixing in emonpi config.
+**Solar gain model** (added 26 Mar 2026, refined 28 Mar 2026):
+- `SolarGlazing` per room with area, orientation (SW/NE), tilt, g-value, shading factor.
+- **SW irradiance**: PV (EmonPi2 P3) as proxy. PV calibration: 0.087 W/m² per W = irradiance on the **sloping PV plane** (same plane as elvina's velux). Divide by 1.4 to get vertical reference: 0.062 W/m² per W for vertical windows. Rust code applies tilt factor per-element (1.0× vertical, 1.4× sloping, 1.2× horizontal).
+- **NE irradiance**: Open-Meteo `direct_normal_irradiance` + `diffuse_radiation`, decomposed via solar geometry (Spencer solar position + surface angle-of-incidence) to NE vertical and NE horizontal surfaces. No local sensor for NE — future SE solar array planned (perpendicular to ground, pointing SE) will provide direct NE-adjacent measurement.
+- Key shading: office 0.05 (fabric blind), jack&carol 0.20 (blind set back), conservatory 0.14 (NE, shaded from ~11:00).
+- House faces SW (front). PV panels on elvina's sloping SW roof.
+- **⚠ P3 CT scaling incorrect** — reads 6.7kW for 3.08kWp array (includes Powerwall). CT ratio needs fixing in emonpi config. Used as relative proxy only.
 
 **Measured heat loss** (Night 2, all doors closed, T_out avg 5.0°C — pure fabric + ventilation):
 
@@ -345,12 +409,9 @@ EWI is the big win: **19% heat demand reduction**. At same 20°C target, HP runs
 ## Planned Enhancements
 
 See [docs/roadmap.md](docs/roadmap.md) for full details:
-- **eBUS integration into analysis** — eBUS is physically connected and publishing data (25+ values every 30s). Not yet used by the Rust analysis tool. Could validate or replace the flow-rate state machine using StatuscodeNum. The thermal model already uses StatuscodeNum for free-cooling detection.
+- ~~**eBUS integration into analysis**~~ — Done. Rust `thermal-operational` uses `BuildingCircuitFlow` from eBUS for HP state classification (heating/DHW/off) and `FlowTemp`/`ReturnTemp` for MWT. eBUS status codes (StatuscodeNum) are **unreliable for DHW detection** on the Arotherm — code 134 appears during both off AND DHW. Flow rate is definitive.
 - **Solar PV + battery** — system installed, details above. Self-consumption analysis, DHW scheduling to solar peak.
-- **Solar gain model** — PV generation (EmonPi2 P3, includes Powerwall) as irradiance proxy. House is **SW-facing** (front). Two solar faces:
-    - **SW** (front, hall, jackcarol, office, elvina): afternoon sun, peaks ~14:00-16:00. PV panels on elvina's sloping roof face same way.
-    - **NE** (conservatory glazed roof, sterling, aldora, bathroom, shower): morning sun only, shaded by ~11:00.
-  Measured 26 Mar 2026: elvina +1456W solar (451 W/m² glazing), front +408W, conservatory +1000W morning only. Elvina gets more solar than any radiator. PV P3 channel peaks 6.7kW for 3.08kWp array — includes Powerwall discharge, use as relative proxy only. Needs per-room orientation + g-values to model.
+- ~~**Solar gain model**~~ — Done in Rust `thermal-operational` (28 Mar 2026). PV (P3) for SW irradiance, Open-Meteo DNI+DHI decomposed via solar geometry for NE. Per-room glazing from `thermal_geometry.json`. PV calibration: 0.087 W/m² per W = sloping plane, ÷1.4 for vertical reference. Future **SE solar array** (perpendicular to ground, pointing SE) planned as direct irradiance sensor — architecture ready (`se_vertical` from Open-Meteo as placeholder, `("SE", _)` branch in `solar_gain_full`).
 - **Cost analysis subcommand** — tariff data and cost calculations could be a proper Rust subcommand.
 - ~~**Controlled cooldown experiments**~~ — Night 1 (24-25 Mar, doors normal, 7.5°C avg) and Night 2 (25-26 Mar, all doors closed, 5.0°C avg) complete. Calibrated doorway Cd=0.20 and landing chimney ACH=1.30. Bathroom sensor moved from airing cupboard to wall (was 3°C high).
 - ~~**Office + Landing sensors**~~ — added 24 Mar 2026. 13/13 room coverage complete.

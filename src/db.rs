@@ -49,9 +49,8 @@ pub fn open(path: &Path) -> Result<Connection> {
 pub fn sync_feeds(conn: &Connection, client: &Client) -> Result<Vec<Feed>> {
     let feeds = client.list_feeds()?;
 
-    let mut stmt = conn.prepare(
-        "INSERT OR REPLACE INTO feeds (id, name, tag, unit) VALUES (?1, ?2, ?3, ?4)",
-    )?;
+    let mut stmt =
+        conn.prepare("INSERT OR REPLACE INTO feeds (id, name, tag, unit) VALUES (?1, ?2, ?3, ?4)")?;
 
     for f in &feeds {
         stmt.execute(params![f.id, f.name, f.tag, f.unit])?;
@@ -179,7 +178,11 @@ pub fn sync_all(conn: &Connection, client: &Client) -> Result<SyncStats> {
     // Report database size
     stats.total_samples = conn.query_row("SELECT COUNT(*) FROM samples", [], |r| r.get(0))?;
     stats.db_size_bytes = conn
-        .query_row("SELECT page_count * page_size FROM pragma_page_count, pragma_page_size", [], |r| r.get(0))
+        .query_row(
+            "SELECT page_count * page_size FROM pragma_page_count, pragma_page_size",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
 
     Ok(stats)
@@ -252,17 +255,15 @@ fn load_dataframe_inner(
             .unwrap_or(false);
 
         if has_sim {
-            let mut stmt = conn.prepare(
-                &format!(
-                    "SELECT DISTINCT timestamp FROM simulated_samples
+            let mut stmt = conn.prepare(&format!(
+                "SELECT DISTINCT timestamp FROM simulated_samples
                      WHERE timestamp >= ?1 AND timestamp < ?2
                        AND timestamp NOT IN (
                            SELECT timestamp FROM samples
                            WHERE feed_id = '{}' AND timestamp >= ?1 AND timestamp < ?2
                        )",
-                    config::config().emoncms.feed_id("elec_power")
-                ),
-            )?;
+                config::config().emoncms.feed_id("elec_power")
+            ))?;
             let sim_ts: Vec<i64> = stmt
                 .query_map(params![start_ms, end_ms], |row| row.get(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -298,7 +299,10 @@ fn load_dataframe_inner(
 
     // Create timestamp column
     let dt_series = Series::new("timestamp".into(), &timestamps)
-        .cast(&DataType::Datetime(TimeUnit::Milliseconds, Some("UTC".into())))
+        .cast(&DataType::Datetime(
+            TimeUnit::Milliseconds,
+            Some("UTC".into()),
+        ))
         .context("Failed to create datetime column")?;
 
     let mut columns: Vec<Column> = vec![dt_series.into()];

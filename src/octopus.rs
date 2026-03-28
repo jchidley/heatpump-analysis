@@ -46,9 +46,15 @@ struct OctopusConfig {
     gas_correction_factor: f64,
 }
 
-fn default_gas_units() -> String { "m3".to_string() }
-fn default_calorific_value() -> f64 { 39.2 }
-fn default_correction_factor() -> f64 { 1.02264 }
+fn default_gas_units() -> String {
+    "m3".to_string()
+}
+fn default_calorific_value() -> f64 {
+    39.2
+}
+fn default_correction_factor() -> f64 {
+    1.02264
+}
 
 /// Convert gas m³ to kWh using standard UK formula.
 fn gas_m3_to_kwh(m3: f64, calorific_value: f64, correction_factor: f64) -> f64 {
@@ -73,9 +79,7 @@ struct WeatherRecord {
 ///
 /// Columns: timestamp (Datetime ms UTC), fuel (Utf8), kwh (f64)
 pub fn load_consumption(data_dir: Option<&Path>) -> Result<DataFrame> {
-    let dir = data_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(default_data_dir);
+    let dir = data_dir.map(PathBuf::from).unwrap_or_else(default_data_dir);
 
     // Load gas conversion config
     let config_path = dir.join("config.json");
@@ -135,7 +139,10 @@ pub fn load_consumption(data_dir: Option<&Path>) -> Result<DataFrame> {
     }
 
     let ts_series = Series::new("timestamp".into(), &timestamps)
-        .cast(&DataType::Datetime(TimeUnit::Milliseconds, Some("UTC".into())))
+        .cast(&DataType::Datetime(
+            TimeUnit::Milliseconds,
+            Some("UTC".into()),
+        ))
         .context("timestamp cast")?;
 
     let df = DataFrame::new(vec![
@@ -172,9 +179,7 @@ pub fn load_weather(
     db_conn: Option<&rusqlite::Connection>,
 ) -> Result<DataFrame> {
     // 1. Load ERA5 baseline from octopus project
-    let dir = data_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(default_data_dir);
+    let dir = data_dir.map(PathBuf::from).unwrap_or_else(default_data_dir);
     let path = dir.join("weather.json");
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
@@ -268,12 +273,7 @@ pub fn daily_totals(consumption: &DataFrame) -> Result<DataFrame> {
 
     // Extract date string from timestamp
     let daily = df
-        .with_column(
-            col("timestamp")
-                .dt()
-                .strftime("%Y-%m-%d")
-                .alias("date"),
-        )
+        .with_column(col("timestamp").dt().strftime("%Y-%m-%d").alias("date"))
         .group_by([col("date"), col("fuel")])
         .agg([col("kwh").sum()])
         .collect()
@@ -325,16 +325,28 @@ pub fn print_summary(consumption: &DataFrame, weather: &DataFrame) -> Result<()>
 
     println!("\n═══ Octopus Energy Data Summary ═══\n");
     println!("Coverage:     {} → {} ({} days)", first, last, n_days);
-    println!("Electricity:  {:.0} kWh total ({:.1} kWh/day avg)", elec_total, elec_total / n_days as f64);
-    println!("Gas:          {:.0} kWh total ({:.1} kWh/day avg over gas-era days)", gas_total, {
-        let gas_days = daily
-            .clone()
-            .lazy()
-            .filter(col("gas_kwh").gt(lit(0.0)))
-            .collect()?
-            .height();
-        if gas_days > 0 { gas_total / gas_days as f64 } else { 0.0 }
-    });
+    println!(
+        "Electricity:  {:.0} kWh total ({:.1} kWh/day avg)",
+        elec_total,
+        elec_total / n_days as f64
+    );
+    println!(
+        "Gas:          {:.0} kWh total ({:.1} kWh/day avg over gas-era days)",
+        gas_total,
+        {
+            let gas_days = daily
+                .clone()
+                .lazy()
+                .filter(col("gas_kwh").gt(lit(0.0)))
+                .collect()?
+                .height();
+            if gas_days > 0 {
+                gas_total / gas_days as f64
+            } else {
+                0.0
+            }
+        }
+    );
 
     // HDD summary by source
     let source_counts = weather
@@ -375,10 +387,7 @@ pub fn print_summary(consumption: &DataFrame, weather: &DataFrame) -> Result<()>
         .lazy()
         .with_column(col("date").str().head(lit(7)).alias("month"))
         .group_by([col("month")])
-        .agg([
-            col("elec_kwh").sum(),
-            col("gas_kwh").sum(),
-        ])
+        .agg([col("elec_kwh").sum(), col("gas_kwh").sum()])
         .sort(["month"], Default::default())
         .collect()?;
 
@@ -412,7 +421,11 @@ pub fn print_summary(consumption: &DataFrame, weather: &DataFrame) -> Result<()>
         let e = elecs.get(i).unwrap_or(0.0);
         let g = gases.get(i).unwrap_or(0.0);
         let h = hdds.get(i).unwrap_or(0.0);
-        let e_per_hdd = if h > 0.0 { format!("{:.1}", e / h) } else { "-".to_string() };
+        let e_per_hdd = if h > 0.0 {
+            format!("{:.1}", e / h)
+        } else {
+            "-".to_string()
+        };
         println!(
             "{:<10} {:>10.1} {:>10.1} {:>8.1} {:>10}",
             m, e, g, h, e_per_hdd
@@ -434,12 +447,7 @@ pub fn daily_hp_by_state(enriched_df: &DataFrame) -> Result<Vec<(String, f64, f6
     let daily = enriched_df
         .clone()
         .lazy()
-        .with_column(
-            col("timestamp")
-                .dt()
-                .strftime("%Y-%m-%d")
-                .alias("date"),
-        )
+        .with_column(col("timestamp").dt().strftime("%Y-%m-%d").alias("date"))
         // Heating energy
         .with_columns([
             when(col("state").eq(lit("heating")))
@@ -508,7 +516,10 @@ pub fn print_gas_vs_hp(
 
     println!("\n═══ Gas Era vs Heat Pump Era ═══\n");
     println!("Temperature sources:");
-    println!("  Gas era:  ERA5-Land + {:.1}°C bias correction (derived from 507-day overlap)", ERA5_BIAS_CORRECTION_C);
+    println!(
+        "  Gas era:  ERA5-Land + {:.1}°C bias correction (derived from 507-day overlap)",
+        ERA5_BIAS_CORRECTION_C
+    );
     println!("  HP era:   emoncms feed 503093 (Met Office hourly) where available");
     println!("  HDD base: {:.1}°C", config().thresholds.hdd_base_temp_c);
     println!("  HP data:  state machine (heating vs DHW vs defrost) from 10s samples");
@@ -516,14 +527,21 @@ pub fn print_gas_vs_hp(
 
     // Build HP daily lookup: date → (htg_elec, htg_heat, dhw_elec, dhw_heat)
     let hp_map: HashMap<String, (f64, f64, f64, f64)> = hp_by_state
-        .map(|data| data.iter().map(|(d, he, hh, de, dh)| (d.clone(), (*he, *hh, *de, *dh))).collect())
+        .map(|data| {
+            data.iter()
+                .map(|(d, he, hh, de, dh)| (d.clone(), (*he, *hh, *de, *dh)))
+                .collect()
+        })
         .unwrap_or_default();
 
     // Join daily totals with weather
     let joined = daily
         .lazy()
         .join(
-            weather.clone().lazy().select([col("date"), col("hdd"), col("tmean_c"), col("source")]),
+            weather
+                .clone()
+                .lazy()
+                .select([col("date"), col("hdd"), col("tmean_c"), col("source")]),
             [col("date")],
             [col("date")],
             JoinArgs::new(JoinType::Inner),
@@ -531,14 +549,19 @@ pub fn print_gas_vs_hp(
         .collect()?;
 
     for (label, filter_expr) in [
-        ("Gas era (heating season)", col("date").lt(lit(cutover)).and(col("gas_kwh").gt(lit(0.0))).and(col("hdd").gt(lit(0.5)))),
-        ("Heat pump era (heating)", col("date").gt_eq(lit(cutover)).and(col("hdd").gt(lit(0.5)))),
+        (
+            "Gas era (heating season)",
+            col("date")
+                .lt(lit(cutover))
+                .and(col("gas_kwh").gt(lit(0.0)))
+                .and(col("hdd").gt(lit(0.5))),
+        ),
+        (
+            "Heat pump era (heating)",
+            col("date").gt_eq(lit(cutover)).and(col("hdd").gt(lit(0.5))),
+        ),
     ] {
-        let era = joined
-            .clone()
-            .lazy()
-            .filter(filter_expr)
-            .collect()?;
+        let era = joined.clone().lazy().filter(filter_expr).collect()?;
 
         let n = era.height();
         if n == 0 {
@@ -563,8 +586,20 @@ pub fn print_gas_vs_hp(
 
         let src_str: Vec<String> = (0..src_counts.height())
             .map(|i| {
-                let s = src_counts.column("source").unwrap().str().unwrap().get(i).unwrap_or("?");
-                let c = src_counts.column("n").unwrap().u32().unwrap().get(i).unwrap_or(0);
+                let s = src_counts
+                    .column("source")
+                    .unwrap()
+                    .str()
+                    .unwrap()
+                    .get(i)
+                    .unwrap_or("?");
+                let c = src_counts
+                    .column("n")
+                    .unwrap()
+                    .u32()
+                    .unwrap()
+                    .get(i)
+                    .unwrap_or(0);
                 format!("{}×{}", c, s)
             })
             .collect();
@@ -579,16 +614,46 @@ pub fn print_gas_vs_hp(
             let dhw_gas = dhw_heat / config().gas_era.boiler_efficiency;
             let heating_gas = gas - dhw_gas;
 
-            println!("  Whole-house elec:{:.0} kWh ({:.1}/day)", octopus_elec, octopus_elec / n as f64);
-            println!("  Total gas:       {:.0} kWh ({:.1}/day)", gas, gas / n as f64);
-            println!("  Boiler eff:      {:.0}%%", config().gas_era.boiler_efficiency * 100.0);
+            println!(
+                "  Whole-house elec:{:.0} kWh ({:.1}/day)",
+                octopus_elec,
+                octopus_elec / n as f64
+            );
+            println!(
+                "  Total gas:       {:.0} kWh ({:.1}/day)",
+                gas,
+                gas / n as f64
+            );
+            println!(
+                "  Boiler eff:      {:.0}%%",
+                config().gas_era.boiler_efficiency * 100.0
+            );
             println!("  ── Heating ──");
-            println!("    Gas input:     {:.0} kWh ({:.1}/day)", heating_gas, heating_gas / n as f64);
-            println!("    Heat delivered:{:.0} kWh ({:.1}/day)", heating_heat, heating_heat / n as f64);
+            println!(
+                "    Gas input:     {:.0} kWh ({:.1}/day)",
+                heating_gas,
+                heating_gas / n as f64
+            );
+            println!(
+                "    Heat delivered:{:.0} kWh ({:.1}/day)",
+                heating_heat,
+                heating_heat / n as f64
+            );
             println!("    Heat/HDD:      {:.1} kWh/HDD", heating_heat / hdd);
-            println!("  ── DHW (est. {:.1} kWh/day) ──", config().gas_era.dhw_kwh_per_day);
-            println!("    Gas input:     {:.0} kWh ({:.1}/day)", dhw_gas, dhw_gas / n as f64);
-            println!("    Heat delivered:{:.0} kWh ({:.1}/day)", dhw_heat, dhw_heat / n as f64);
+            println!(
+                "  ── DHW (est. {:.1} kWh/day) ──",
+                config().gas_era.dhw_kwh_per_day
+            );
+            println!(
+                "    Gas input:     {:.0} kWh ({:.1}/day)",
+                dhw_gas,
+                dhw_gas / n as f64
+            );
+            println!(
+                "    Heat delivered:{:.0} kWh ({:.1}/day)",
+                dhw_heat,
+                dhw_heat / n as f64
+            );
         } else if !hp_map.is_empty() {
             // HP era — use state machine data
             let era_dates = era.column("date")?.str()?;
@@ -611,24 +676,65 @@ pub fn print_gas_vs_hp(
             if matched > 0 {
                 let total_hp_elec = htg_elec + dhw_elec;
                 let baseload = octopus_elec - total_hp_elec;
-                let htg_cop = if htg_elec > 0.0 { htg_heat / htg_elec } else { 0.0 };
-                let dhw_cop = if dhw_elec > 0.0 { dhw_heat / dhw_elec } else { 0.0 };
+                let htg_cop = if htg_elec > 0.0 {
+                    htg_heat / htg_elec
+                } else {
+                    0.0
+                };
+                let dhw_cop = if dhw_elec > 0.0 {
+                    dhw_heat / dhw_elec
+                } else {
+                    0.0
+                };
 
-                println!("  Whole-house elec:{:.0} kWh ({:.1}/day) (Octopus meter)", octopus_elec, octopus_elec / n as f64);
-                println!("  HP total elec:   {:.0} kWh ({:.1}/day) (SDM120, {} days)", total_hp_elec, total_hp_elec / matched as f64, matched);
-                println!("  Baseload:        {:.0} kWh ({:.1}/day) (house − HP)", baseload, baseload / matched as f64);
+                println!(
+                    "  Whole-house elec:{:.0} kWh ({:.1}/day) (Octopus meter)",
+                    octopus_elec,
+                    octopus_elec / n as f64
+                );
+                println!(
+                    "  HP total elec:   {:.0} kWh ({:.1}/day) (SDM120, {} days)",
+                    total_hp_elec,
+                    total_hp_elec / matched as f64,
+                    matched
+                );
+                println!(
+                    "  Baseload:        {:.0} kWh ({:.1}/day) (house − HP)",
+                    baseload,
+                    baseload / matched as f64
+                );
                 println!("  ── Heating (state machine) ──");
-                println!("    Elec input:    {:.0} kWh ({:.1}/day)", htg_elec, htg_elec / matched as f64);
-                println!("    Heat delivered:{:.0} kWh ({:.1}/day)", htg_heat, htg_heat / matched as f64);
+                println!(
+                    "    Elec input:    {:.0} kWh ({:.1}/day)",
+                    htg_elec,
+                    htg_elec / matched as f64
+                );
+                println!(
+                    "    Heat delivered:{:.0} kWh ({:.1}/day)",
+                    htg_heat,
+                    htg_heat / matched as f64
+                );
                 println!("    Heat/HDD:      {:.1} kWh/HDD", htg_heat / hdd);
                 println!("    Heating COP:   {:.2}", htg_cop);
                 println!("  ── DHW (state machine) ──");
-                println!("    Elec input:    {:.0} kWh ({:.1}/day)", dhw_elec, dhw_elec / matched as f64);
-                println!("    Heat delivered:{:.0} kWh ({:.1}/day)", dhw_heat, dhw_heat / matched as f64);
+                println!(
+                    "    Elec input:    {:.0} kWh ({:.1}/day)",
+                    dhw_elec,
+                    dhw_elec / matched as f64
+                );
+                println!(
+                    "    Heat delivered:{:.0} kWh ({:.1}/day)",
+                    dhw_heat,
+                    dhw_heat / matched as f64
+                );
                 println!("    DHW COP:       {:.2}", dhw_cop);
             }
         } else {
-            println!("  Whole-house elec:{:.0} kWh ({:.1}/day)", octopus_elec, octopus_elec / n as f64);
+            println!(
+                "  Whole-house elec:{:.0} kWh ({:.1}/day)",
+                octopus_elec,
+                octopus_elec / n as f64
+            );
         }
         println!();
     }
@@ -636,7 +742,10 @@ pub fn print_gas_vs_hp(
     // Summary comparison
     println!("── Like-for-like: heating only, per degree day ──\n");
     println!("  DHW stripped from both eras for fair comparison.");
-    println!("  Gas era: DHW estimated at {:.1} kWh/day (reference.rs).", config().gas_era.dhw_kwh_per_day);
+    println!(
+        "  Gas era: DHW estimated at {:.1} kWh/day (reference.rs).",
+        config().gas_era.dhw_kwh_per_day
+    );
     println!("  HP era:  DHW measured by state machine (flow rate threshold).");
     println!("  Any reduction in heat/HDD between eras reflects insulation");
     println!("  improvements (work overlapped both eras).");
@@ -648,10 +757,7 @@ pub fn print_gas_vs_hp(
 /// Print baseload analysis: whole-house electricity minus heat pump electricity.
 ///
 /// Requires both Octopus data and emoncms HP data loaded into the same time range.
-pub fn print_baseload(
-    consumption: &DataFrame,
-    hp_daily_elec: &[(String, f64)],
-) -> Result<()> {
+pub fn print_baseload(consumption: &DataFrame, hp_daily_elec: &[(String, f64)]) -> Result<()> {
     let daily = daily_totals(consumption)?;
 
     println!("\n═══ Baseload Analysis (Whole-House − Heat Pump) ═══\n");

@@ -195,7 +195,9 @@ pub fn load(path: &Path) -> Result<()> {
 
 /// Get a reference to the loaded config. Panics if [`load`] hasn't been called.
 pub fn config() -> &'static Config {
-    CONFIG.get().expect("config::load() must be called before config::config()")
+    CONFIG
+        .get()
+        .expect("config::load() must be called before config::config()")
 }
 
 impl Emoncms {

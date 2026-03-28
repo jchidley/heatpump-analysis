@@ -50,6 +50,34 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum ThermalSnapshotCommands {
+    /// Export explicit thermal reproducibility snapshot with signoff manifest
+    Export {
+        /// Path to thermal config TOML included in snapshot manifest
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+        /// Mandatory human signoff reason for snapshot creation
+        #[arg(long)]
+        signoff_reason: String,
+        /// Explicit human approval gate (required)
+        #[arg(long)]
+        approved_by_human: bool,
+    },
+    /// Import a previously exported thermal snapshot manifest
+    Import {
+        /// Path to snapshot manifest JSON
+        #[arg(long)]
+        manifest: String,
+        /// Mandatory human signoff reason for snapshot import
+        #[arg(long)]
+        signoff_reason: String,
+        /// Explicit human approval gate (required)
+        #[arg(long)]
+        approved_by_human: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
     /// List all available feeds from emoncms API
     Feeds,
@@ -112,6 +140,17 @@ enum Commands {
         /// Path to thermal calibration config TOML
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
+    },
+    /// Operational validation: predict room temps during normal heated operation
+    ThermalOperational {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+    },
+    /// Explicit thermal snapshot export/import workflow (human-gated)
+    ThermalSnapshot {
+        #[command(subcommand)]
+        action: ThermalSnapshotCommands,
     },
 }
 
@@ -458,6 +497,40 @@ fn main() -> Result<()> {
         Commands::ThermalFitDiagnostics { ref config } => {
             thermal::fit_diagnostics(std::path::Path::new(config))?;
         }
+
+        Commands::ThermalOperational { ref config } => {
+            thermal::operational_validate(std::path::Path::new(config))?;
+        }
+
+        Commands::ThermalSnapshot { ref action } => match action {
+            ThermalSnapshotCommands::Export {
+                config,
+                signoff_reason,
+                approved_by_human,
+            } => {
+                let manifest_path = thermal::snapshot_export(
+                    std::path::Path::new(config),
+                    signoff_reason,
+                    *approved_by_human,
+                )?;
+                println!(
+                    "Wrote thermal snapshot manifest: {}",
+                    manifest_path.display()
+                );
+            }
+            ThermalSnapshotCommands::Import {
+                manifest,
+                signoff_reason,
+                approved_by_human,
+            } => {
+                thermal::snapshot_import(
+                    std::path::Path::new(manifest),
+                    signoff_reason,
+                    *approved_by_human,
+                )?;
+                println!("Imported thermal snapshot from manifest: {}", manifest);
+            }
+        },
     }
 
     Ok(())

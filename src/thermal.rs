@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDateTime, TimeZone, Timelike, Utc};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -232,6 +232,24 @@ struct RoomResidual {
     predicted: f64,
     residual: f64,
     abs_residual: f64,
+    thermal_mass_kj_per_k: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct RoomHeatError {
+    room: String,
+    measured_w: f64,
+    predicted_w: f64,
+    error_w: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct WholeHouseMetrics {
+    measured_w: f64,
+    predicted_w: f64,
+    error_w: f64,
+    pred_over_meas: f64,
+    top_contributors: Vec<RoomHeatError>,
 }
 
 #[derive(Debug, Serialize)]
@@ -255,6 +273,7 @@ struct WindowValidation {
     wind_avg_ms: f64,
     wind_multiplier: f64,
     metrics: Metrics,
+    whole_house: WholeHouseMetrics,
     pass: bool,
     residuals: Vec<RoomResidual>,
 }
@@ -270,11 +289,12 @@ struct ThresholdResult {
 struct ValidationSummary {
     thresholds: ThresholdResult,
     aggregate_metrics: Metrics,
+    aggregate_whole_house: WholeHouseMetrics,
     aggregate_pass: bool,
     windows: Vec<WindowValidation>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct GitMeta {
     sha: Option<String>,
     dirty: bool,
@@ -344,6 +364,76 @@ struct ArtifactCalibrationParams {
     doorway_cd: f64,
 }
 
+// --- Operational validation structs ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+enum HpState {
+    Heating,
+    Dhw,
+    Off,
+}
+
+impl std::fmt::Display for HpState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HpState::Heating => write!(f, "heating"),
+            HpState::Dhw => write!(f, "dhw"),
+            HpState::Off => write!(f, "off"),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct OperationalRecord {
+    room: String,
+    period_start: String,
+    period_end: String,
+    hp_state: String,
+    mwt_avg_c: f64,
+    outside_avg_c: f64,
+    start_temp_c: f64,
+    end_temp_c: f64,
+    meas_rate_c_per_hr: f64,
+    pred_rate_c_per_hr: f64,
+    radiator_w: f64,
+    loss_w: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct OperationalSummary {
+    n: usize,
+    rmse: f64,
+    mae: f64,
+    bias: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct PerRoomOperationalSummary {
+    room: String,
+    n: usize,
+    rmse: f64,
+    mae: f64,
+    bias: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct OperationalArtifact {
+    schema_version: u32,
+    generated_at_utc: String,
+    command: String,
+    config_path: String,
+    config_sha256: String,
+    git: GitMeta,
+    range_start: String,
+    range_end: String,
+    calibrated_params: ArtifactCalibrationParams,
+    summary_all: OperationalSummary,
+    summary_by_state: Vec<(String, OperationalSummary)>,
+    per_room: Vec<PerRoomOperationalSummary>,
+    whole_house: WholeHouseMetrics,
+    records: Vec<OperationalRecord>,
+}
+
 #[derive(Debug, Serialize)]
 struct FitPeriod {
     start: String,
@@ -397,6 +487,15 @@ struct ExternalElement {
     to_ground: bool,
 }
 
+#[derive(Clone)]
+struct SolarGlazingDef {
+    area: f64,
+    orientation: &'static str, // "SW" or "NE"
+    tilt: &'static str,        // "vertical", "sloping", "horizontal"
+    g_value: f64,
+    shading: f64,
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 struct RoomDef {
@@ -407,6 +506,7 @@ struct RoomDef {
     construction: &'static str,
     radiators: Vec<RadiatorDef>,
     external_fabric: Vec<ExternalElement>,
+    solar: Vec<SolarGlazingDef>,
     sensor_topic: &'static str,
     ventilation_ach: f64,
     heat_recovery: f64,
@@ -476,6 +576,28 @@ struct GeometryFile {
 }
 
 #[derive(Debug, Deserialize)]
+struct GeometrySolarGlazing {
+    area: f64,
+    orientation: String,
+    #[serde(default = "default_vertical")]
+    tilt: String,
+    #[serde(default = "default_g_value")]
+    g_value: f64,
+    #[serde(default = "default_shading")]
+    shading: f64,
+}
+
+fn default_vertical() -> String {
+    "vertical".to_string()
+}
+fn default_g_value() -> f64 {
+    0.7
+}
+fn default_shading() -> f64 {
+    1.0
+}
+
+#[derive(Debug, Deserialize)]
 struct GeometryRoom {
     name: String,
     floor: String,
@@ -488,6 +610,8 @@ struct GeometryRoom {
     overnight_occupants: i32,
     radiators: Vec<GeometryRadiator>,
     external_fabric: Vec<GeometryExternalElement>,
+    #[serde(default)]
+    solar: Vec<GeometrySolarGlazing>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -590,6 +714,206 @@ fn fetch_open_meteo_wind(
             Some((fixed, *v))
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Solar geometry: compute irradiance on any oriented surface from DNI + DHI
+// ---------------------------------------------------------------------------
+
+/// Solar position (altitude and azimuth) from date/time and location.
+/// Uses simplified Spencer (1971) equations — accurate to ~1° for our purposes.
+/// Returns (altitude_rad, azimuth_rad) where azimuth is clockwise from north.
+fn solar_position(dt: DateTime<FixedOffset>, lat_deg: f64, lon_deg: f64) -> (f64, f64) {
+    let lat = lat_deg.to_radians();
+
+    // Day of year
+    let doy = dt.ordinal() as f64;
+    // Fractional hour (UTC)
+    let hour_utc = dt.hour() as f64 + dt.minute() as f64 / 60.0;
+
+    // Equation of time (minutes) — Spencer approximation
+    let b = (360.0_f64 / 365.0 * (doy - 81.0)).to_radians();
+    let eot = 9.87 * (2.0 * b).sin() - 7.53 * b.cos() - 1.5 * b.sin();
+
+    // Solar declination (radians)
+    let decl = 23.45_f64.to_radians() * (360.0_f64 / 365.0 * (doy + 284.0)).to_radians().sin();
+
+    // Solar time
+    let solar_time = hour_utc + (lon_deg / 15.0) + (eot / 60.0);
+    let hour_angle = ((solar_time - 12.0) * 15.0).to_radians();
+
+    // Altitude
+    let sin_alt = lat.sin() * decl.sin() + lat.cos() * decl.cos() * hour_angle.cos();
+    let altitude = sin_alt.asin();
+
+    // Azimuth (clockwise from north)
+    let cos_az = if altitude.cos().abs() > 1e-10 {
+        (decl.sin() - altitude.sin() * lat.sin()) / (altitude.cos() * lat.cos())
+    } else {
+        0.0
+    };
+    let mut azimuth = cos_az.clamp(-1.0, 1.0).acos();
+    if hour_angle > 0.0 {
+        azimuth = std::f64::consts::TAU - azimuth; // afternoon: azimuth > 180°
+    }
+
+    (altitude, azimuth)
+}
+
+/// Irradiance on a surface with given tilt and azimuth from DNI + DHI.
+/// surface_tilt: 0 = horizontal, π/2 = vertical.
+/// surface_azimuth: clockwise from north (e.g., SW = 225°, NE = 45°).
+/// Returns W/m² on the surface.
+fn surface_irradiance(
+    dni: f64,
+    dhi: f64,
+    solar_altitude: f64,
+    solar_azimuth: f64,
+    surface_tilt: f64,
+    surface_azimuth: f64,
+) -> f64 {
+    if solar_altitude <= 0.0 {
+        return 0.0; // Sun below horizon
+    }
+
+    // Angle of incidence on tilted surface
+    let cos_aoi = solar_altitude.sin() * surface_tilt.cos()
+        + solar_altitude.cos() * surface_tilt.sin() * (solar_azimuth - surface_azimuth).cos();
+    let cos_aoi = cos_aoi.max(0.0); // Surface facing away from sun
+
+    // Direct component on surface
+    let direct = dni * cos_aoi;
+
+    // Diffuse: isotropic sky model (Perez is better but overkill here)
+    // Sky view factor for tilted surface = (1 + cos(tilt)) / 2
+    let svf = (1.0 + surface_tilt.cos()) / 2.0;
+    let diffuse = dhi * svf;
+
+    direct + diffuse
+}
+
+/// Surface azimuth constants (clockwise from north, radians).
+const AZ_SW: f64 = 225.0 * std::f64::consts::PI / 180.0;
+const AZ_NE: f64 = 45.0 * std::f64::consts::PI / 180.0;
+const AZ_SE: f64 = 135.0 * std::f64::consts::PI / 180.0;
+const TILT_VERTICAL: f64 = std::f64::consts::FRAC_PI_2;
+const TILT_HORIZONTAL: f64 = 0.0;
+/// Sloping roof tilt (45°) — used by future per-surface irradiance refinements.
+#[allow(dead_code)]
+const TILT_SLOPING_45: f64 = std::f64::consts::FRAC_PI_4;
+
+/// Hourly solar data from Open-Meteo: (time, sw_vertical, ne_vertical, ne_horizontal)
+/// SW vertical is computed but only used as fallback when PV data is unavailable.
+struct HourlySolarIrradiance {
+    time: DateTime<FixedOffset>,
+    sw_vertical: f64,
+    ne_vertical: f64,
+    ne_horizontal: f64,
+    se_vertical: f64, // For future SE sensor array
+}
+
+/// Fetch hourly DNI + DHI from Open-Meteo and compute irradiance on SW/NE/SE surfaces.
+fn fetch_surface_irradiance(
+    latitude: f64,
+    longitude: f64,
+    start: DateTime<FixedOffset>,
+    end: DateTime<FixedOffset>,
+) -> Vec<HourlySolarIrradiance> {
+    let start_date = start.date_naive().to_string();
+    let end_date = end.date_naive().to_string();
+    let url = format!(
+        "https://archive-api.open-meteo.com/v1/archive?latitude={latitude}&longitude={longitude}&start_date={start_date}&end_date={end_date}&hourly=direct_normal_irradiance,diffuse_radiation&timezone=UTC"
+    );
+
+    let resp = match Client::new().get(&url).send() {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    #[derive(Debug, Deserialize)]
+    struct SolarHourly {
+        time: Vec<String>,
+        direct_normal_irradiance: Vec<f64>,
+        diffuse_radiation: Vec<f64>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct SolarResponse {
+        hourly: SolarHourly,
+    }
+
+    let parsed: SolarResponse = match resp.json() {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    parsed
+        .hourly
+        .time
+        .iter()
+        .zip(
+            parsed
+                .hourly
+                .direct_normal_irradiance
+                .iter()
+                .zip(parsed.hourly.diffuse_radiation.iter()),
+        )
+        .filter_map(|(t, (dni, dhi))| {
+            let naive = NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M").ok()?;
+            let utc = Utc.from_utc_datetime(&naive);
+            let fixed: DateTime<FixedOffset> = utc.with_timezone(&FixedOffset::east_opt(0)?);
+
+            let (alt, az) = solar_position(fixed, latitude, longitude);
+
+            let sw_v = surface_irradiance(*dni, *dhi, alt, az, TILT_VERTICAL, AZ_SW);
+            let ne_v = surface_irradiance(*dni, *dhi, alt, az, TILT_VERTICAL, AZ_NE);
+            let ne_h = surface_irradiance(*dni, *dhi, alt, az, TILT_HORIZONTAL, AZ_NE);
+            let se_v = surface_irradiance(*dni, *dhi, alt, az, TILT_VERTICAL, AZ_SE);
+
+            Some(HourlySolarIrradiance {
+                time: fixed,
+                sw_vertical: sw_v,
+                ne_vertical: ne_v,
+                ne_horizontal: ne_h,
+                se_vertical: se_v,
+            })
+        })
+        .collect()
+}
+
+/// Interpolate surface irradiance for a time window from hourly data.
+fn avg_irradiance_in_window(
+    solar: &[HourlySolarIrradiance],
+    start: DateTime<FixedOffset>,
+    end: DateTime<FixedOffset>,
+) -> (f64, f64, f64, f64) {
+    let in_window: Vec<&HourlySolarIrradiance> = solar
+        .iter()
+        .filter(|s| s.time >= start && s.time <= end)
+        .collect();
+
+    if in_window.is_empty() {
+        // Nearest point fallback
+        if let Some(nearest) = solar.iter().min_by_key(|s| {
+            let mid = start + (end - start) / 2;
+            (s.time - mid).num_seconds().unsigned_abs()
+        }) {
+            return (
+                nearest.sw_vertical,
+                nearest.ne_vertical,
+                nearest.ne_horizontal,
+                nearest.se_vertical,
+            );
+        }
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+
+    let n = in_window.len() as f64;
+    (
+        in_window.iter().map(|s| s.sw_vertical).sum::<f64>() / n,
+        in_window.iter().map(|s| s.ne_vertical).sum::<f64>() / n,
+        in_window.iter().map(|s| s.ne_horizontal).sum::<f64>() / n,
+        in_window.iter().map(|s| s.se_vertical).sum::<f64>() / n,
+    )
 }
 
 fn wind_multiplier_for_window(
@@ -771,6 +1095,17 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
     let exclude_rooms: HashSet<String> = cfg.objective.exclude_rooms.iter().cloned().collect();
     let mut window_results = Vec::new();
 
+    // Pre-compute thermal masses for all rooms (kJ/K)
+    let thermal_masses: HashMap<String, f64> = rooms
+        .iter()
+        .map(|(name, room)| {
+            (
+                name.clone(),
+                estimate_thermal_mass(room, &setup.connections),
+            )
+        })
+        .collect();
+
     println!("Config: {}", config_path.display());
     println!(
         "Calibrated params: leather_ach={:.2}, landing_ach={:.2}, conservatory_ach={:.2}, office_ach={:.2}, doorway_cd={:.2}",
@@ -801,8 +1136,10 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
             &measured,
             &predicted,
         );
-        let residuals = residuals_for_rooms(&measured, &predicted, Some(&exclude_rooms));
+        let residuals =
+            residuals_for_rooms(&measured, &predicted, Some(&exclude_rooms), &thermal_masses);
         let metrics = compute_metrics(&residuals);
+        let wh = whole_house_metrics(&residuals, 5);
         let pass = metrics.rmse <= cfg.validation.thresholds.rmse_max
             && metrics.bias.abs() <= cfg.validation.thresholds.bias_abs_max
             && metrics.within_1_0c >= cfg.validation.thresholds.within_1c_min;
@@ -816,6 +1153,17 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
             metrics.within_1_0c * 100.0,
             if pass { "PASS" } else { "FAIL" }
         );
+        println!(
+            "  whole-house: meas={:.0}W, pred={:.0}W, err={:+.0}W, pred/meas={:.2}",
+            wh.measured_w, wh.predicted_w, wh.error_w, wh.pred_over_meas
+        );
+        println!("  top error contributors:");
+        for c in &wh.top_contributors {
+            println!(
+                "    {:<14} meas={:>6.0}W  pred={:>6.0}W  err={:>+6.0}W",
+                c.room, c.measured_w, c.predicted_w, c.error_w
+            );
+        }
 
         window_results.push(WindowValidation {
             name: window.name,
@@ -826,6 +1174,7 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
             wind_avg_ms: wind_avg,
             wind_multiplier: wind_mult,
             metrics,
+            whole_house: wh,
             pass,
             residuals,
         });
@@ -836,6 +1185,54 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
         all_residuals.extend(w.residuals.iter().map(|r| r.residual));
     }
     let aggregate_metrics = compute_metrics_from_values(&all_residuals);
+
+    // Aggregate whole-house: sum across all windows
+    let agg_measured_w: f64 = window_results
+        .iter()
+        .map(|w| w.whole_house.measured_w)
+        .sum();
+    let agg_predicted_w: f64 = window_results
+        .iter()
+        .map(|w| w.whole_house.predicted_w)
+        .sum();
+    let agg_error_w = agg_predicted_w - agg_measured_w;
+    let agg_pred_over_meas = if agg_measured_w.abs() > 1e-9 {
+        agg_predicted_w / agg_measured_w
+    } else {
+        f64::NAN
+    };
+
+    // Aggregate top contributors across all windows
+    let mut agg_room_errors: HashMap<String, (f64, f64)> = HashMap::new();
+    for w in &window_results {
+        for r in &w.residuals {
+            let meas_w = r.measured * r.thermal_mass_kj_per_k / 3.6;
+            let pred_w = r.predicted * r.thermal_mass_kj_per_k / 3.6;
+            let entry = agg_room_errors.entry(r.room.clone()).or_insert((0.0, 0.0));
+            entry.0 += meas_w;
+            entry.1 += pred_w;
+        }
+    }
+    let mut agg_contributors: Vec<RoomHeatError> = agg_room_errors
+        .into_iter()
+        .map(|(room, (m, p))| RoomHeatError {
+            room,
+            measured_w: m,
+            predicted_w: p,
+            error_w: p - m,
+        })
+        .collect();
+    agg_contributors.sort_by(|a, b| b.error_w.abs().total_cmp(&a.error_w.abs()));
+    let agg_top: Vec<RoomHeatError> = agg_contributors.into_iter().take(5).collect();
+
+    let aggregate_whole_house = WholeHouseMetrics {
+        measured_w: agg_measured_w,
+        predicted_w: agg_predicted_w,
+        error_w: agg_error_w,
+        pred_over_meas: agg_pred_over_meas,
+        top_contributors: agg_top.clone(),
+    };
+
     let aggregate_pass = aggregate_metrics.rmse <= cfg.validation.thresholds.rmse_max
         && aggregate_metrics.bias.abs() <= cfg.validation.thresholds.bias_abs_max
         && aggregate_metrics.within_1_0c >= cfg.validation.thresholds.within_1c_min;
@@ -849,6 +1246,17 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
         aggregate_metrics.within_1_0c * 100.0,
         if aggregate_pass { "PASS" } else { "FAIL" }
     );
+    println!(
+        "  whole-house: meas={:.0}W, pred={:.0}W, err={:+.0}W, pred/meas={:.2}",
+        agg_measured_w, agg_predicted_w, agg_error_w, agg_pred_over_meas
+    );
+    println!("  top aggregate error contributors:");
+    for c in &agg_top {
+        println!(
+            "    {:<14} meas={:>6.0}W  pred={:>6.0}W  err={:>+6.0}W",
+            c.room, c.measured_w, c.predicted_w, c.error_w
+        );
+    }
 
     let validation = ValidationSummary {
         thresholds: ThresholdResult {
@@ -857,6 +1265,7 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
             within_1c_min: cfg.validation.thresholds.within_1c_min,
         },
         aggregate_metrics,
+        aggregate_whole_house,
         aggregate_pass,
         windows: window_results,
     };
@@ -1193,6 +1602,540 @@ pub fn fit_diagnostics(config_path: &Path) -> ThermalResult<()> {
     );
 
     Ok(())
+}
+
+/// Classify HP state from BuildingCircuitFlow (L/h).
+/// Arotherm Plus 5kW (from eBUS data analysis 2026-03-28):
+///   > 900 L/h (~15 L/min) = DHW (diverter open to cylinder, ~1240 L/h = 20.7 L/min)
+///   780-900 L/h (~13-15 L/min) = Heating (fixed pump ~860 L/h = 14.3 L/min)
+///   < 100 L/h = Off
+fn classify_hp_state_from_flow(flow_lph: f64) -> HpState {
+    if flow_lph > 900.0 {
+        HpState::Dhw
+    } else if flow_lph >= 780.0 {
+        HpState::Heating
+    } else {
+        HpState::Off
+    }
+}
+
+/// Segment flow rate series into contiguous periods of same HP state.
+fn segment_by_flow(
+    flow_rows: &[(DateTime<FixedOffset>, f64)],
+    min_period_hours: f64,
+) -> Vec<(DateTime<FixedOffset>, DateTime<FixedOffset>, HpState)> {
+    if flow_rows.is_empty() {
+        return Vec::new();
+    }
+
+    let mut segments = Vec::new();
+    let mut seg_start = flow_rows[0].0;
+    let mut seg_state = classify_hp_state_from_flow(flow_rows[0].1);
+
+    for &(t, flow) in &flow_rows[1..] {
+        let state = classify_hp_state_from_flow(flow);
+        if state != seg_state {
+            let hours = (t - seg_start).num_seconds() as f64 / 3600.0;
+            if hours >= min_period_hours {
+                segments.push((seg_start, t, seg_state));
+            }
+            seg_start = t;
+            seg_state = state;
+        }
+    }
+
+    // Close last segment
+    if let Some(&(t, _)) = flow_rows.last() {
+        let hours = (t - seg_start).num_seconds() as f64 / 3600.0;
+        if hours >= min_period_hours {
+            segments.push((seg_start, t, seg_state));
+        }
+    }
+
+    segments
+}
+
+pub fn operational_validate(config_path: &Path) -> ThermalResult<()> {
+    let (cfg_txt, cfg) = load_thermal_config(config_path)?;
+    let setup = prepare_calibration(&cfg)?;
+    let result = run_grid_search(
+        &cfg,
+        setup.rooms.clone(),
+        &setup.connections,
+        &setup.doors_n1,
+        &setup.doors_n2,
+        &setup.meas1,
+        &setup.avg1,
+        setup.outside1,
+        setup.wind_mult_n1,
+        &setup.meas2,
+        &setup.avg2,
+        setup.outside2,
+        setup.wind_mult_n2,
+    )?;
+
+    let mut rooms = build_rooms()?;
+    set_calibration_params(
+        &mut rooms,
+        result.leather_ach,
+        result.landing_ach,
+        result.conservatory_ach,
+        result.office_ach,
+    )?;
+
+    let fit_cfg = &cfg.fit_diagnostics;
+    let range_start = fit_cfg
+        .start
+        .as_deref()
+        .map(influx::parse_dt)
+        .transpose()?
+        .unwrap_or_else(|| setup.night1_start - chrono::Duration::hours(24));
+    let range_end = fit_cfg
+        .end
+        .as_deref()
+        .map(influx::parse_dt)
+        .transpose()?
+        .unwrap_or_else(|| Utc::now().fixed_offset());
+
+    let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
+    let token = std::env::var(&cfg.influx.token_env)
+        .map_err(|_| ThermalError::MissingEnv(cfg.influx.token_env.clone()))?;
+
+    let room_rows = influx::query_room_temps(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &sensor_topics,
+        &range_start,
+        &range_end,
+    )?;
+    let outside_rows = influx::query_outside_temp(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &range_start,
+        &range_end,
+    )?;
+    let bcf_rows = influx::query_building_circuit_flow(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &range_start,
+        &range_end,
+    )?;
+    let mwt_rows = influx::query_mwt(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &range_start,
+        &range_end,
+    )?;
+    let pv_rows = influx::query_pv_power(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &range_start,
+        &range_end,
+    )?;
+
+    // Fetch solar irradiance from Open-Meteo (DNI + DHI → surface irradiance)
+    let solar_irradiance = fetch_surface_irradiance(51.60, -0.11, range_start, range_end);
+
+    if bcf_rows.is_empty() {
+        return Err(ThermalError::NoStatusData);
+    }
+
+    let room_series = build_room_series(&room_rows, &rooms)?;
+    let connections = &setup.connections;
+    let doorways = build_doorways()?;
+
+    let thermal_masses: HashMap<String, f64> = rooms
+        .iter()
+        .map(|(name, room)| (name.clone(), estimate_thermal_mass(room, connections)))
+        .collect();
+
+    // Segment into periods by BuildingCircuitFlow (not status codes — unreliable for DHW)
+    // DHW cycles are typically 30 min to 2 hours; heating periods longer.
+    // Use 5 min minimum to avoid noise from brief transitions.
+    let segments = segment_by_flow(&bcf_rows, 5.0 / 60.0);
+
+    println!("Config: {}", config_path.display());
+    println!(
+        "Operational range: {} -> {}",
+        range_start.to_rfc3339(),
+        range_end.to_rfc3339()
+    );
+    println!(
+        "Calibrated params: leather_ach={:.2}, landing_ach={:.2}, conservatory_ach={:.2}, office_ach={:.2}, doorway_cd={:.2}",
+        result.leather_ach, result.landing_ach, result.conservatory_ach, result.office_ach, result.doorway_cd
+    );
+    println!(
+        "Found {} segments ({} heating, {} DHW, {} off)",
+        segments.len(),
+        segments.iter().filter(|s| s.2 == HpState::Heating).count(),
+        segments.iter().filter(|s| s.2 == HpState::Dhw).count(),
+        segments.iter().filter(|s| s.2 == HpState::Off).count(),
+    );
+
+    println!(
+        "\n{:<14} {:>7} {:>7} {:>7} {:>7} {:>6} {:>6} {:>8} {:>16}",
+        "Room", "Start", "End", "Meas", "Pred", "Rad", "Loss", "State", "Period"
+    );
+    println!(
+        "{:<14} {:>7} {:>7} {:>7} {:>7} {:>6} {:>6} {:>8}",
+        "", "°C", "°C", "°C/hr", "°C/hr", "W", "W", ""
+    );
+    println!("{}", "─".repeat(100));
+
+    let mut records = Vec::new();
+
+    for &(seg_start, seg_end, hp_state) in &segments {
+        // Average MWT during this segment
+        let mwt_in_seg: Vec<f64> = mwt_rows
+            .iter()
+            .filter(|(t, _)| *t >= seg_start && *t <= seg_end)
+            .map(|(_, v)| *v)
+            .collect();
+        let avg_mwt = if mwt_in_seg.is_empty() {
+            0.0
+        } else {
+            mwt_in_seg.iter().sum::<f64>() / mwt_in_seg.len() as f64
+        };
+
+        // For off/DHW periods, radiators contribute nothing
+        let effective_mwt = match hp_state {
+            HpState::Heating => avg_mwt,
+            _ => 0.0,
+        };
+
+        let outside_in_seg: Vec<f64> = outside_rows
+            .iter()
+            .filter(|(t, _)| *t >= seg_start && *t <= seg_end)
+            .map(|(_, v)| *v)
+            .collect();
+        let avg_outside = if outside_in_seg.is_empty() {
+            8.0
+        } else {
+            outside_in_seg.iter().sum::<f64>() / outside_in_seg.len() as f64
+        };
+
+        // Compute average room temps in this segment
+        let mut avg_temps = HashMap::new();
+        for (room_name, series) in &room_series {
+            let vals: Vec<f64> = series
+                .iter()
+                .filter(|(t, _)| *t >= seg_start && *t <= seg_end)
+                .map(|(_, v)| *v)
+                .collect();
+            if !vals.is_empty() {
+                avg_temps.insert(
+                    room_name.clone(),
+                    vals.iter().sum::<f64>() / vals.len() as f64,
+                );
+            }
+        }
+
+        let sleeping = {
+            let hour = seg_start.hour();
+            hour >= 22 || hour < 7
+        };
+
+        // Solar irradiance: PV for SW (direct measurement), Open-Meteo for NE/horizontal
+        let pv_in_seg: Vec<f64> = pv_rows
+            .iter()
+            .filter(|(t, _)| *t >= seg_start && *t <= seg_end)
+            .map(|(_, v)| *v)
+            .collect();
+        let pv_sw_vert = if pv_in_seg.is_empty() {
+            0.0
+        } else {
+            pv_to_sw_vertical_irradiance(pv_in_seg.iter().sum::<f64>() / pv_in_seg.len() as f64)
+        };
+
+        let (_meteo_sw, ne_vert, ne_horiz, _se_vert) =
+            avg_irradiance_in_window(&solar_irradiance, seg_start, seg_end);
+
+        // Use PV for SW (more accurate than Open-Meteo for this orientation)
+        let sw_vert = if pv_sw_vert > 0.0 {
+            pv_sw_vert
+        } else {
+            _meteo_sw // Fallback to Open-Meteo if no PV data
+        };
+
+        let period_str = format!(
+            "{}→{}",
+            seg_start.format("%m-%d %H:%M"),
+            seg_end.format("%H:%M")
+        );
+
+        for (room_name, series) in &room_series {
+            let temps_in_seg: Vec<(DateTime<FixedOffset>, f64)> = series
+                .iter()
+                .cloned()
+                .filter(|(t, _)| *t >= seg_start && *t <= seg_end)
+                .collect();
+            if temps_in_seg.len() < 2 {
+                continue;
+            }
+            let (first, last) = match (temps_in_seg.first(), temps_in_seg.last()) {
+                (Some(a), Some(b)) => (a, b),
+                _ => continue,
+            };
+            let hours = (last.0 - first.0).num_seconds() as f64 / 3600.0;
+            if hours < 0.25 {
+                continue;
+            }
+
+            let meas_rate = (first.1 - last.1) / hours;
+            let Some(room) = rooms.get(room_name) else {
+                continue;
+            };
+
+            let c = thermal_masses.get(room_name).copied().unwrap_or(0.0);
+
+            let bal = full_room_energy_balance(
+                room,
+                avg_temps.get(room_name).copied().unwrap_or(first.1),
+                avg_outside,
+                &avg_temps,
+                connections,
+                &doorways,
+                result.doorway_cd,
+                1.0,
+                effective_mwt,
+                sleeping,
+                sw_vert,
+                ne_vert,
+                ne_horiz,
+            );
+            let pred_rate = if c > 0.0 { -bal * 3.6 / c } else { 0.0 };
+
+            // Compute radiator contribution separately for reporting
+            let rad_w: f64 = if effective_mwt > 0.0 {
+                let rt = avg_temps.get(room_name).copied().unwrap_or(first.1);
+                room.radiators
+                    .iter()
+                    .filter(|r| r.active)
+                    .map(|r| radiator_output(r.t50, effective_mwt, rt))
+                    .sum()
+            } else {
+                0.0
+            };
+            let loss_w = bal - rad_w; // net loss (negative = losing heat)
+
+            println!(
+                "{:<14} {:>7.2} {:>7.2} {:>7.3} {:>7.3} {:>6.0} {:>6.0} {:>8} {:>16}",
+                room_name,
+                first.1,
+                last.1,
+                meas_rate,
+                pred_rate,
+                rad_w,
+                loss_w,
+                hp_state,
+                period_str
+            );
+
+            records.push(OperationalRecord {
+                room: room_name.clone(),
+                period_start: seg_start.to_rfc3339(),
+                period_end: seg_end.to_rfc3339(),
+                hp_state: hp_state.to_string(),
+                mwt_avg_c: effective_mwt,
+                outside_avg_c: avg_outside,
+                start_temp_c: first.1,
+                end_temp_c: last.1,
+                meas_rate_c_per_hr: meas_rate,
+                pred_rate_c_per_hr: pred_rate,
+                radiator_w: rad_w,
+                loss_w,
+            });
+        }
+    }
+
+    // Exclude rooms from scoring (still reported in per-record output above)
+    let exclude_rooms: HashSet<String> = cfg.objective.exclude_rooms.iter().cloned().collect();
+    let scored_records: Vec<&OperationalRecord> = records
+        .iter()
+        .filter(|r| !exclude_rooms.contains(&r.room))
+        .collect();
+    let scored_owned: Vec<OperationalRecord> =
+        scored_records.iter().map(|r| (*r).clone()).collect();
+
+    if !exclude_rooms.is_empty() {
+        println!("\nExcluded from scoring: {:?}", cfg.objective.exclude_rooms);
+    }
+
+    // Summaries (scored rooms only)
+    let summary_all = operational_summary(&scored_owned);
+    println!("\nSummary (scored rooms, all segments):");
+    println!(
+        "  N={}  RMSE={:.3} °C/hr  MAE={:.3} °C/hr  bias={:+.3} °C/hr",
+        summary_all.n, summary_all.rmse, summary_all.mae, summary_all.bias,
+    );
+
+    let mut summary_by_state = Vec::new();
+    for state_name in ["heating", "off", "dhw"] {
+        let subset: Vec<OperationalRecord> = scored_owned
+            .iter()
+            .filter(|r| r.hp_state == state_name)
+            .cloned()
+            .collect();
+        let s = operational_summary(&subset);
+        if s.n > 0 {
+            println!(
+                "  {}: N={}  RMSE={:.3}  MAE={:.3}  bias={:+.3}",
+                state_name, s.n, s.rmse, s.mae, s.bias,
+            );
+        }
+        summary_by_state.push((state_name.to_string(), s));
+    }
+
+    // Per-room summary (all rooms, but mark excluded)
+    let per_room = operational_summary_by_room(&records);
+    println!(
+        "\n{:<14} {:>4} {:>8} {:>8} {:>8} {}",
+        "Room", "N", "RMSE", "MAE", "Bias", ""
+    );
+    println!("{}", "─".repeat(52));
+    for row in &per_room {
+        let marker = if exclude_rooms.contains(&row.room) {
+            " (excluded)"
+        } else {
+            ""
+        };
+        println!(
+            "{:<14} {:>4} {:>8.3} {:>8.3} {:>+8.3}{}",
+            row.room, row.n, row.rmse, row.mae, row.bias, marker
+        );
+    }
+
+    // Whole-house weighted metrics (scored rooms only)
+    let wh_entries: Vec<RoomResidual> = {
+        let mut by_room: HashMap<String, (f64, f64, f64)> = HashMap::new();
+        for r in &scored_owned {
+            let c = thermal_masses.get(&r.room).copied().unwrap_or(0.0);
+            let entry = by_room.entry(r.room.clone()).or_insert((0.0, 0.0, 0.0));
+            entry.0 += r.meas_rate_c_per_hr;
+            entry.1 += r.pred_rate_c_per_hr;
+            entry.2 = c;
+        }
+        by_room
+            .into_iter()
+            .map(|(room, (m, p, c))| RoomResidual {
+                room,
+                measured: m,
+                predicted: p,
+                residual: p - m,
+                abs_residual: (p - m).abs(),
+                thermal_mass_kj_per_k: c,
+            })
+            .collect()
+    };
+    let wh = whole_house_metrics(&wh_entries, 5);
+    println!(
+        "\nWhole-house (scored rooms, thermal-mass weighted): meas={:.0}W, pred={:.0}W, err={:+.0}W, pred/meas={:.2}",
+        wh.measured_w, wh.predicted_w, wh.error_w, wh.pred_over_meas
+    );
+    println!("Top error contributors:");
+    for c in &wh.top_contributors {
+        println!(
+            "  {:<14} meas={:>6.0}W  pred={:>6.0}W  err={:>+6.0}W",
+            c.room, c.measured_w, c.predicted_w, c.error_w
+        );
+    }
+
+    // Write artifact
+    let artifact = OperationalArtifact {
+        schema_version: 1,
+        generated_at_utc: Utc::now().to_rfc3339(),
+        command: "thermal-operational".to_string(),
+        config_path: config_path.display().to_string(),
+        config_sha256: config_sha256(&cfg_txt),
+        git: git_meta(),
+        range_start: range_start.to_rfc3339(),
+        range_end: range_end.to_rfc3339(),
+        calibrated_params: ArtifactCalibrationParams {
+            leather_ach: result.leather_ach,
+            landing_ach: result.landing_ach,
+            conservatory_ach: result.conservatory_ach,
+            office_ach: result.office_ach,
+            doorway_cd: result.doorway_cd,
+        },
+        summary_all,
+        summary_by_state,
+        per_room,
+        whole_house: wh,
+        records,
+    };
+
+    let dir = Path::new("artifacts").join("thermal");
+    fs::create_dir_all(&dir).map_err(|source| ThermalError::ArtifactWrite {
+        path: dir.display().to_string(),
+        source,
+    })?;
+    let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let path = dir.join(format!("thermal-operational-{}.json", ts));
+    let json = serde_json::to_string_pretty(&artifact).map_err(ThermalError::ArtifactSerialize)?;
+    fs::write(&path, json).map_err(|source| ThermalError::ArtifactWrite {
+        path: path.display().to_string(),
+        source,
+    })?;
+    println!("\nWrote operational artifact: {}", path.display());
+
+    Ok(())
+}
+
+fn operational_summary(records: &[OperationalRecord]) -> OperationalSummary {
+    if records.is_empty() {
+        return OperationalSummary {
+            n: 0,
+            rmse: f64::NAN,
+            mae: f64::NAN,
+            bias: f64::NAN,
+        };
+    }
+    let errs: Vec<f64> = records
+        .iter()
+        .map(|r| r.pred_rate_c_per_hr - r.meas_rate_c_per_hr)
+        .collect();
+    let n = errs.len();
+    let rmse = (errs.iter().map(|e| e * e).sum::<f64>() / n as f64).sqrt();
+    let mae = errs.iter().map(|e| e.abs()).sum::<f64>() / n as f64;
+    let bias = errs.iter().sum::<f64>() / n as f64;
+    OperationalSummary { n, rmse, mae, bias }
+}
+
+fn operational_summary_by_room(records: &[OperationalRecord]) -> Vec<PerRoomOperationalSummary> {
+    let mut by_room: BTreeMap<String, Vec<&OperationalRecord>> = BTreeMap::new();
+    for r in records {
+        by_room.entry(r.room.clone()).or_default().push(r);
+    }
+    by_room
+        .into_iter()
+        .map(|(room, rows)| {
+            let errs: Vec<f64> = rows
+                .iter()
+                .map(|r| r.pred_rate_c_per_hr - r.meas_rate_c_per_hr)
+                .collect();
+            let n = errs.len();
+            let rmse = (errs.iter().map(|e| e * e).sum::<f64>() / n as f64).sqrt();
+            let mae = errs.iter().map(|e| e.abs()).sum::<f64>() / n as f64;
+            let bias = errs.iter().sum::<f64>() / n as f64;
+            PerRoomOperationalSummary {
+                room,
+                n,
+                rmse,
+                mae,
+                bias,
+            }
+        })
+        .collect()
 }
 
 fn detect_cooldown_periods(
@@ -1570,6 +2513,7 @@ fn residuals_for_rooms(
     measured: &HashMap<String, f64>,
     predicted: &HashMap<String, f64>,
     exclude: Option<&HashSet<String>>,
+    thermal_masses: &HashMap<String, f64>,
 ) -> Vec<RoomResidual> {
     let mut out = Vec::new();
     let mut keys: Vec<_> = measured.keys().cloned().collect();
@@ -1585,16 +2529,55 @@ fn residuals_for_rooms(
             continue;
         }
         let residual = predicted_v - measured_v;
+        let c_kj = thermal_masses.get(&room).copied().unwrap_or(0.0);
         out.push(RoomResidual {
             room,
             measured: measured_v,
             predicted: predicted_v,
             residual,
             abs_residual: residual.abs(),
+            thermal_mass_kj_per_k: c_kj,
         });
     }
 
     out
+}
+
+fn whole_house_metrics(residuals: &[RoomResidual], top_n: usize) -> WholeHouseMetrics {
+    let mut entries: Vec<RoomHeatError> = residuals
+        .iter()
+        .map(|r| {
+            // rate (°C/hr) * C (kJ/K) / 3.6 = W
+            let meas_w = r.measured * r.thermal_mass_kj_per_k / 3.6;
+            let pred_w = r.predicted * r.thermal_mass_kj_per_k / 3.6;
+            RoomHeatError {
+                room: r.room.clone(),
+                measured_w: meas_w,
+                predicted_w: pred_w,
+                error_w: pred_w - meas_w,
+            }
+        })
+        .collect();
+
+    let measured_w: f64 = entries.iter().map(|e| e.measured_w).sum();
+    let predicted_w: f64 = entries.iter().map(|e| e.predicted_w).sum();
+    let error_w = predicted_w - measured_w;
+    let pred_over_meas = if measured_w.abs() > 1e-9 {
+        predicted_w / measured_w
+    } else {
+        f64::NAN
+    };
+
+    entries.sort_by(|a, b| b.error_w.abs().total_cmp(&a.error_w.abs()));
+    let top_contributors: Vec<RoomHeatError> = entries.into_iter().take(top_n).collect();
+
+    WholeHouseMetrics {
+        measured_w,
+        predicted_w,
+        error_w,
+        pred_over_meas,
+        top_contributors,
+    }
 }
 
 fn compute_metrics(residuals: &[RoomResidual]) -> Metrics {
@@ -1668,6 +2651,18 @@ fn build_artifact(
     result: &CalibrationResult,
     validation: Option<ValidationSummary>,
 ) -> ThermalResult<CalibrationArtifact> {
+    // Compute thermal masses for artifact residuals
+    let thermal_masses: HashMap<String, f64> = setup
+        .rooms
+        .iter()
+        .map(|(name, room)| {
+            (
+                name.clone(),
+                estimate_thermal_mass(room, &setup.connections),
+            )
+        })
+        .collect();
+
     let calibration = ArtifactCalibration {
         leather_ach: result.leather_ach,
         landing_ach: result.landing_ach,
@@ -1678,8 +2673,8 @@ fn build_artifact(
         rmse_night2: result.r2,
         base_score: result.base_score,
         final_score: result.final_score,
-        night1: residuals_for_rooms(&setup.meas1, &result.pred1, None),
-        night2: residuals_for_rooms(&setup.meas2, &result.pred2, None),
+        night1: residuals_for_rooms(&setup.meas1, &result.pred1, None, &thermal_masses),
+        night2: residuals_for_rooms(&setup.meas2, &result.pred2, None, &thermal_masses),
     };
 
     Ok(CalibrationArtifact {
@@ -1736,6 +2731,218 @@ fn write_fit_artifact(prefix: &str, artifact: &FitDiagnosticsArtifact) -> Therma
         source,
     })?;
     Ok(path)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SnapshotFileEntry {
+    source_rel_path: String,
+    snapshot_rel_path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ThermalSnapshotManifest {
+    schema_version: u32,
+    generated_at_utc: String,
+    command: String,
+    signoff_reason: String,
+    git: GitMeta,
+    config_path: String,
+    config_sha256: String,
+    files: Vec<SnapshotFileEntry>,
+}
+
+pub fn snapshot_export(
+    config_path: &Path,
+    signoff_reason: &str,
+    approved_by_human: bool,
+) -> ThermalResult<PathBuf> {
+    if !approved_by_human {
+        return Err(ThermalError::HumanApprovalRequired);
+    }
+    if signoff_reason.trim().is_empty() {
+        return Err(ThermalError::EmptySignoffReason);
+    }
+
+    let cfg_txt = fs::read_to_string(config_path).map_err(|source| ThermalError::ConfigRead {
+        path: config_path.display().to_string(),
+        source,
+    })?;
+
+    let snapshot_root = Path::new("artifacts").join("thermal").join("snapshots");
+    fs::create_dir_all(&snapshot_root).map_err(|source| ThermalError::ArtifactWrite {
+        path: snapshot_root.display().to_string(),
+        source,
+    })?;
+
+    let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let out_dir = snapshot_root.join(format!("thermal-snapshot-{}", ts));
+    let files_dir = out_dir.join("files");
+    fs::create_dir_all(&files_dir).map_err(|source| ThermalError::ArtifactWrite {
+        path: files_dir.display().to_string(),
+        source,
+    })?;
+
+    let required_paths = [
+        "artifacts/thermal/baselines/thermal-calibrate-baseline.json",
+        "artifacts/thermal/baselines/thermal-validate-baseline.json",
+        "artifacts/thermal/baselines/thermal-fit-diagnostics-baseline.json",
+        "artifacts/thermal/regression-thresholds.toml",
+    ];
+
+    let mut entries = Vec::new();
+    for src_rel in required_paths {
+        let src = Path::new(src_rel);
+        let file_name = src
+            .file_name()
+            .and_then(|x| x.to_str())
+            .ok_or_else(|| ThermalError::InvalidSnapshotPath(src_rel.to_string()))?;
+        let dst_rel = format!("files/{file_name}");
+        let dst = out_dir.join(&dst_rel);
+
+        fs::copy(src, &dst).map_err(|source| ThermalError::SnapshotCopy {
+            from: src.display().to_string(),
+            to: dst.display().to_string(),
+            source,
+        })?;
+
+        let sha = sha256_file(&dst)?;
+        entries.push(SnapshotFileEntry {
+            source_rel_path: src_rel.to_string(),
+            snapshot_rel_path: dst_rel,
+            sha256: sha,
+        });
+    }
+
+    let cfg_copy_name = config_path
+        .file_name()
+        .and_then(|x| x.to_str())
+        .ok_or_else(|| ThermalError::InvalidSnapshotPath(config_path.display().to_string()))?;
+    let cfg_copy_rel = format!("files/{cfg_copy_name}");
+    let cfg_copy_path = out_dir.join(&cfg_copy_rel);
+    fs::copy(config_path, &cfg_copy_path).map_err(|source| ThermalError::SnapshotCopy {
+        from: config_path.display().to_string(),
+        to: cfg_copy_path.display().to_string(),
+        source,
+    })?;
+    entries.push(SnapshotFileEntry {
+        source_rel_path: config_path.display().to_string(),
+        snapshot_rel_path: cfg_copy_rel,
+        sha256: sha256_file(&cfg_copy_path)?,
+    });
+
+    let manifest = ThermalSnapshotManifest {
+        schema_version: 1,
+        generated_at_utc: Utc::now().to_rfc3339(),
+        command: "thermal-snapshot-export".to_string(),
+        signoff_reason: signoff_reason.trim().to_string(),
+        git: git_meta(),
+        config_path: config_path.display().to_string(),
+        config_sha256: config_sha256(&cfg_txt),
+        files: entries,
+    };
+
+    let manifest_path = out_dir.join("manifest.json");
+    let manifest_json =
+        serde_json::to_string_pretty(&manifest).map_err(ThermalError::ArtifactSerialize)?;
+    fs::write(&manifest_path, manifest_json).map_err(|source| ThermalError::ArtifactWrite {
+        path: manifest_path.display().to_string(),
+        source,
+    })?;
+
+    Ok(manifest_path)
+}
+
+pub fn snapshot_import(
+    manifest_path: &Path,
+    signoff_reason: &str,
+    approved_by_human: bool,
+) -> ThermalResult<()> {
+    if !approved_by_human {
+        return Err(ThermalError::HumanApprovalRequired);
+    }
+    if signoff_reason.trim().is_empty() {
+        return Err(ThermalError::EmptySignoffReason);
+    }
+
+    let manifest_txt =
+        fs::read_to_string(manifest_path).map_err(|source| ThermalError::SnapshotManifestRead {
+            path: manifest_path.display().to_string(),
+            source,
+        })?;
+    let manifest: ThermalSnapshotManifest =
+        serde_json::from_str(&manifest_txt).map_err(|source| {
+            ThermalError::SnapshotManifestParse {
+                path: manifest_path.display().to_string(),
+                source,
+            }
+        })?;
+
+    let root = manifest_path
+        .parent()
+        .ok_or_else(|| ThermalError::InvalidSnapshotPath(manifest_path.display().to_string()))?;
+
+    for entry in manifest.files {
+        let src_rel = sanitize_relative_path(&entry.snapshot_rel_path)?;
+        let dst_rel = sanitize_relative_path(&entry.source_rel_path)?;
+
+        let src = root.join(src_rel);
+        let dst = Path::new(".").join(dst_rel);
+
+        let src_sha = sha256_file(&src)?;
+        if src_sha != entry.sha256 {
+            return Err(ThermalError::InvalidSnapshotPath(format!(
+                "sha256 mismatch for {}",
+                src.display()
+            )));
+        }
+
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).map_err(|source| ThermalError::ArtifactWrite {
+                path: parent.display().to_string(),
+                source,
+            })?;
+        }
+
+        fs::copy(&src, &dst).map_err(|source| ThermalError::SnapshotCopy {
+            from: src.display().to_string(),
+            to: dst.display().to_string(),
+            source,
+        })?;
+    }
+
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> ThermalResult<String> {
+    let bytes = fs::read(path).map_err(|source| ThermalError::ConfigRead {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn sanitize_relative_path(input: &str) -> ThermalResult<PathBuf> {
+    let p = Path::new(input);
+    if p.is_absolute() {
+        return Err(ThermalError::InvalidSnapshotPath(input.to_string()));
+    }
+
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::Normal(seg) => out.push(seg),
+            _ => return Err(ThermalError::InvalidSnapshotPath(input.to_string())),
+        }
+    }
+
+    if out.as_os_str().is_empty() {
+        return Err(ThermalError::InvalidSnapshotPath(input.to_string()));
+    }
+
+    Ok(out)
 }
 
 fn set_calibration_params(
@@ -2015,6 +3222,91 @@ fn room_energy_balance(
     q_ext + q_vent + q_rad + q_body + q_solar + q_dhw + q_walls + q_doors
 }
 
+/// Full energy balance including radiator heat input from actual MWT.
+/// Returns net heat flow into room in Watts (positive = warming).
+#[allow(clippy::too_many_arguments)]
+fn full_room_energy_balance(
+    room: &RoomDef,
+    room_temp: f64,
+    outside_temp: f64,
+    all_temps: &HashMap<String, f64>,
+    connections: &[InternalConnection],
+    doorways: &[Doorway],
+    doorway_cd: f64,
+    wind_multiplier: f64,
+    mwt: f64,
+    sleeping: bool,
+    sw_vert: f64,
+    ne_vert: f64,
+    ne_horiz: f64,
+) -> f64 {
+    let name = room.name;
+    let vol = room.floor_area * room.ceiling_height;
+
+    let q_ext = -external_loss(&room.external_fabric, room_temp, outside_temp);
+    let q_vent = -ventilation_loss(
+        room.ventilation_ach,
+        vol,
+        room_temp,
+        outside_temp,
+        room.heat_recovery,
+        wind_multiplier,
+    );
+
+    let q_rad = if mwt > 0.0 {
+        room.radiators
+            .iter()
+            .filter(|r| r.active)
+            .map(|r| radiator_output(r.t50, mwt, room_temp))
+            .sum::<f64>()
+    } else {
+        0.0
+    };
+
+    let body_rate = if sleeping {
+        BODY_HEAT_SLEEPING_W
+    } else {
+        100.0 // BODY_HEAT_ACTIVE_W
+    };
+    let q_body = room.overnight_occupants as f64 * body_rate;
+    let q_solar = solar_gain_full(&room.solar, sw_vert, ne_vert, ne_horiz);
+
+    let mut q_dhw = 0.0;
+    if name == "bathroom" {
+        q_dhw = DHW_CYLINDER_UA * (DHW_CYLINDER_TEMP - room_temp).max(0.0)
+            + DHW_PIPE_LOSS_W
+            + DHW_SHOWER_W;
+    }
+
+    let mut q_walls = 0.0;
+    for conn in connections {
+        if conn.room_a == name {
+            if let Some(other_t) = virtual_room_temp(conn.room_b, all_temps) {
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t);
+            }
+        } else if conn.room_b == name {
+            if let Some(other_t) = virtual_room_temp(conn.room_a, all_temps) {
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t);
+            }
+        }
+    }
+
+    let mut q_doors = 0.0;
+    for door in doorways {
+        if door.room_a == name {
+            if let Some(other_t) = virtual_room_temp(door.room_b, all_temps) {
+                q_doors -= doorway_exchange(door, room_temp, other_t, doorway_cd);
+            }
+        } else if door.room_b == name {
+            if let Some(other_t) = virtual_room_temp(door.room_a, all_temps) {
+                q_doors -= doorway_exchange(door, room_temp, other_t, doorway_cd);
+            }
+        }
+    }
+
+    q_ext + q_vent + q_rad + q_body + q_solar + q_dhw + q_walls + q_doors
+}
+
 fn external_loss(elements: &[ExternalElement], room_temp: f64, outside_temp: f64) -> f64 {
     elements
         .iter()
@@ -2074,6 +3366,56 @@ fn doorway_exchange(door: &Doorway, temp_a: f64, temp_b: f64, doorway_cd: f64) -
 }
 
 #[allow(dead_code)]
+/// Solar gain through glazing in Watts.
+///
+/// All irradiance inputs are for **vertical** surfaces on their respective orientations.
+/// Tilt corrections applied per-element:
+///   - vertical: 1.0× (reference)
+///   - sloping (~45°): 1.4× (more exposure than vertical at UK latitudes in March)
+///   - horizontal: uses ne_horiz directly (already computed for horizontal plane)
+///
+/// sw_vert: W/m² on vertical SW surface (from PV, corrected to vertical reference).
+/// ne_vert: W/m² on vertical NE surface (from Open-Meteo solar geometry).
+/// ne_horiz: W/m² on horizontal surface (from Open-Meteo, for conservatory roof etc).
+fn solar_gain_full(solar: &[SolarGlazingDef], sw_vert: f64, ne_vert: f64, ne_horiz: f64) -> f64 {
+    solar
+        .iter()
+        .map(|sg| {
+            let irr = match (sg.orientation, sg.tilt) {
+                ("SW", "vertical") => sw_vert,
+                ("SW", "sloping") => sw_vert * 1.4,
+                ("SW", "horizontal") => sw_vert * 1.2,
+                ("NE", "horizontal") => ne_horiz,
+                ("NE", "vertical") => ne_vert,
+                ("NE", "sloping") => ne_vert * 1.4,
+                // SE placeholder: average of SW and NE until SE sensor is installed
+                ("SE", "vertical") => (sw_vert + ne_vert) / 2.0,
+                ("SE", _) => (sw_vert + ne_vert) / 2.0,
+                _ => ne_vert,
+            };
+            irr * sg.area * sg.g_value * sg.shading
+        })
+        .sum()
+}
+
+/// Convert PV power (W, negative = generating) to SW **vertical** irradiance (W/m²).
+///
+/// The PV panels sit on elvina's sloping roof (~45°, SW-facing).
+/// Calibration factor 0.087 W/m² per W of PV was fitted against elvina's temp response
+/// including her sloping velux — so it gives irradiance on the **sloping PV plane**.
+///
+/// Sloping surfaces receive ~1.4× more than vertical at these latitudes/season.
+/// We convert to vertical as the reference, since `solar_gain_full` selects the
+/// correct surface irradiance for each glazing element's actual tilt.
+const PV_TO_SLOPING_IRRADIANCE: f64 = 0.087;
+const SLOPING_TO_VERTICAL_RATIO: f64 = 1.4;
+
+fn pv_to_sw_vertical_irradiance(pv_watts: f64) -> f64 {
+    // PV reports negative when generating
+    let gen = (-pv_watts).max(0.0);
+    gen * PV_TO_SLOPING_IRRADIANCE / SLOPING_TO_VERTICAL_RATIO
+}
+
 fn radiator_output(t50: f64, mwt: f64, room_temp: f64) -> f64 {
     let dt = mwt - room_temp;
     if dt <= 0.0 {
@@ -2111,6 +3453,17 @@ fn build_rooms() -> ThermalResult<BTreeMap<String, RoomDef>> {
                     area: e.area,
                     u_value: e.u_value,
                     to_ground: e.to_ground,
+                })
+                .collect(),
+            solar: r
+                .solar
+                .into_iter()
+                .map(|s| SolarGlazingDef {
+                    area: s.area,
+                    orientation: leak(s.orientation),
+                    tilt: leak(s.tilt),
+                    g_value: s.g_value,
+                    shading: s.shading,
                 })
                 .collect(),
             sensor_topic: leak(r.sensor),

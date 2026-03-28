@@ -31,8 +31,8 @@ use crate::config::config;
 /// Gap in a feed's data.
 #[derive(Debug)]
 pub struct Gap {
-    pub start_ts: i64,   // unix ms, last real sample before gap
-    pub end_ts: i64,     // unix ms, first real sample after gap
+    pub start_ts: i64, // unix ms, last real sample before gap
+    pub end_ts: i64,   // unix ms, first real sample after gap
     pub duration_min: f64,
     pub elec_before: f64, // cumulative kWh at gap start
     pub elec_after: f64,  // cumulative kWh at gap end
@@ -87,12 +87,7 @@ pub fn find_gaps(conn: &Connection, min_gap_minutes: f64) -> Result<Vec<Gap>> {
 
     let rows: Vec<(i64, f64, Option<i64>, Option<f64>)> = stmt
         .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-            ))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -232,9 +227,9 @@ impl TempBinModel {
                 &mut heating_accum
             };
 
-            let entry = accum.entry(temp_bin).or_insert_with(|| {
-                (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
-            });
+            let entry = accum
+                .entry(temp_bin)
+                .or_insert_with(|| (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()));
             entry.0.push(elec);
             entry.1.push(heat);
             entry.2.push(flow_t);
@@ -250,30 +245,29 @@ impl TempBinModel {
         }
 
         // Convert accumulators to BinStats
-        let to_bins =
-            |accum: HashMap<i32, (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>)>,
-             total: &HashMap<i32, u64>|
-             -> HashMap<i32, BinStats> {
-                accum
-                    .into_iter()
-                    .map(|(temp, (e, h, ft, rt, fr))| {
-                        let n = e.len() as f64;
-                        let total_n = *total.get(&temp).unwrap_or(&1) as f64;
-                        (
-                            temp,
-                            BinStats {
-                                avg_elec: e.iter().sum::<f64>() / n,
-                                avg_heat: h.iter().sum::<f64>() / n,
-                                avg_flow_t: ft.iter().sum::<f64>() / n,
-                                avg_return_t: rt.iter().sum::<f64>() / n,
-                                avg_flow_rate: fr.iter().sum::<f64>() / n,
-                                fraction_running: n / total_n,
-                                _count: e.len() as u64,
-                            },
-                        )
-                    })
-                    .collect()
-            };
+        let to_bins = |accum: HashMap<i32, (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>)>,
+                       total: &HashMap<i32, u64>|
+         -> HashMap<i32, BinStats> {
+            accum
+                .into_iter()
+                .map(|(temp, (e, h, ft, rt, fr))| {
+                    let n = e.len() as f64;
+                    let total_n = *total.get(&temp).unwrap_or(&1) as f64;
+                    (
+                        temp,
+                        BinStats {
+                            avg_elec: e.iter().sum::<f64>() / n,
+                            avg_heat: h.iter().sum::<f64>() / n,
+                            avg_flow_t: ft.iter().sum::<f64>() / n,
+                            avg_return_t: rt.iter().sum::<f64>() / n,
+                            avg_flow_rate: fr.iter().sum::<f64>() / n,
+                            fraction_running: n / total_n,
+                            _count: e.len() as u64,
+                        },
+                    )
+                })
+                .collect()
+        };
 
         let heating_bins = to_bins(heating_accum, &total_by_temp);
         let dhw_bins = to_bins(dhw_accum, &total_by_temp);
@@ -391,9 +385,21 @@ pub fn fill_gap(conn: &Connection, gap: &Gap, model: &TempBinModel) -> Result<u6
 
         let (elec, heat, ft, rt, fr) = if is_dhw_minute {
             if let Some(dhw) = model.get_dhw(temp_bin) {
-                (dhw.avg_elec, dhw.avg_heat, dhw.avg_flow_t, dhw.avg_return_t, dhw.avg_flow_rate)
+                (
+                    dhw.avg_elec,
+                    dhw.avg_heat,
+                    dhw.avg_flow_t,
+                    dhw.avg_return_t,
+                    dhw.avg_flow_rate,
+                )
             } else if let Some(stats) = model.get_heating(temp_bin) {
-                (stats.avg_elec, stats.avg_heat, stats.avg_flow_t, stats.avg_return_t, stats.avg_flow_rate)
+                (
+                    stats.avg_elec,
+                    stats.avg_heat,
+                    stats.avg_flow_t,
+                    stats.avg_return_t,
+                    stats.avg_flow_rate,
+                )
             } else {
                 continue;
             }
@@ -411,7 +417,13 @@ pub fn fill_gap(conn: &Connection, gap: &Gap, model: &TempBinModel) -> Result<u6
                 });
                 continue;
             }
-            (stats.avg_elec, stats.avg_heat, stats.avg_flow_t, stats.avg_return_t, stats.avg_flow_rate)
+            (
+                stats.avg_elec,
+                stats.avg_heat,
+                stats.avg_flow_t,
+                stats.avg_return_t,
+                stats.avg_flow_rate,
+            )
         } else {
             continue;
         };
@@ -626,11 +638,9 @@ pub fn print_gap_report(conn: &Connection) -> Result<()> {
     );
 
     let sim_count: u64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM simulated_samples",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM simulated_samples", [], |row| {
+            row.get(0)
+        })
         .unwrap_or(0);
     println!("Simulated samples in DB: {}", sim_count);
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit canonical geometry usage and key dimensional consistency.
+"""Full-schema audit for canonical thermal geometry.
 
 Usage:
   uv run python model/audit_model_dimensions.py
@@ -16,44 +16,39 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-INV_PATH = ROOT / "model" / "data" / "inventory" / "house_inventory.json"
 GEO_PATH = ROOT / "data" / "canonical" / "thermal_geometry.json"
 PY_MODEL = ROOT / "model" / "house.py"
 RS_MODEL = ROOT / "src" / "thermal.rs"
 OUT_CSV = ROOT / "model" / "data" / "inventory" / "model_dimension_audit.csv"
 
 
-def room_lookup(geo: dict[str, Any], room: str) -> dict[str, Any]:
-    for r in geo["rooms"]:
-        if r["name"] == room:
-            return r
-    return {}
-
-
-def fabric_area(room: dict[str, Any], label_contains: str) -> float | None:
-    for e in room.get("external_fabric", []):
-        if label_contains.lower() in e["description"].lower():
-            return float(e["area"])
-    return None
-
-
-def inv_room(inv: dict[str, Any], room: str) -> dict[str, Any]:
-    for r in inv.get("room_dimension_summary", []):
-        if r.get("room") == room:
-            return r
-    return {}
+def flatten_leaf_paths(obj: Any, prefix: str = "") -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "provenance":
+                continue
+            p = f"{prefix}.{k}" if prefix else k
+            out.update(flatten_leaf_paths(v, p))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            p = f"{prefix}[{i}]"
+            out.update(flatten_leaf_paths(v, p))
+    else:
+        out[prefix] = obj
+    return out
 
 
 def main() -> None:
-    inv = json.loads(INV_PATH.read_text())
-    geo = json.loads(GEO_PATH.read_text())
+    geo = json.loads(GEO_PATH.read_text(encoding="utf-8"))
+    provenance = geo.get("provenance", {})
 
     py_text = PY_MODEL.read_text(encoding="utf-8")
     rs_text = RS_MODEL.read_text(encoding="utf-8")
 
     rows: list[dict[str, Any]] = []
 
-    # 1) Model wiring checks (no magic dims in source; geometry loaded from file)
+    # Wiring checks
     rows.append(
         {
             "check": "python_uses_canonical_geometry_file",
@@ -71,42 +66,44 @@ def main() -> None:
         }
     )
 
-    # 2) Key metric consistency: canonical geometry vs inventory/xlsx-derived canonical values
-    checks = [
-        ("Conservatory", "floor_area_m2", room_lookup(geo, "conservatory").get("floor_area")),
-        ("Conservatory", "external_wall_area_m2", fabric_area(room_lookup(geo, "conservatory"), "External Wall")),
-        ("Conservatory", "roof_area_m2", fabric_area(room_lookup(geo, "conservatory"), "Roof")),
-        ("Conservatory", "window_area_m2", fabric_area(room_lookup(geo, "conservatory"), "Windows")),
-        ("Elvina", "window_area_m2", fabric_area(room_lookup(geo, "elvina"), "Windows")),
-        ("Elvina", "velux_area_m2", fabric_area(room_lookup(geo, "elvina"), "Velux")),
-        ("Aldora", "window_area_m2", fabric_area(room_lookup(geo, "aldora"), "Windows")),
-        ("Shower", "window_area_m2", fabric_area(room_lookup(geo, "shower"), "Windows")),
-    ]
+    # Full-schema provenance coverage
+    leaves = flatten_leaf_paths(geo)
+    for path, value in sorted(leaves.items()):
+        prov = provenance.get(path)
+        if not isinstance(prov, dict):
+            rows.append(
+                {
+                    "check": f"provenance:{path}",
+                    "expected": "present",
+                    "actual": "missing",
+                    "status": "mismatch",
+                }
+            )
+            continue
 
-    # XLSX overrides in inventory for changed windows
-    cross = {r["metric"]: r for r in inv.get("dimension_cross_reference", [])}
-    override = {
-        "Aldora": cross.get("aldora_window_area_total", {}).get("canonical_value"),
-        "Shower": cross.get("shower_window_area_total", {}).get("canonical_value"),
-    }
-
-    for room, metric, geo_val in checks:
-        inv_val = inv_room(inv, room).get(metric)
-        if room in override and override[room] is not None and metric == "window_area_m2":
-            inv_val = override[room]
-
-        status = "missing"
-        if isinstance(geo_val, (int, float)) and isinstance(inv_val, (int, float)):
-            status = "match" if abs(float(geo_val) - float(inv_val)) <= 1e-6 else "mismatch"
-
+        source_type = prov.get("source_type")
+        source_ref = prov.get("source_ref")
+        ok = isinstance(source_type, str) and source_type and isinstance(source_ref, str) and source_ref
         rows.append(
             {
-                "check": f"{room.lower()}_{metric}",
-                "expected": inv_val,
-                "actual": geo_val,
-                "status": status,
+                "check": f"provenance:{path}",
+                "expected": "source_type+source_ref",
+                "actual": f"{source_type}|{source_ref}",
+                "status": "match" if ok else "mismatch",
             }
         )
+
+    # Extra provenance entries not mapping to geometry leaves
+    for path in sorted(provenance.keys()):
+        if path not in leaves:
+            rows.append(
+                {
+                    "check": f"provenance_extra:{path}",
+                    "expected": "leaf_path",
+                    "actual": "extra_entry",
+                    "status": "mismatch",
+                }
+            )
 
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
     with OUT_CSV.open("w", newline="", encoding="utf-8") as f:
@@ -118,8 +115,8 @@ def main() -> None:
     print(f"Wrote {OUT_CSV}")
     print(f"Checks: {len(rows)}")
     print(f"Mismatches: {len(mismatches)}")
-    for r in mismatches:
-        print(f"  {r['check']}: actual={r['actual']} expected={r['expected']} ({r['status']})")
+    for r in mismatches[:50]:
+        print(f"  {r['check']}: actual={r['actual']} expected={r['expected']}")
 
 
 if __name__ == "__main__":

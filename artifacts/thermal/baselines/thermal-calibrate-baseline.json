@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-03-28T07:07:35.063497481+00:00",
+  "command": "thermal-calibrate",
+  "config_path": "model/thermal-config.toml",
+  "config_sha256": "ec9477eba620a77a58ea655f239c6b917bdad8547a419a290e6dd3ad654589de",
+  "git": {
+    "sha": "14b295647a39d3fd5269ed2d876797d54df4da12",
+    "dirty": true
+  },
+  "calibration_windows": [
+    {
+      "name": "night1",
+      "start": "2026-03-24T23:10:00+00:00",
+      "end": "2026-03-25T05:05:00+00:00"
+    },
+    {
+      "name": "night2",
+      "start": "2026-03-25T23:10:00+00:00",
+      "end": "2026-03-26T05:05:00+00:00"
+    }
+  ],
+  "calibration": {
+    "leather_ach": 0.6,
+    "landing_ach": 1.3,
+    "conservatory_ach": 4.5,
+    "office_ach": 3.6,
+    "doorway_cd": 0.2,
+    "rmse_night1": 0.09634722931274996,
+    "rmse_night2": 0.050821008650213786,
+    "base_score": 0.07358411898148187,
+    "final_score": 0.07358411898148187,
+    "night1": [
+      {
+        "room": "aldora",
+        "measured": 0.16874999999999973,
+        "predicted": 0.12581760446553725,
+        "residual": -0.042932395534462486,
+        "abs_residual": 0.042932395534462486,
+        "thermal_mass_kj_per_k": 2107.8678481012657
+      },
+      {
+        "room": "bathroom",
+        "measured": 0.4298507462686565,
+        "predicted": 0.5269234758012382,
+        "residual": 0.09707272953258173,
+        "abs_residual": 0.09707272953258173,
+        "thermal_mass_kj_per_k": 3920.1600000000003
+      },
+      {
+        "room": "conservatory",
+        "measured": 0.5538461538461532,
+        "predicted": 0.7732747698298879,
+        "residual": 0.21942861598373464,
+        "abs_residual": 0.21942861598373464,
+        "thermal_mass_kj_per_k": 7101.233924050633
+      },
+      {
+        "room": "elvina",
+        "measured": 0.20307692307692332,
+        "predicted": 0.11416752608219487,
+        "residual": -0.08890939699472845,
+        "abs_residual": 0.08890939699472845,
+        "thermal_mass_kj_per_k": 3886.029746835443
+      },
+      {
+        "room": "front",
+        "measured": 0.4,
+        "predicted": 0.32343906941164374,
+        "residual": -0.07656093058835628,
+        "abs_residual": 0.07656093058835628,
+        "thermal_mass_kj_per_k": 4984.680799999999
+      },
+      {
+        "room": "hall",
+        "measured": 0.3176470588235295,
+        "predicted": 0.2530636762025887,
+        "residual": -0.06458338262094082,
+        "abs_residual": 0.06458338262094082,
+        "thermal_mass_kj_per_k": 4937.386399999999
+      },
+      {
+        "room": "jackcarol",
+        "measured": 0.21176470588235344,
+        "predicted": 0.1720649290641428,
+        "residual": -0.03969977681821063,
+        "abs_residual": 0.03969977681821063,
+        "thermal_mass_kj_per_k": 4349.3364
+      },
+      {
+        "room": "kitchen",
+        "measured": 0.36363636363636365,
+        "predicted": 0.24077827979492974,
+        "residual": -0.1228580838414339,
+        "abs_residual": 0.1228580838414339,
+        "thermal_mass_kj_per_k": 4810.256000000001
+      },
+      {
+        "room": "landing",
+        "measured": 0.41249999999999987,
+        "predicted": -0.39105257657391806,
+        "residual": -0.803552576573918,
+        "abs_residual": 0.803552576573918,
+        "thermal_mass_kj_per_k": 1121.6399999999999
+      },
+      {
+        "room": "leather",
+        "measured": 0.1988571428571429,
+        "predicted": 0.2741606175055297,
+        "residual": 0.07530347464838683,
+        "abs_residual": 0.07530347464838683,
+        "thermal_mass_kj_per_k": 4907.36
+      },
+      {
+        "room": "office",
+        "measured": 0.39999999999999986,
+        "predicted": 0.37253752420589675,
+        "residual": -0.027462475794103103,
+        "abs_residual": 0.027462475794103103,
+        "thermal_mass_kj_per_k": 2226.3864000000003
+      },
+      {
+        "room": "shower",
+        "measured": 0.27936507936507904,
+        "predicted": 0.1808047411584802,
+        "residual": -0.09856033820659885,
+        "abs_residual": 0.09856033820659885,
+        "thermal_mass_kj_per_k": 970.3774481012659
+      },
+      {
+        "room": "sterling",
+        "measured": 0.0750000000000004,
+        "predicted": 0.11009483974893113,
+        "residual": 0.035094839748930726,
+        "abs_residual": 0.035094839748930726,
+        "thermal_mass_kj_per_k": 5201.76
+      }
+    ],
+    "night2": [
+      {
+        "room": "aldora",
+        "measured": 0.19047619047619047,
+        "predicted": 0.1699757927719815,
+        "residual": -0.020500397704208972,
+        "abs_residual": 0.020500397704208972,
+        "thermal_mass_kj_per_k": 2107.8678481012657
+      },
+      {
+        "room": "bathroom",
+        "measured": 0.2062499999999996,
+        "predicted": 0.27409102520881773,
+        "residual": 0.06784102520881813,
+        "abs_residual": 0.06784102520881813,
+        "thermal_mass_kj_per_k": 3920.1600000000003
+      },
+      {
+        "room": "conservatory",
+        "measured": 0.8687500000000002,
+        "predicted": 0.7380249337934554,
+        "residual": -0.1307250662065449,
+        "abs_residual": 0.1307250662065449,
+        "thermal_mass_kj_per_k": 7101.233924050633
+      },
+      {
+        "room": "elvina",
+        "measured": 0.2647058823529412,
+        "predicted": 0.21095422504713868,
+        "residual": -0.0537516573058025,
+        "abs_residual": 0.0537516573058025,
+        "thermal_mass_kj_per_k": 3886.029746835443
+      },
+      {
+        "room": "front",
+        "measured": 0.3876923076923073,
+        "predicted": 0.3851861063662609,
+        "residual": -0.0025062013260463978,
+        "abs_residual": 0.0025062013260463978,
+        "thermal_mass_kj_per_k": 4984.680799999999
+      },
+      {
+        "room": "hall",
+        "measured": 0.38181818181818145,
+        "predicted": 0.3216177146943208,
+        "residual": -0.060200467123860624,
+        "abs_residual": 0.060200467123860624,
+        "thermal_mass_kj_per_k": 4937.386399999999
+      },
+      {
+        "room": "jackcarol",
+        "measured": 0.2163934426229511,
+        "predicted": 0.20987587886528286,
+        "residual": -0.006517563757668238,
+        "abs_residual": 0.006517563757668238,
+        "thermal_mass_kj_per_k": 4349.3364
+      },
+      {
+        "room": "kitchen",
+        "measured": 0.24000000000000013,
+        "predicted": 0.24456331220705602,
+        "residual": 0.004563312207055886,
+        "abs_residual": 0.004563312207055886,
+        "thermal_mass_kj_per_k": 4810.256000000001
+      },
+      {
+        "room": "landing",
+        "measured": 0.2584615384615382,
+        "predicted": 0.5929744469060161,
+        "residual": 0.3345129084444779,
+        "abs_residual": 0.3345129084444779,
+        "thermal_mass_kj_per_k": 1121.6399999999999
+      },
+      {
+        "room": "leather",
+        "measured": 0.41464788732394303,
+        "predicted": 0.3838415102119527,
+        "residual": -0.030806377111990357,
+        "abs_residual": 0.030806377111990357,
+        "thermal_mass_kj_per_k": 4907.36
+      },
+      {
+        "room": "office",
+        "measured": 0.5818181818181817,
+        "predicted": 0.5901749542393079,
+        "residual": 0.008356772421126202,
+        "abs_residual": 0.008356772421126202,
+        "thermal_mass_kj_per_k": 2226.3864000000003
+      },
+      {
+        "room": "shower",
+        "measured": 0.20307692307692332,
+        "predicted": 0.23714843480791967,
+        "residual": 0.034071511730996346,
+        "abs_residual": 0.034071511730996346,
+        "thermal_mass_kj_per_k": 970.3774481012659
+      },
+      {
+        "room": "sterling",
+        "measured": 0.09523809523809523,
+        "predicted": 0.10614351898542966,
+        "residual": 0.010905423747334428,
+        "abs_residual": 0.010905423747334428,
+        "thermal_mass_kj_per_k": 5201.76
+      }
+    ]
+  }
+}

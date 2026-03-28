@@ -409,7 +409,7 @@
       "ceiling_height": 2.4,
       "construction": "timber",
       "sensor": "zigbee2mqtt/landing_temp_humid",
-      "ventilation_ach": 1.3,
+      "ventilation_ach": 0.3,
       "heat_recovery": 0.0,
       "overnight_occupants": 0,
       "radiators": [],
@@ -421,6 +421,20 @@
           "to_ground": false
         }
       ],
+      "solar": []
+    },
+    {
+      "name": "top_landing",
+      "floor": "Loft",
+      "floor_area": 2.0,
+      "ceiling_height": 2.2,
+      "construction": "timber",
+      "sensor": "virtual/top_landing",
+      "ventilation_ach": 0.2,
+      "heat_recovery": 0.0,
+      "overnight_occupants": 0,
+      "radiators": [],
+      "external_fabric": [],
       "solar": []
     },
     {
@@ -579,7 +593,7 @@
     {
       "room_a": "bathroom",
       "room_b": "landing",
-      "ua": 9.48,
+      "ua": 2.90976,
       "description": "Internal wall"
     },
     {
@@ -597,7 +611,7 @@
     {
       "room_a": "front",
       "room_b": "leather",
-      "ua": 23.700000000000003,
+      "ua": 15.1176,
       "description": "Internal wall"
     },
     {
@@ -609,19 +623,19 @@
     {
       "room_a": "hall",
       "room_b": "front",
-      "ua": 18.296400000000002,
+      "ua": 26.7656,
       "description": "Internal wall"
     },
     {
       "room_a": "hall",
       "room_b": "kitchen",
-      "ua": 14.22,
+      "ua": 18.7708,
       "description": "Internal wall"
     },
     {
       "room_a": "hall",
       "room_b": "leather",
-      "ua": 11.850000000000001,
+      "ua": 21.9252,
       "description": "Internal wall"
     },
     {
@@ -639,13 +653,13 @@
     {
       "room_a": "jackcarol",
       "room_b": "landing",
-      "ua": 9.48,
+      "ua": 12.29704,
       "description": "Internal wall"
     },
     {
       "room_a": "jackcarol",
       "room_b": "office",
-      "ua": 14.22,
+      "ua": 10.03824,
       "description": "Internal wall"
     },
     {
@@ -657,13 +671,13 @@
     {
       "room_a": "kitchen",
       "room_b": "front",
-      "ua": 18.5808,
+      "ua": 11.9632,
       "description": "Internal wall"
     },
     {
       "room_a": "kitchen",
       "room_b": "leather",
-      "ua": 18.96,
+      "ua": 7.1228,
       "description": "Internal wall"
     },
     {
@@ -687,7 +701,7 @@
     {
       "room_a": "office",
       "room_b": "landing",
-      "ua": 7.11,
+      "ua": 12.48336,
       "description": "Internal wall"
     },
     {
@@ -699,19 +713,19 @@
     {
       "room_a": "sterling",
       "room_b": "bathroom",
-      "ua": 14.22,
+      "ua": 7.11904,
       "description": "Internal wall"
     },
     {
       "room_a": "sterling",
       "room_b": "jackcarol",
-      "ua": 23.700000000000003,
+      "ua": 16.50632,
       "description": "Internal wall"
     },
     {
       "room_a": "sterling",
       "room_b": "landing",
-      "ua": 9.48,
+      "ua": 18.95144,
       "description": "Internal wall"
     }
   ],
@@ -766,7 +780,7 @@
       "state": "open"
     },
     {
-      "room_a": "landing",
+      "room_a": "top_landing",
       "room_b": "shower",
       "width": 0.7,
       "height": 2.0,
@@ -778,6 +792,2043 @@
       "width": 0.8,
       "height": 2.0,
       "state": "closed"
+    },
+    {
+      "room_a": "landing",
+      "room_b": "top_landing",
+      "width": 0.9,
+      "height": 2.2,
+      "state": "chimney"
     }
-  ]
+  ],
+  "provenance": {
+    "rooms[0].floor_area": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[0].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D59"
+    },
+    "rooms[0].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[0].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[0].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[0].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[0].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[0].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[0].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[0].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G9"
+    },
+    "rooms[0].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[0].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[0].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[0].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E59"
+    },
+    "rooms[0].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F59"
+    },
+    "rooms[0].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[0].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[0].external_fabric[1].area": {
+      "source_type": "scan_or_manual",
+      "source_ref": "scan_dimension_points / canonical_geometry"
+    },
+    "rooms[0].external_fabric[1].u_value": {
+      "source_type": "u_value_library",
+      "source_ref": "config/spec assumptions"
+    },
+    "rooms[0].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[0].external_fabric[2].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[0].external_fabric[2].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E61"
+    },
+    "rooms[0].external_fabric[2].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F61"
+    },
+    "rooms[0].external_fabric[2].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[0].external_fabric[3].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[0].external_fabric[3].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E62"
+    },
+    "rooms[0].external_fabric[3].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F62"
+    },
+    "rooms[0].external_fabric[3].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[0].solar[0].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[0].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[0].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[0].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[0].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[1].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[1].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[1].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[1].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[0].solar[1].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[1].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E12"
+    },
+    "rooms[1].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D13"
+    },
+    "rooms[1].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[1].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[1].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[1].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[1].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[1].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[1].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[1].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G10"
+    },
+    "rooms[1].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[1].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[1].radiators[1].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G11"
+    },
+    "rooms[1].radiators[1].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[1].radiators[1].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[1].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[1].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E13"
+    },
+    "rooms[1].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F13"
+    },
+    "rooms[1].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[1].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[1].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E16"
+    },
+    "rooms[1].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F16"
+    },
+    "rooms[1].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[2].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E77"
+    },
+    "rooms[2].ceiling_height": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[2].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[2].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[2].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[2].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[2].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[2].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[2].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[2].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G13"
+    },
+    "rooms[2].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[2].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[2].radiators[1].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G14"
+    },
+    "rooms[2].radiators[1].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[2].radiators[1].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[2].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[2].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E76"
+    },
+    "rooms[2].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F76"
+    },
+    "rooms[2].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[2].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[2].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E77"
+    },
+    "rooms[2].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F77"
+    },
+    "rooms[2].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[2].external_fabric[2].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[2].external_fabric[2].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E78"
+    },
+    "rooms[2].external_fabric[2].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F78"
+    },
+    "rooms[2].external_fabric[2].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[2].external_fabric[3].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[2].external_fabric[3].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E79"
+    },
+    "rooms[2].external_fabric[3].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F79"
+    },
+    "rooms[2].external_fabric[3].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[2].solar[0].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[0].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[0].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[0].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[0].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[1].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[1].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[1].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[1].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[2].solar[1].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].floor_area": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[3].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D63"
+    },
+    "rooms[3].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[3].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[3].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[3].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[3].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[3].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[3].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[3].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G15"
+    },
+    "rooms[3].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[3].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[3].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[3].external_fabric[0].area": {
+      "source_type": "scan_or_manual",
+      "source_ref": "scan_dimension_points / canonical_geometry"
+    },
+    "rooms[3].external_fabric[0].u_value": {
+      "source_type": "u_value_library",
+      "source_ref": "config/spec assumptions"
+    },
+    "rooms[3].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[3].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[3].external_fabric[1].area": {
+      "source_type": "scan_or_manual",
+      "source_ref": "scan_dimension_points / canonical_geometry"
+    },
+    "rooms[3].external_fabric[1].u_value": {
+      "source_type": "u_value_library",
+      "source_ref": "config/spec assumptions"
+    },
+    "rooms[3].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[3].external_fabric[2].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[3].external_fabric[2].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E65"
+    },
+    "rooms[3].external_fabric[2].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F65"
+    },
+    "rooms[3].external_fabric[2].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[3].external_fabric[3].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[3].external_fabric[3].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E66"
+    },
+    "rooms[3].external_fabric[3].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F66"
+    },
+    "rooms[3].external_fabric[3].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[3].solar[0].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[0].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[0].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[0].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[0].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[1].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[1].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[1].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[1].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[3].solar[1].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[4].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E22"
+    },
+    "rooms[4].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D24"
+    },
+    "rooms[4].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[4].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[4].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[4].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[4].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[4].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[4].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[4].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G16"
+    },
+    "rooms[4].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[4].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[4].radiators[1].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G17"
+    },
+    "rooms[4].radiators[1].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[4].radiators[1].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[4].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[4].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E24"
+    },
+    "rooms[4].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F24"
+    },
+    "rooms[4].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[4].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[4].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E22"
+    },
+    "rooms[4].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F22"
+    },
+    "rooms[4].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[4].external_fabric[2].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[4].external_fabric[2].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E26"
+    },
+    "rooms[4].external_fabric[2].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F26"
+    },
+    "rooms[4].external_fabric[2].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[4].solar[0].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[4].solar[0].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[4].solar[0].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[4].solar[0].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[4].solar[0].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[5].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E27"
+    },
+    "rooms[5].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D29"
+    },
+    "rooms[5].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[5].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[5].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[5].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[5].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[5].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[5].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[5].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G18"
+    },
+    "rooms[5].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[5].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[5].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[5].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E29"
+    },
+    "rooms[5].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F29"
+    },
+    "rooms[5].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[5].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[5].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E27"
+    },
+    "rooms[5].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F27"
+    },
+    "rooms[5].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[5].external_fabric[2].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[5].external_fabric[2].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E31"
+    },
+    "rooms[5].external_fabric[2].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F31"
+    },
+    "rooms[5].external_fabric[2].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[5].external_fabric[3].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[5].external_fabric[3].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E74"
+    },
+    "rooms[5].external_fabric[3].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F74"
+    },
+    "rooms[5].external_fabric[3].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[5].solar[0].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[5].solar[0].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[5].solar[0].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[5].solar[0].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[5].solar[0].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[6].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E17"
+    },
+    "rooms[6].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D18"
+    },
+    "rooms[6].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[6].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[6].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[6].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[6].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[6].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[6].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[6].radiators[0].t50": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[6].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[6].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[6].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[6].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E18"
+    },
+    "rooms[6].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F18"
+    },
+    "rooms[6].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[6].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[6].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E21"
+    },
+    "rooms[6].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F21"
+    },
+    "rooms[6].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[6].solar[0].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[6].solar[0].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[6].solar[0].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[6].solar[0].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[6].solar[0].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[7].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E34"
+    },
+    "rooms[7].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D36"
+    },
+    "rooms[7].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[7].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[7].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[7].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[7].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[7].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[7].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[7].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[7].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E36"
+    },
+    "rooms[7].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F36"
+    },
+    "rooms[7].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[7].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[7].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E34"
+    },
+    "rooms[7].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F34"
+    },
+    "rooms[7].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[7].external_fabric[2].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[7].external_fabric[2].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E38"
+    },
+    "rooms[7].external_fabric[2].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F38"
+    },
+    "rooms[7].external_fabric[2].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[8].floor_area": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[8].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D40"
+    },
+    "rooms[8].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[8].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[8].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[8].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[8].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[8].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[8].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[8].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[8].external_fabric[0].area": {
+      "source_type": "scan_or_manual",
+      "source_ref": "scan_dimension_points / canonical_geometry"
+    },
+    "rooms[8].external_fabric[0].u_value": {
+      "source_type": "u_value_library",
+      "source_ref": "config/spec assumptions"
+    },
+    "rooms[8].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[9].floor_area": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[9].ceiling_height": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[9].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[9].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[9].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[9].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[9].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[9].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[9].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[10].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E44"
+    },
+    "rooms[10].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D46"
+    },
+    "rooms[10].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[10].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[10].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[10].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[10].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[10].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[10].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[10].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G19"
+    },
+    "rooms[10].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[10].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[10].radiators[1].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G20"
+    },
+    "rooms[10].radiators[1].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[10].radiators[1].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[10].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[10].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E44"
+    },
+    "rooms[10].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F44"
+    },
+    "rooms[10].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[11].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E49"
+    },
+    "rooms[11].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D50"
+    },
+    "rooms[11].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[11].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[11].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[11].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[11].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[11].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[11].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[11].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G21"
+    },
+    "rooms[11].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[11].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[11].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[11].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E50"
+    },
+    "rooms[11].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F50"
+    },
+    "rooms[11].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[11].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[11].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E53"
+    },
+    "rooms[11].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F53"
+    },
+    "rooms[11].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[11].solar[0].area": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[11].solar[0].orientation": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[11].solar[0].tilt": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[11].solar[0].g_value": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[11].solar[0].shading": {
+      "source_type": "solar_calibration",
+      "source_ref": "model/house.py solar gain calibration (26 Mar 2026)"
+    },
+    "rooms[12].floor_area": {
+      "source_type": "canonical_manual",
+      "source_ref": "manual/canonical_geometry"
+    },
+    "rooms[12].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D67"
+    },
+    "rooms[12].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[12].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[12].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[12].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[12].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[12].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[12].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[12].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G22"
+    },
+    "rooms[12].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[12].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[12].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[12].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E67"
+    },
+    "rooms[12].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F67"
+    },
+    "rooms[12].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[12].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[12].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E68"
+    },
+    "rooms[12].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F68"
+    },
+    "rooms[12].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[12].external_fabric[2].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[12].external_fabric[2].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E69"
+    },
+    "rooms[12].external_fabric[2].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F69"
+    },
+    "rooms[12].external_fabric[2].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[12].external_fabric[3].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[12].external_fabric[3].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E70"
+    },
+    "rooms[12].external_fabric[3].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F70"
+    },
+    "rooms[12].external_fabric[3].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[13].floor_area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E54"
+    },
+    "rooms[13].ceiling_height": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!D55"
+    },
+    "rooms[13].name": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[13].floor": {
+      "source_type": "manual_mapping",
+      "source_ref": "house_inventory.room_alias_map"
+    },
+    "rooms[13].construction": {
+      "source_type": "model_assumption",
+      "source_ref": "model/house.py construction classes"
+    },
+    "rooms[13].sensor": {
+      "source_type": "sensor_map",
+      "source_ref": "model/house.py build_sensor_map"
+    },
+    "rooms[13].ventilation_ach": {
+      "source_type": "calibrated",
+      "source_ref": "Night 1/2 fit (model/house.py)"
+    },
+    "rooms[13].heat_recovery": {
+      "source_type": "equipment_spec",
+      "source_ref": "Bathroom MVHR spec"
+    },
+    "rooms[13].overnight_occupants": {
+      "source_type": "occupancy_assumption",
+      "source_ref": "model/house.py constants"
+    },
+    "rooms[13].radiators[0].t50": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Current Radiators!G23"
+    },
+    "rooms[13].radiators[0].pipe": {
+      "source_type": "hydraulic_topology",
+      "source_ref": "AGENTS.md pipe topology"
+    },
+    "rooms[13].radiators[0].active": {
+      "source_type": "observed_state",
+      "source_ref": "AGENTS.md radiator status"
+    },
+    "rooms[13].external_fabric[0].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[13].external_fabric[0].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E55"
+    },
+    "rooms[13].external_fabric[0].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F55"
+    },
+    "rooms[13].external_fabric[0].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "rooms[13].external_fabric[1].description": {
+      "source_type": "manual_label",
+      "source_ref": "canonical_geometry description"
+    },
+    "rooms[13].external_fabric[1].area": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!E58"
+    },
+    "rooms[13].external_fabric[1].u_value": {
+      "source_type": "xlsx",
+      "source_ref": "Heating needs for the house.xlsx::Heating Demand!F58"
+    },
+    "rooms[13].external_fabric[1].to_ground": {
+      "source_type": "manual_classification",
+      "source_ref": "canonical_geometry element classification"
+    },
+    "connections[0].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[0].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[0].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[0].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[1].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[1].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[1].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[1].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[2].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[2].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[2].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[2].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[3].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[3].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[3].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[3].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[4].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[4].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[4].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[4].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[5].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[5].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[5].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[5].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[6].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[6].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[6].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[6].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[7].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[7].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[7].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[7].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[8].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[8].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[8].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[8].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[9].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[9].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[9].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[9].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[10].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[10].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[10].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[10].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[11].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[11].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[11].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[11].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[12].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[12].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[12].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[12].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[13].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[13].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[13].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[13].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[14].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[14].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[14].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[14].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[15].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[15].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[15].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[15].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[16].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[16].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[16].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[16].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[17].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[17].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[17].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[17].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[18].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[18].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[18].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[18].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[19].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[19].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[19].ua": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[19].description": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "connections[20].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[20].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[20].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[20].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[21].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[21].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[21].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[21].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[22].room_a": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[22].room_b": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[22].ua": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "connections[22].description": {
+      "source_type": "xlsx_internal_wall_constrained",
+      "source_ref": "Adjusted to match room_dimension_summary.internal_wall_area_m2 totals (plan-derived spreadsheet)"
+    },
+    "doorways[0].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[0].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[0].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[0].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[0].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[1].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[1].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[1].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[1].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[1].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[2].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[2].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[2].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[2].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[2].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[3].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[3].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[3].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[3].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[3].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[4].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[4].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[4].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[4].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[4].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[5].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[5].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[5].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[5].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[5].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[6].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[6].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[6].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[6].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[6].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[7].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[7].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[7].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[7].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[7].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[8].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[8].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[8].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[8].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[8].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[9].room_a": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[9].room_b": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[9].width": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[9].height": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    },
+    "doorways[9].state": {
+      "source_type": "model_definition",
+      "source_ref": "canonical geometry migration from model/house.py"
+    }
+  }
 }

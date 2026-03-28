@@ -6,3 +6,7 @@ emon-credentials.txt
 model/data/
 *:Zone.Identifier
 model/__pycache__/
+
+# Thermal artifacts: commit baselines + thresholds, ignore run outputs + snapshots
+artifacts/thermal/thermal-*.json
+artifacts/thermal/snapshots/

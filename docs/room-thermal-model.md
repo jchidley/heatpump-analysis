@@ -526,8 +526,8 @@ Mineral wool between leather/sterling joists. Leather keeps heat, Sterling gets 
 | Thermal mass (brick rooms) | **Medium** | Construction-based estimates, not measured |
 | Ventilation (aldora, elvina, jackcarol) | **Medium** | Moisture-validated, some uncertainty in outside AH |
 | Ventilation (other rooms) | **Low-Medium** | Estimated, consistent with humidity trends |
-| Inter-room doorway exchange | **Low** | Modelled as high-U×A fabric elements, approximate |
-| Landing convective model | **Low** | Stairwell convection not properly captured |
+| Inter-room doorway exchange | **Medium** | Buoyancy doorway physics (Cd model) with canonical doorway geometry |
+| Landing/top-landing convective model | **Medium-Low** | Explicit hall→landing→top_landing→shower chimney links now modelled; top_landing currently virtual (no dedicated temp sensor) |
 | Leather ground floor loss | **Low** | Spiral cellar creates uncertain air gap |
 
 ### What Night 2 (doors closed, 1.4°C outside) will resolve
@@ -539,3 +539,14 @@ Mineral wool between leather/sterling joists. Leather keeps heat, Sterling gets 
 - Kitchen isolated — true loss without doorway exchange
 
 The model is most useful for **ranking and decisions** — which rooms are most starved, where FRVs have the biggest impact, whether kitchen needs a radiator — rather than absolute precision.
+
+## Model status update (Mar 2026)
+
+Recent upgrades implemented in canonical geometry + Python/Rust thermal solvers:
+
+- Stair stack path now modelled explicitly with buoyancy links:
+  - `hall ↔ landing ↔ top_landing ↔ shower`
+- `top_landing` is represented as an explicit model node (virtual temperature proxy for now).
+- Internal wall connection UAs were re-derived from plan-derived room internal-wall totals.
+- Optional public-wind coupling added to Rust `thermal-calibrate` (Open-Meteo).
+  - Current default remains wind disabled in config because it did not improve the two-night objective yet.

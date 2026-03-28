@@ -67,6 +67,28 @@ pub enum ThermalError {
         path: String,
         source: std::io::Error,
     },
+    #[error("thermal snapshot export/import requires explicit human approval flag")]
+    HumanApprovalRequired,
+    #[error("thermal snapshot signoff reason must not be empty")]
+    EmptySignoffReason,
+    #[error("failed to read thermal snapshot manifest {path}: {source}")]
+    SnapshotManifestRead {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("failed to parse thermal snapshot manifest {path}: {source}")]
+    SnapshotManifestParse {
+        path: String,
+        source: serde_json::Error,
+    },
+    #[error("invalid snapshot relative path '{0}'")]
+    InvalidSnapshotPath(String),
+    #[error("failed to copy snapshot file from {from} to {to}: {source}")]
+    SnapshotCopy {
+        from: String,
+        to: String,
+        source: std::io::Error,
+    },
 }
 
 pub type ThermalResult<T> = std::result::Result<T, ThermalError>;

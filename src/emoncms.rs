@@ -48,8 +48,7 @@ impl Client {
         let base_url = &config::config().emoncms.base_url;
         let url = format!("{}/feed/list.json?apikey={}", base_url, self.apikey);
         let resp = self.http.get(&url).send()?.text()?;
-        let feeds: Vec<Feed> =
-            serde_json::from_str(&resp).context("Failed to parse feed list")?;
+        let feeds: Vec<Feed> = serde_json::from_str(&resp).context("Failed to parse feed list")?;
         Ok(feeds)
     }
 

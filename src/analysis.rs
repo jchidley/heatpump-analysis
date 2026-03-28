@@ -235,11 +235,8 @@ pub fn cop_by_outside_temp(df: &DataFrame) -> Result<()> {
         .lazy()
         .filter(col("state").eq(lit("heating")))
         .with_column(
-            ((col("outside_t") / lit(2.0))
-                .floor()
-                .cast(DataType::Int32)
-                * lit(2))
-            .alias("temp_band"),
+            ((col("outside_t") / lit(2.0)).floor().cast(DataType::Int32) * lit(2))
+                .alias("temp_band"),
         )
         .group_by([col("temp_band")])
         .agg([
@@ -344,10 +341,8 @@ pub fn degree_days(
     heat_data: &[(i64, Option<f64>)],
 ) -> Result<()> {
     // Build energy lookup by date
-    let mut elec_by_date: std::collections::HashMap<String, f64> =
-        std::collections::HashMap::new();
-    let mut heat_by_date: std::collections::HashMap<String, f64> =
-        std::collections::HashMap::new();
+    let mut elec_by_date: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut heat_by_date: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
 
     for i in 1..elec_data.len().min(heat_data.len()) {
         let ts = elec_data[i].0 / 1000;
@@ -416,7 +411,10 @@ pub fn degree_days(
         Series::new("heat/HDD".into(), &heat_per_hdd).into(),
     ])?;
 
-    println!("\n=== Daily Degree Days (base {:.1}°C) ===", config().thresholds.hdd_base_temp_c);
+    println!(
+        "\n=== Daily Degree Days (base {:.1}°C) ===",
+        config().thresholds.hdd_base_temp_c
+    );
     println!("{}", df);
 
     // Weekly aggregates
@@ -446,8 +444,12 @@ pub fn degree_days(
                 .filter_map(|v| *v)
                 .sum();
 
-            let has_elec = elec_kwh_vals[start_idx..end_idx].iter().any(|v| v.is_some());
-            let has_heat = heat_kwh_vals[start_idx..end_idx].iter().any(|v| v.is_some());
+            let has_elec = elec_kwh_vals[start_idx..end_idx]
+                .iter()
+                .any(|v| v.is_some());
+            let has_heat = heat_kwh_vals[start_idx..end_idx]
+                .iter()
+                .any(|v| v.is_some());
 
             week_labels.push(label);
             week_hdd.push(sum_hdd);
@@ -593,10 +595,7 @@ pub fn degree_days(
         let _month_key = gm.month.to_string();
         // Find matching HP month (any year)
         let mm = &gm.month[5..7]; // extract "01", "02", etc.
-        let hp_matches: Vec<_> = month_data
-            .iter()
-            .filter(|(k, _)| &k[5..7] == mm)
-            .collect();
+        let hp_matches: Vec<_> = month_data.iter().filter(|(k, _)| &k[5..7] == mm).collect();
 
         let gas_heating = (gm.gas_kwh - gm.hot_water_kwh) * gas_era.boiler_efficiency;
 
@@ -612,8 +611,10 @@ pub fn degree_days(
             );
         }
     }
-    println!("  * Gas Heat = (Gas kWh - Hot Water) × {:.0}% boiler efficiency",
-        gas_era.boiler_efficiency * 100.0);
+    println!(
+        "  * Gas Heat = (Gas kWh - Hot Water) × {:.0}% boiler efficiency",
+        gas_era.boiler_efficiency * 100.0
+    );
 
     Ok(())
 }
@@ -661,13 +662,14 @@ pub fn indoor_temp(df: &DataFrame) -> Result<()> {
     let comfort = df
         .clone()
         .lazy()
-        .filter(col("indoor_t").is_not_null().and(col("state").eq(lit("heating"))))
+        .filter(
+            col("indoor_t")
+                .is_not_null()
+                .and(col("state").eq(lit("heating"))),
+        )
         .with_column(
-            ((col("outside_t") / lit(2.0))
-                .floor()
-                .cast(DataType::Int32)
-                * lit(2))
-            .alias("outside_band"),
+            ((col("outside_t") / lit(2.0)).floor().cast(DataType::Int32) * lit(2))
+                .alias("outside_band"),
         )
         .group_by([col("outside_band")])
         .agg([
@@ -705,11 +707,18 @@ pub fn dhw_analysis(df: &DataFrame) -> Result<()> {
         .collect()?;
 
     println!("\n=== DHW Analysis ===");
-    println!("Design hot water: {:.1} kWh/day (from workbook, gas era)", design_dhw_kwh_per_day);
+    println!(
+        "Design hot water: {:.1} kWh/day (from workbook, gas era)",
+        design_dhw_kwh_per_day
+    );
     println!("{}", dhw_stats);
 
     // Estimate daily DHW energy from total minutes and avg power
-    let total_mins = dhw_stats.column("total_minutes")?.u32()?.get(0).unwrap_or(0) as f64;
+    let total_mins = dhw_stats
+        .column("total_minutes")?
+        .u32()?
+        .get(0)
+        .unwrap_or(0) as f64;
     let avg_heat = dhw_stats.column("avg_heat_w")?.f64()?.get(0).unwrap_or(0.0);
 
     // Count distinct days with DHW
@@ -728,8 +737,14 @@ pub fn dhw_analysis(df: &DataFrame) -> Result<()> {
     println!("\nDHW days in period:     {:.0}", n_days);
     println!("Total DHW heat:         {:.0} kWh", total_dhw_kwh);
     println!("Actual DHW per day:     {:.1} kWh/day", dhw_kwh_per_day);
-    println!("Design DHW per day:     {:.1} kWh/day (gas era estimate)", design_dhw_kwh_per_day);
-    println!("Ratio actual/design:    {:.0}%", dhw_kwh_per_day / design_dhw_kwh_per_day * 100.0);
+    println!(
+        "Design DHW per day:     {:.1} kWh/day (gas era estimate)",
+        design_dhw_kwh_per_day
+    );
+    println!(
+        "Ratio actual/design:    {:.0}%",
+        dhw_kwh_per_day / design_dhw_kwh_per_day * 100.0
+    );
 
     Ok(())
 }
@@ -743,7 +758,10 @@ pub fn cop_vs_spec(df: &DataFrame) -> Result<()> {
     println!("{:>10} {:>12} {:>8}", "Flow °C", "Heat Output", "COP");
     println!("{}", "-".repeat(32));
     for sp in &arotherm.spec_at_minus3 {
-        println!("{:>10.0} {:>10.0}W {:>8.2}", sp.flow_temp_c, sp.heat_output_w, sp.cop);
+        println!(
+            "{:>10.0} {:>10.0}W {:>8.2}",
+            sp.flow_temp_c, sp.heat_output_w, sp.cop
+        );
     }
 
     // Group actual data by 5°C flow temp bands, heating only
@@ -752,8 +770,7 @@ pub fn cop_vs_spec(df: &DataFrame) -> Result<()> {
         .lazy()
         .filter(col("state").eq(lit("heating")))
         .with_column(
-            ((col("flow_t") / lit(5.0)).floor().cast(DataType::Int32) * lit(5))
-                .alias("flow_band"),
+            ((col("flow_t") / lit(5.0)).floor().cast(DataType::Int32) * lit(5)).alias("flow_band"),
         )
         .group_by([col("flow_band")])
         .agg([
@@ -833,20 +850,28 @@ pub fn design_comparison(
     println!("Construction:     {}", house.construction);
     println!("Floor area:       {} m²", house.floor_area_m2);
     println!("HTC:              {} W/°C", house.htc_w_per_c);
-    println!("Design heat loss: {} W (at {}°C outside, {}°C inside)",
-        house.design_heat_loss_w, house.design_outdoor_temp_c, house.design_indoor_temp_c);
+    println!(
+        "Design heat loss: {} W (at {}°C outside, {}°C inside)",
+        house.design_heat_loss_w, house.design_outdoor_temp_c, house.design_indoor_temp_c
+    );
 
     // Radiator capacity at different flow temps
     println!("\n=== Radiator Output vs Flow Temperature ===");
-    println!("{:>10} {:>15} {:>15}", "Flow °C", "Total Output W", "vs Design Loss");
+    println!(
+        "{:>10} {:>15} {:>15}",
+        "Flow °C", "Total Output W", "vs Design Loss"
+    );
     println!("{}", "-".repeat(45));
     for ft in &[30.0, 32.0, 35.0, 38.0, 40.0, 45.0, 50.0] {
         let output = config::total_radiator_output_at_flow_temp(radiators, *ft);
         let ratio = output / house.design_heat_loss_w * 100.0;
         println!("{:>10.0} {:>13.0}W {:>13.0}%", ft, output, ratio);
     }
-    println!("\nTotal T50 rating:  {} W ({} radiators)",
-        radiators.iter().map(|r| r.t50_watts as u32).sum::<u32>(), radiators.len());
+    println!(
+        "\nTotal T50 rating:  {} W ({} radiators)",
+        radiators.iter().map(|r| r.t50_watts as u32).sum::<u32>(),
+        radiators.len()
+    );
 
     // Gas era comparison
     println!("\n=== Gas Era vs Heat Pump Comparison ===");
@@ -856,10 +881,8 @@ pub fn design_comparison(
     let mut hp_heat_total = 0.0f64;
     let mut hp_days = 0u32;
 
-    let mut elec_by_date: std::collections::HashMap<String, f64> =
-        std::collections::HashMap::new();
-    let mut heat_by_date: std::collections::HashMap<String, f64> =
-        std::collections::HashMap::new();
+    let mut elec_by_date: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut heat_by_date: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
 
     for i in 1..elec_data.len().min(heat_data.len()) {
         let ts = elec_data[i].0 / 1000;
@@ -890,24 +913,29 @@ pub fn design_comparison(
         hp_hdd_17 += hdd;
     }
 
-    let hp_cop = if hp_elec_total > 0.1 { hp_heat_total / hp_elec_total } else { 0.0 };
+    let hp_cop = if hp_elec_total > 0.1 {
+        hp_heat_total / hp_elec_total
+    } else {
+        0.0
+    };
 
     // Estimate what gas would have cost for the same period
     let gas_equiv_heating_kwh = hp_hdd_17 * house.kwh_per_hdd;
     let gas_equiv_total_kwh = gas_equiv_heating_kwh / gas_era.boiler_efficiency;
 
-    println!(
-        "{:<35} {:>15} {:>15}",
-        "", "Gas Boiler", "Heat Pump"
-    );
+    println!("{:<35} {:>15} {:>15}", "", "Gas Boiler", "Heat Pump");
     println!("{}", "-".repeat(67));
     println!(
         "{:<35} {:>15} {:>15}",
-        "Period", "Annual (est)", format!("{} days", hp_days)
+        "Period",
+        "Annual (est)",
+        format!("{} days", hp_days)
     );
     println!(
         "{:<35} {:>14.0} {:>14.0}",
-        "HDD (base 17°C)", gas_era.monthly.iter().map(|m| m.hdd_17c).sum::<f64>(), hp_hdd_17
+        "HDD (base 17°C)",
+        gas_era.monthly.iter().map(|m| m.hdd_17c).sum::<f64>(),
+        hp_hdd_17
     );
     println!(
         "{:<35} {:>13.0}* {:>14.0}",
@@ -919,7 +947,9 @@ pub fn design_comparison(
     );
     println!(
         "{:<35} {:>14.0}% {:>13.1}x",
-        "Efficiency / COP", gas_era.boiler_efficiency * 100.0, hp_cop
+        "Efficiency / COP",
+        gas_era.boiler_efficiency * 100.0,
+        hp_cop
     );
     println!(
         "{:<35} {:>14.1} {:>14.1}",
@@ -929,21 +959,27 @@ pub fn design_comparison(
     );
     println!("\n  * Gas heating estimated: annual {:.0} kWh gas × {:.0}% efficiency = {:.0} kWh delivered",
         gas_era.annual_gas_kwh, gas_era.boiler_efficiency * 100.0, gas_era.annual_heating_delivered_kwh);
-    println!("  * Gas figure includes hot water ({:.1} kWh/day), HP figure includes DHW too",
-        gas_era.dhw_kwh_per_day);
+    println!(
+        "  * Gas figure includes hot water ({:.1} kWh/day), HP figure includes DHW too",
+        gas_era.dhw_kwh_per_day
+    );
 
     // For same HDD, how much gas vs electricity would be used?
     if hp_hdd_17 > 10.0 {
         println!("\n=== Same-Weather Comparison (HDD-normalised) ===");
         println!("If this HP period's weather had been heated by gas boiler:");
-        println!("  Gas consumed:    {:.0} kWh (at {:.1} kWh/HDD × {:.0} HDD)",
+        println!(
+            "  Gas consumed:    {:.0} kWh (at {:.1} kWh/HDD × {:.0} HDD)",
             gas_equiv_total_kwh,
             house.kwh_per_hdd / gas_era.boiler_efficiency,
-            hp_hdd_17);
+            hp_hdd_17
+        );
         println!("  HP consumed:     {:.0} kWh electricity", hp_elec_total);
-        println!("  Energy saving:   {:.0} kWh ({:.0}%)",
+        println!(
+            "  Energy saving:   {:.0} kWh ({:.0}%)",
             gas_equiv_total_kwh - hp_elec_total,
-            (1.0 - hp_elec_total / gas_equiv_total_kwh) * 100.0);
+            (1.0 - hp_elec_total / gas_equiv_total_kwh) * 100.0
+        );
     }
 
     Ok(())

@@ -29,6 +29,7 @@ import sys
 import json
 import csv
 import math
+import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -62,11 +63,10 @@ U_TIMBER_FLOOR = 1.58   # W/m²K — uninsulated timber floor between rooms
 # 24-26 Mar 2026. Joint calibration: landing_ach=1.30, Cd=0.20 gives
 # RMSE=0.057°/h, all 13 rooms within factor 2.
 #
-# The stairwell chimney (hall↔landing↔shower) is NOT modelled as doorways
-# because pairwise buoyancy doesn't capture stack-driven flow. Instead,
-# the chimney is modelled as increased ventilation ACH for landing (1.30),
-# and the stairwell doorways are marked state="chimney" (disabled).
-# Other doorways use Cd=0.20 for buoyancy exchange.
+# The stairwell chimney (hall↔landing↔shower; top-landing proxy via shower)
+# is now modelled explicitly as buoyancy links using doorway state="chimney".
+# This replaces the previous "disabled chimney doorway + high landing ACH" hack.
+# Other doorways use the same Cd with their own geometry/state.
 DOORWAY_CD = 0.20       # Discharge coefficient (calibrated from Night 1 vs Night 2)
 DOORWAY_G = 9.81        # m/s²
 
@@ -276,6 +276,19 @@ def wall_conduction(ua: float, temp_a: float, temp_b: float) -> float:
     return ua * (temp_a - temp_b)
 
 
+def virtual_room_temp(name: str, all_temps: dict[str, float]) -> float | None:
+    """Return measured or virtual room temperature for model-only nodes."""
+    if name in all_temps:
+        return all_temps[name]
+    if name == "top_landing":
+        t_landing = all_temps.get("landing")
+        t_shower = all_temps.get("shower")
+        if t_landing is not None and t_shower is not None:
+            return (t_landing + t_shower) / 2.0
+        return t_landing if t_landing is not None else t_shower
+    return None
+
+
 def doorway_exchange(door: Doorway, temp_a: float, temp_b: float) -> float:
     """Buoyancy-driven convective heat exchange through a doorway in Watts.
 
@@ -285,7 +298,7 @@ def doorway_exchange(door: Doorway, temp_a: float, temp_b: float) -> float:
     Returns heat flow from A to B (positive = A is warmer).
     For a closed door, returns 0.
     """
-    if door.state in ("closed", "chimney"):
+    if door.state == "closed":
         return 0.0
 
     dt = temp_a - temp_b
@@ -503,18 +516,26 @@ def room_energy_balance(
     # Internal wall conduction (can be + or -)
     q_walls = 0.0
     for conn in connections:
-        if conn.room_a == name and conn.room_b in all_temps:
-            q_walls -= wall_conduction(conn.ua, room_temp, all_temps[conn.room_b])
-        elif conn.room_b == name and conn.room_a in all_temps:
-            q_walls -= wall_conduction(conn.ua, room_temp, all_temps[conn.room_a])
+        if conn.room_a == name:
+            other_t = virtual_room_temp(conn.room_b, all_temps)
+            if other_t is not None:
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t)
+        elif conn.room_b == name:
+            other_t = virtual_room_temp(conn.room_a, all_temps)
+            if other_t is not None:
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t)
 
     # Doorway exchange (can be + or -)
     q_doors = 0.0
     for door in doorways:
-        if door.room_a == name and door.room_b in all_temps:
-            q_doors -= doorway_exchange(door, room_temp, all_temps[door.room_b])
-        elif door.room_b == name and door.room_a in all_temps:
-            q_doors -= doorway_exchange(door, room_temp, all_temps[door.room_a])
+        if door.room_a == name:
+            other_t = virtual_room_temp(door.room_b, all_temps)
+            if other_t is not None:
+                q_doors -= doorway_exchange(door, room_temp, other_t)
+        elif door.room_b == name:
+            other_t = virtual_room_temp(door.room_a, all_temps)
+            if other_t is not None:
+                q_doors -= doorway_exchange(door, room_temp, other_t)
 
     return {
         "external": q_ext,
@@ -794,7 +815,11 @@ def fit():
     print(f"{'':14} {'°C':>7} {'°C':>7} {'°C/hr':>7} {'°C/hr':>7} {'P/M':>6} {'W':>5}")
     print("─" * 80)
 
-    for period_start, period_end in cooldown_periods[:3]:
+    MIN_MEAS_COOLING = 0.03  # °C/hr: below this, treat as weak/non-cooling for fit confidence
+
+    records = []
+
+    for period_start, period_end in cooldown_periods:
         # Get average outside temp during period
         outside_in_period = [v for t, v in outside_series if period_start <= t <= period_end]
         avg_outside = sum(outside_in_period) / len(outside_in_period) if outside_in_period else 8.0
@@ -828,11 +853,55 @@ def fit():
             pred_rate = -bal["total"] * 3.6 / C if C > 0 else 0
 
             body_w = occupant_heat(room, sleeping=True)
-            ratio = pred_rate / meas_rate if abs(meas_rate) > 0.01 else 0
+            ratio = pred_rate / meas_rate if abs(meas_rate) > 0.01 else float("nan")
+            is_true_cooling = meas_rate >= MIN_MEAS_COOLING
+            marker = " " if is_true_cooling else "*"
 
             period_str = f"{period_start.strftime('%H:%M')}→{period_end.strftime('%H:%M')}"
+            ratio_str = f"{ratio:>6.2f}" if math.isfinite(ratio) else "   nan"
             print(f"{room_name:<14} {t_start:>7.2f} {t_end:>7.2f} {meas_rate:>7.3f} {pred_rate:>7.3f} "
-                  f"{ratio:>6.2f} {body_w:>5.0f} {period_str}")
+                  f"{ratio_str} {body_w:>5.0f} {period_str}{marker}")
+
+            records.append(
+                {
+                    "room": room_name,
+                    "meas": meas_rate,
+                    "pred": pred_rate,
+                    "ratio": ratio,
+                    "true_cooling": is_true_cooling,
+                }
+            )
+
+    def summarize(rows):
+        if not rows:
+            return {"n": 0, "rmse": float("nan"), "mae": float("nan"), "med_ratio": float("nan")}
+        errs = [r["pred"] - r["meas"] for r in rows]
+        rmse = math.sqrt(sum(e * e for e in errs) / len(errs))
+        mae = sum(abs(e) for e in errs) / len(errs)
+        ratios = [r["ratio"] for r in rows if math.isfinite(r["ratio"])]
+        med_ratio = statistics.median(ratios) if ratios else float("nan")
+        return {"n": len(rows), "rmse": rmse, "mae": mae, "med_ratio": med_ratio}
+
+    print("\n* marks weak/non-cooling measured periods (meas_rate < 0.03 °C/hr)\n")
+
+    all_stats = summarize(records)
+    good = [r for r in records if r["true_cooling"]]
+    good_stats = summarize(good)
+
+    print("Summary (all records):")
+    print(f"  N={all_stats['n']}  RMSE={all_stats['rmse']:.3f} °C/hr  MAE={all_stats['mae']:.3f} °C/hr  Median ratio={all_stats['med_ratio']:.2f}")
+    print("Summary (true cooling only):")
+    print(f"  N={good_stats['n']}  RMSE={good_stats['rmse']:.3f} °C/hr  MAE={good_stats['mae']:.3f} °C/hr  Median ratio={good_stats['med_ratio']:.2f}")
+
+    print("\nPer-room summary (true cooling only):")
+    print(f"{'Room':<14} {'N':>4} {'RMSE':>8} {'MAE':>8} {'MedRat':>8}")
+    print("─" * 46)
+    by_room = {}
+    for r in good:
+        by_room.setdefault(r["room"], []).append(r)
+    for room_name in sorted(by_room):
+        st = summarize(by_room[room_name])
+        print(f"{room_name:<14} {st['n']:>4d} {st['rmse']:>8.3f} {st['mae']:>8.3f} {st['med_ratio']:>8.2f}")
 
 
 # ---------------------------------------------------------------------------

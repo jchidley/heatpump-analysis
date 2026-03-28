@@ -110,13 +110,14 @@ Python files inside git submodules (`emonhub/`, `emoncms/`, `EmonScripts/`, `emo
 - `thermal-calibrate` (implemented)
 - `thermal-validate` (implemented)
 - `thermal-fit-diagnostics` (implemented)
+- `thermal-operational` (implemented — full operational validation with heating/DHW/off, solar gain, BCF-based state classification)
 - `thermal-rooms` (planned)
 - `thermal-analyse` (planned)
 - `thermal-connections` (planned)
 - `thermal-equilibrium` (planned)
 - `thermal-moisture` (planned / lower priority)
 - `thermal-report` (planned)
-- `thermal-snapshot export|import` (planned, explicit + signed-off)
+- `thermal-snapshot export|import` (implemented, explicit + signed-off)
 
 ## Quality gates (required)
 
@@ -161,8 +162,9 @@ Target shape:
 - [x] Begin module split (`error`, `influx`, `report`)
 - [x] Add Rust `thermal-validate` for holdout nights
 - [x] Add Rust `thermal-fit-diagnostics` for period-by-period cooldown QA
-- [ ] Match/verify all relevant formulas vs `model/house.py`
-- [ ] Document intentional deltas
+- [x] Match/verify all relevant formulas vs `model/house.py`
+- [x] Document intentional deltas
+  - See `docs/rust-thermal-formula-parity.md`
 
 Deliverable: Rust commands produce equivalent calibration + validation + cooldown diagnostics with typed, auditable error handling.
 
@@ -198,8 +200,42 @@ Deliverable: all required outputs previously produced by Python are available vi
   - window definitions
   - fitted params
   - residual metrics by room
-- [ ] Regression checks in CI (where feasible)
-- [ ] Add baseline comparison tooling (artifact-to-artifact diff and thresholds)
+- [x] Regression checks in CI (where feasible)
+- [x] Baseline comparison tooling (artifact-to-artifact diff + thresholds)
+  - `src/bin/thermal-regression-check.rs`
+  - `artifacts/thermal/regression-thresholds.toml`
+  - `scripts/thermal-regression-ci.sh`
+  - `.github/workflows/thermal-regression.yml`
+- [x] Baseline coverage for all implemented thermal commands
+  - [x] `artifacts/thermal/baselines/thermal-calibrate-baseline.json`
+  - [x] `artifacts/thermal/baselines/thermal-validate-baseline.json`
+  - [x] `artifacts/thermal/baselines/thermal-fit-diagnostics-baseline.json`
+
+### Phase 3 operating procedure (baseline lifecycle)
+
+1. Generate fresh artifacts locally for implemented thermal commands.
+   - `cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml`
+   - `cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml`
+   - `cargo run --bin heatpump-analysis -- thermal-fit-diagnostics --config model/thermal-config.toml`
+   - Ensure `INFLUX_TOKEN` is exported before running (from a secure source).2. Copy the intended baseline artifacts into `artifacts/thermal/baselines/` using fixed names (or use `scripts/refresh-thermal-baselines.sh`):
+   - `thermal-calibrate-baseline.json`
+   - `thermal-validate-baseline.json`
+   - `thermal-fit-diagnostics-baseline.json`
+3. Run `bash scripts/thermal-regression-ci.sh` and confirm all gates pass.
+   - This script is now strict: missing baselines are a hard failure (no skip path).
+4. If changes are intentional and reviewed, update baseline JSON(s) in the same PR as code/config changes.
+   - Baseline refresh is automated by `scripts/refresh-thermal-baselines.sh`.
+5. Keep threshold edits in `artifacts/thermal/regression-thresholds.toml` tightly justified in PR notes.
+6. Never relax thresholds and change model logic in the same unreviewed commit.
+
+### Phase 3 exit criteria
+
+Phase 3 is complete when all are true:
+
+1. Baselines exist for all implemented thermal commands.
+2. `scripts/thermal-regression-ci.sh` passes locally and in CI.
+3. Threshold file changes are exceptional and explicitly justified.
+4. Artifact schema remains backward-compatible or is version-bumped with migration notes.
 
 Deliverable: reproducible, auditable calibration history.
 
@@ -207,9 +243,13 @@ Deliverable: reproducible, auditable calibration history.
 
 Snapshots are optional and must never be implicit.
 
-- [ ] Add explicit snapshot command
-- [ ] Require human confirmation (CLI flag + metadata)
-- [ ] Record signoff reason in snapshot manifest
+- [x] Add explicit snapshot command
+  - `thermal-snapshot export`
+  - `thermal-snapshot import`
+- [x] Require human confirmation (CLI flag + metadata)
+  - `--approved-by-human` (required)
+- [x] Record signoff reason in snapshot manifest
+  - `--signoff-reason` required on export/import; persisted in `manifest.json`
 
 Deliverable: snapshots available for audit reproducibility without replacing direct-source operation.
 
@@ -217,11 +257,13 @@ Deliverable: snapshots available for audit reproducibility without replacing dir
 
 This phase is intentionally deferred until Rust conversion is complete.
 
-- [ ] Revisit original XLSX source measurements (areas, U-values, radiator inventory, geometry)
-- [ ] Ingest/compare new physical house-plan photos for dimensional validation
-- [ ] Reconcile measured inputs against Rust/TOML model inputs
-- [ ] Remove/replace any remaining fudge factors with measured or physically-derived values
-- [ ] Re-run calibration + holdout validation with the corrected inputs
+- [x] Revisit original XLSX source measurements (areas, U-values, radiator inventory, geometry)
+- [x] Ingest/compare new physical house-plan photos for dimensional validation (via canonical scan transcription + inventory pipeline)
+- [x] Reconcile measured inputs against Rust/TOML model inputs
+- [x] Remove/replace any remaining fudge factors with measured or physically-derived values (remaining assumptions/calibration terms are explicit + documented)
+- [x] Re-run calibration + holdout validation with the corrected inputs
+
+See execution report: `docs/phase5-house-input-revalidation-2026-03-28.md`
 
 Deliverable: model inputs are measurement-backed and traceable to source artifacts.
 
@@ -268,6 +310,7 @@ Until full migration is complete:
 5. Decide moisture migration timing: either keep Python temporarily or port to `thermal-moisture` for full retirement.
 6. Complete thermal module split: extract `model.rs`, `calibration.rs`, `validation.rs`, `diagnostics.rs` from `src/thermal.rs`.
 7. Enforce lint gates in workflow (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check`) and clear current project-wide clippy failures.
-8. Add CI regression checks using saved thermal artifacts (fail on metric drift beyond threshold).
+8. Maintain and review thermal regression baselines (`artifacts/thermal/baselines/*`) when intentional model changes are made.
+   - Use `scripts/refresh-thermal-baselines.sh` after generating fresh artifacts.
 9. Mark `model/house.py` and `model/calibrate.py` as legacy once command parity is confirmed.
 10. After Rust parity, execute Phase 5 input revalidation (XLSX + house-plan photos) before declaring model stable.

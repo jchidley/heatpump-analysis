@@ -17,7 +17,7 @@ night2_end   = "2026-03-26T05:05:00+00:00"
 
 [objective]
 # Rooms to ignore in scoring (still reported)
-exclude_rooms = ["landing"]
+exclude_rooms = ["landing", "conservatory"]
 
 # Regularization strength for priors (0 = disabled)
 prior_weight = 0.01
