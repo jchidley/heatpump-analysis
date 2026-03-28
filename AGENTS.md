@@ -399,11 +399,11 @@ With all three fixed + J&C draught-proofing + EWI SE wall 30m²: MWT drops to 43
 | Intervention | Cost | MWT at -3°C | Annual heat | Annual cost | Saving |
 |---|---|---|---|---|---|
 | Current | — | 49°C | 23,670 kWh | £894 | — |
-| + Kitchen→conserv door closer | ~£15 | 49°C | 21,136 kWh | £803 | £91 |
-| + Elvina vents closed | £0 | 47°C | 20,106 kWh | £769 | £125 |
-| + Aldora rad upgrade | FREE | 45°C | 20,106 kWh | £769 | £125 |
-| + J&C draught-strip | ~£30 | 45°C | 19,636 kWh | £751 | £143 |
-| + EWI SE 30m² | ~£5k | 43°C | 16,605 kWh | £586 | £308 |
+| + Conserv door closer + target 14°C | ~£15 | 49°C | 23,220 kWh | £846 | £48 |
+| + Elvina vents closed | £0 | 47°C | 22,190 kWh | £812 | £82 |
+| + Aldora rad upgrade | FREE | 45°C | 22,190 kWh | £812 | £82 |
+| + J&C draught-strip | ~£30 | 45°C | 21,720 kWh | £794 | £100 |
+| + EWI SE 30m² | ~£5k | 43°C | 18,690 kWh | £629 | £265 |
 
 EWI is the big win: **19% heat demand reduction**. At same 20°C target, HP runs at 84% capacity (vs 106% currently at 5°C outside). Less cycling, less wear, more headroom. Payback ~23 years on energy, but comfort and HP longevity are the real drivers.
 
@@ -416,7 +416,7 @@ See [docs/roadmap.md](docs/roadmap.md) for full details:
 - **Cost analysis subcommand** — tariff data and cost calculations could be a proper Rust subcommand.
 - ~~**Controlled cooldown experiments**~~ — Night 1 (24-25 Mar, doors normal, 7.5°C avg) and Night 2 (25-26 Mar, all doors closed, 5.0°C avg) complete. Calibrated doorway Cd=0.20 and landing chimney ACH=1.30. Bathroom sensor moved from airing cupboard to wall (was 3°C high).
 - ~~**Office + Landing sensors**~~ — added 24 Mar 2026. 13/13 room coverage complete.
-- **Kitchen→conservatory door closer + cat gap** — Open doorway loses 48W avg (March), but **1,959W on a January night** (kitchen 20°C, conservatory 5°C). Annual heating season loss: **2,534 kWh = £91/yr**. A door closer (£10–15) with cat-sized gap (0.15m × 0.3m) reduces exchange to 0.8% of open door — effectively zero. **Best single intervention by payback** (£91/yr from £15, <3 month payback). Cat gap works because buoyancy exchange scales as height^1.5 × width — a 0.15m gap has negligible exchange vs a 2.0m door.
+- **Kitchen→conservatory door closer + cat gap** — Door closer doesn't save energy directly (doorway heat just substitutes for conservatory radiator output — same total HP work). The value is **thermal decoupling**: eliminates conservatory's solar/wind variability from affecting kitchen/hall temps, and enables independently lowering the conservatory target. Saving = £16/yr per °C of conservatory target drop (154 W/K total loss coefficient). At 14°C target (3°C drop): £48/yr. At 10°C target (7°C drop): £111/yr. Cat gap (0.15m × 0.3m) for the cat has negligible buoyancy exchange (0.8% of open door). Consider pairing with IR panel for occasional occupancy comfort — 0.8kW IR at 14°C base feels like 19°C, costs £31/yr for 1.5h/day winter use.
 - **Leather→conservatory SG door** — UA=21.12 W/K (single-glazed panels in timber frame). Door mostly closed already (open mornings for dog). At leather 21°C, conservatory 5°C: conducts 337W. Secondary glazing or heavy curtain more effective than a closer — the conduction through single glass is the issue, not the air gap.
 - **Jack&Carol bay window draught-proofing** — moisture-proven leakage: ACH=1.00 even calm (Night 2), ACH=1.89 windy (Night 1). Wind adds 0.89 ACH. Draught strip frame joints. Saves ~60W calm, ~150W windy. Becomes system bottleneck once elvina closes vents.
 - **Aldora rad upgrade** — 909W DP DF replaces 376W towel (FREE, reuse existing rad). Removes aldora as bottleneck. Unblocks opening trickle vents (currently closed — too cold) for mould risk (58.8% RH).
