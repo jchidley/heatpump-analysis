@@ -10,3 +10,4 @@ model/__pycache__/
 # Thermal artifacts: commit baselines + thresholds, ignore run outputs + snapshots
 artifacts/thermal/thermal-*.json
 artifacts/thermal/snapshots/
+cosy-scheduler/target/

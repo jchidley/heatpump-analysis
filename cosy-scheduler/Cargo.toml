@@ -1,0 +1,7 @@
+[package]
+name = "cosy-scheduler"
+version = "0.1.0"
+edition = "2021"
+description = "Cosy period scheduler — sets DHW mode and heating based on outside temp"
+
+# Zero dependencies — pure std only

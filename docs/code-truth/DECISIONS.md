@@ -243,15 +243,17 @@
 
 **Consequences**: Don't tune one without re-running the joint calibration. Night 1 data: T_out avg 8.5°C, doors normal. Night 2 data: T_out avg 5.0°C, all doors closed.
 
-### D23: Setback disabled (26 March 2026, trial)
+### D23: Overnight strategy revised (29 March 2026)
 
-**Status:** active (trial)
+**Status:** active (replaces trial of 26 March)
 
-**What**: `Z1NightTemp` changed from 17°C to 21°C (matches `Z1DayTemp`). Trialling no overnight setback.
+**What**: `Z1NightTemp` = 19°C, `Z1DayTemp` = 21°C. Night mode 00:00–04:00 (aligned to mid-peak dead zone). DHW windows: 05:30–07:00, 13:00–15:00, 22:00–00:00 (Cosy-aligned). DHW mode: eco year-round, manually switch to normal from first cold morning (~November) to March.
 
-**Why**: Analysis of 117 winter days (Nov 2025–Feb 2026) showed setback was cost-neutral (£7/winter saving) but recovery stressed the HP: 4.8kW/38°C MWT vs 3.5kW/32°C steady. Without setback, bedrooms cool naturally via closed doors (losing ~2°C overnight from thermal mass).
+**History**: Originally 17°C setback (house never dropped that far — paying for nothing). Briefly trialled full OFF via crontab (26–29 Mar) — rejected (elvina dropped to 15.8°C, £6/yr saving). Settled on 19°C setback which costs ~£20/yr and only fires on coldest nights.
 
-**Where**: eBUS on pi5data. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888`
+**Key finding**: HP is at capacity on cold days — house stabilises at 19.5–20°C regardless of strategy. Morning DHW delayed to 05:30 so HP heats house for 1.5h first at Cosy rate. 100% of Normal DHW cycles complete within Cosy window. See `docs/overnight-strategy-analysis.md` for full analysis.
+
+**Where**: VRC 700 via eBUS on pi5data. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888`
 
 ### D24: Solar gain calibrated from PV P3 channel
 

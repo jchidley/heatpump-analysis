@@ -89,7 +89,9 @@ The outside temperature feed's lower resolution matters for gap-filling: the tem
 
 ### DHW scheduling
 
-From the data, DHW runs are consistently triggered at **~05:05** and **~13:05** daily, with occasional evening runs. This is controlled by the SensoCOMFORT schedule, not by the monitoring system.
+DHW timer windows are set via eBUS on the VRC 700: **05:30–07:00, 13:00–15:00, 22:00–00:00** (aligned to Octopus Cosy tariff periods). Morning DHW starts at 05:30 to give the HP 1.5h of house heating first (04:00–05:30) at Cosy rate. DHW mode is eco (mild season) or normal (cold season, switched manually on the Arotherm controller). See `docs/overnight-strategy-analysis.md` for the full analysis behind these timings.
+
+Previously (before 29 Mar 2026), DHW triggered at ~05:05 and ~13:05 daily under the old VRC 700 schedule.
 
 Previously, an emergency DHW auto-trigger script on pi5data forced a cylinder recharge via eBUS when prolonged draws were detected. This was **removed March 2026** — replaced by manual boost via z2m-hub dashboard (`~/github/z2m-hub/`). See [dhw-auto-trigger.md](dhw-auto-trigger.md) for historical documentation.
 

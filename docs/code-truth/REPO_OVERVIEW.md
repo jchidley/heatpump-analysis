@@ -62,7 +62,7 @@ Extensive additions (277 lines changed) documenting:
 - Intervention analysis table (elvina vents, aldora rad, J&C draught-strip, EWI SE wall)
 - System costs: HP £3,624 + controller £198 + cylinder £1,483 + 8 new Stelrad rads ~£2,744 = ~£8,048 (DIY, no grant)
 - 14-year payback at £565/yr saving
-- Setback disabled 26 Mar 2026 (Z1NightTemp 17→21°C)
+- Overnight strategy revised 29 Mar 2026: 19°C setback 00:00–04:00, DHW at 05:30 (after 1.5h house heating), Cosy-aligned windows. See `docs/overnight-strategy-analysis.md`.
 - Solar gain model details and P3 CT scaling issue
 - Bottleneck sequence (elvina→aldora→bathroom)
 

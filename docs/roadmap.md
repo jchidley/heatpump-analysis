@@ -150,7 +150,7 @@ directly for HP-era dates. Without this correction, ERA5 overstates HDD by ~14%.
 | **Self-consumption** | How much HP electricity comes from solar vs grid? |
 | **Battery state** | When is the Powerwall charging/discharging vs HP running? |
 | **Effective COP** | Solar kWh at £0 changes the economics — cost-weighted COP |
-| **DHW scheduling** | Should DHW shift to solar-peak hours (midday) instead of 05:05? |
+| **DHW scheduling** | DHW now Cosy-aligned (05:30–07:00, 13:00–15:00, 22:00–00:00). Further optimisation: shift more DHW to afternoon Cosy when solar available? |
 
 ### Implementation notes
 

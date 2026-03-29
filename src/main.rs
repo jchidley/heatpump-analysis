@@ -4,6 +4,7 @@ mod db;
 mod emoncms;
 mod gaps;
 mod octopus;
+mod overnight;
 mod thermal;
 
 use std::path::PathBuf;
@@ -121,6 +122,8 @@ enum Commands {
     GasVsHp,
     /// Baseload analysis: whole-house electricity minus heat pump electricity
     Baseload,
+    /// Overnight heating strategy optimizer — backtest optimal schedules vs actual
+    Overnight,
     /// Run all analyses
     All,
     /// Calibrate thermal model parameters from InfluxDB using fixed test windows
@@ -469,6 +472,17 @@ fn main() -> Result<()> {
             }
 
             octopus::print_baseload(&consumption, &hp_daily)?;
+        }
+
+        Commands::Overnight => {
+            let conn = cli.require_db()?;
+            let df = if cli.include_simulated {
+                db::load_dataframe_with_simulated(&conn, start, end)?
+            } else {
+                db::load_dataframe(&conn, start, end)?
+            };
+            let enriched = analysis::enrich(&df)?;
+            overnight::overnight_analysis(&enriched)?;
         }
 
         Commands::All => {

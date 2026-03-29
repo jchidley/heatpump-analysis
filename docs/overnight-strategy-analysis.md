@@ -1,228 +1,180 @@
 # Overnight heating strategy analysis
 
-Date: 28 March 2026
+Date: 29 March 2026 (revised — replaces initial analysis of 28 March)
 
 ## Context
 
 Vaillant Arotherm Plus 5kW heat pump, Octopus Cosy tariff, Tesla Powerwall 2, 13 rooms with Zigbee sensors, eBUS monitoring. House is 1930s solid brick, 180m², HTC ~261 W/K.
 
-This analysis uses measured emonhp data (510 winter nights with 4°C setback, 2 nights no setback, 2 nights heating off) plus calibrated thermal model parameters to find the optimal overnight heating strategy.
+This analysis uses 512 days of measured emonhp data (324 winter nights), a calibrated Rust backtest model (`src/overnight.rs`), and a one-night live trial (28–29 March) to determine the optimal overnight and DHW strategy.
+
+## Octopus Cosy tariff — three rate periods
+
+| Rate | Price | Times |
+|---|---|---|
+| **Cosy (off-peak)** | 14.05p/kWh | 04:00–07:00, 13:00–16:00, **22:00–00:00** |
+| **Mid-peak** | 28.65p/kWh | 00:00–04:00, 07:00–13:00, 19:00–22:00 |
+| **Peak** | 42.97p/kWh | 16:00–19:00 |
+
+Tesla Powerwall (13.5 kWh) covers ~95% of non-Cosy usage at effective Cosy rate. The 5% leakage hits grid at mid/peak rates. Effective blended rate: **14.63p/kWh**.
+
+## Key finding: the HP is at capacity on cold days
+
+The most important discovery: on cold days (<6°C), the 5kW Arotherm cannot maintain 21°C. The leather room (emonth2 canary sensor) stabilises at **19.5–20°C** regardless of overnight strategy. The HP runs flat out and the house temperature is limited by HP sizing, not scheduling.
+
+Evidence from 134 winter nights (Nov 2025 – Mar 2026):
+- Leather room at 08:00: avg 20.0°C, min 17.7°C
+- Only **7% of nights** reached 21°C by 08:00 (under 4°C setback)
+- On <0°C nights: avg 19.1°C at 08:00, **never** reached 21°C — not even by midday
+- On 0–3°C nights: reaches 21°C at **15:00 on average** (7 out of 15 days)
+- On 6–9°C nights: reaches 21°C at **12:00 on average** (31 out of 44 days)
+
+This means overnight strategy debates are secondary — the HP capacity is the binding constraint.
 
 ## What we control
 
-1. **When to turn heating off** (start of off/setback period — currently evening)
-2. **When to turn heating back on at 21°C** (triggers recovery)
-3. **When to start DHW** (can be placed anywhere, must complete within available time)
-4. **DHW mode**: normal (~1h, higher MWT) or eco (~2h, lower MWT)
+1. **Z1 heating schedule** — day temp (21°C) vs night temp (setback) and when to switch
+2. **DHW timer windows** — when the VRC 700 is allowed to fire DHW
+3. **DHW mode** — eco (~2h, lower MWT, better COP) vs normal (~1h, higher MWT, worse COP). Set manually on the Arotherm controller — not writable via eBUS.
 
 ## What we don't control
 
-- Outside temperature (but we have the overnight profile from data)
-- Cosy window timing (fixed: 04:00–07:00)
-- House thermal mass and fabric losses (fixed, measured)
+- Cosy tariff rates and times (fixed by Octopus)
+- The 21°C day setpoint (fixed in VRC 700)
+- HP capacity on cold days (~5kW max, equilibrium ~20°C at 0°C outside)
+- DHW mode via automation (hmu HwcMode is read-only on eBUS)
 
-## Objective
+## Implemented configuration
 
-Minimise overnight electricity cost while achieving ≥19.5°C in all scored rooms by 07:00.
+### Heating schedule (via eBUS, Z1 timer)
 
-## Effective tariff (Octopus Cosy + Tesla Powerwall)
-
-The battery means we only ever pay two rates:
-
-| Rate | Price | When |
-|---|---|---|
-| **Cosy** | 14.05p/kWh | 04:00–07:00, 13:00–16:00 (battery charges here too) |
-| **Blended** | ~17p/kWh | All other times (mix of battery discharge + grid, includes roundtrip losses) |
-
-The published mid-peak (28.65p) and peak (42.97p) rates are never paid directly — the battery absorbs them. The blended rate (~17p) is the effective cost of electricity outside Cosy windows, accounting for battery roundtrip efficiency.
-
-The **04:00–07:00 morning Cosy window** is the cheapest heating opportunity (14.05p vs 17p blended).
-
-## DHW timing (measured)
-
-From BuildingCircuitFlow data (9 morning DHW cycles, Mar 2026):
-
-- DHW starts: **05:05–05:10** consistently (eco mode, VRC 700 schedule)
-- DHW ends: **06:50–07:12**
-- Duration: **104–125 min** (eco mode, ~2h)
-- Normal mode: ~1h (higher MWT, same energy)
-
-Of the 180-min Cosy morning window (04:00–07:00):
-- **65 min** (36%) available for space heating before DHW starts
-- **115 min** (64%) consumed by DHW cycle
-- Recovery after DHW ends at ~07:10 falls in **mid-peak** (28.65p)
-
-DHW can be rescheduled anywhere within the Cosy window. Normal mode completes in ~1h vs 2h eco.
-
-## Measured parameters (calibrated from data)
-
-### Room cooling rate (from controlled experiment nights, heating off)
-
-| Outside temp | Midnight–03:00 | 03:00–07:00 | Note |
+| Period | Temp | Tariff band | Rationale |
 |---|---|---|---|
-| 8.5°C | 0.28°C/hr | 0.27°C/hr | Night 1, calm |
-| 5.0°C | 0.26°C/hr | 0.30°C/hr | Night 2, calm |
+| 00:00–04:00 | **19°C** (night setback) | Mid-peak (dead zone) | Battery likely depleted; HP only fires if house drops below 19°C. Costs ~£20/yr. House naturally sits at 18.5–19.5°C so setback rarely triggers on mild nights. |
+| 04:00–00:00 | **21°C** (day mode) | Cosy + mid + peak | HP runs at target. On cold days, can't actually reach 21°C — stabilises at ~20°C. |
 
-**Rate scales with indoor-outdoor ΔT: 0.023°C/hr per °C of ΔT.**
+Previous setup was 17°C setback (4°C drop). Data showed the house never drops to 17°C naturally, so the old setback was paying for nothing. 19°C setback catches only the coldest nights and costs £20/yr vs £0 for the old 17°C.
 
-Barely any difference midnight vs pre-dawn — wind calms overnight (land effect).
+eBUS commands (already set):
+```bash
+echo 'write -c 700 Z1NightTemp 19' | nc -w 2 localhost 8888
+echo 'write -c 700 Z1DayTemp 21' | nc -w 2 localhost 8888
+# Timer: day mode 04:00-00:00, night mode 00:00-04:00
+echo 'write -c 700 Z1Timer_Monday 04:00;00:00;-:-;-:-;-:-;-:-' | nc -w 2 localhost 8888
+# (same for all days)
+```
 
-Starting at 21°C, 8h off, outside avg 7°C: rooms reach **~18.6°C** (2.4°C drop).
+### DHW timer windows (via eBUS, aligned to Cosy periods)
 
-### Outside temperature profile (Dec–Mar average, hourly)
-
-| Hour | Avg °C | vs midnight |
+| Window | Cosy period | Rationale |
 |---|---|---|
-| 23:00 | 8.1 | +0.5 |
-| 00:00 | 7.6 | 0 |
-| 02:00 | 7.2 | -0.4 |
-| 04:00 | 6.8 | -0.8 |
-| 06:00 | 6.5 | -1.1 |
-| 07:00 | 6.5 | -1.1 |
+| **05:30–07:00** | Morning Cosy | Main DHW cycle. Delayed to 05:30 — the latest start where 100% of Normal cycles finish within Cosy (worst case 06:58). HP heats the house for 1.5h first (04:00–05:30) at Cosy rate. Eco spills ~30 min past 07:00 but costs 40p/year — not worth seasonal adjustment. |
+| **13:00–15:00** | Afternoon Cosy | Top-up. Was 13:00–16:00, shortened to prevent spills into 16:00 Peak. Data showed 18 historical peak spills under old schedule. |
+| **22:00–00:00** | Evening Cosy | New. Top-up after evening showers. ~6% of days had evening DHW. |
 
-Outside temp falls ~1°C from midnight to dawn. DHW earlier in Cosy window = warmer outside = better COP.
-
-### HP performance (measured from emonhp)
-
-| Mode | Heat output | Electricity | COP | MWT |
-|---|---|---|---|---|
-| Recovery (08–10, post-setback) | 3.5 kWh/hr | 0.73 kWh/hr | 4.8 | ~34°C |
-| Steady state (14–18) | 2.2 kWh/hr | 0.43 kWh/hr | 5.3 | ~31°C |
-| DHW eco (2h) | 6.0 kWh total | 1.9 kWh total | 3.1 | ~45°C |
-
-Measured net room recovery rate: **1.0°C/hr** (first 2°C of deficit).
-
-### Overnight energy consumption (measured, 23:00–07:00, ~8°C outside)
-
-| Regime | Nights | Heat kWh | Elec kWh | COP |
-|---|---|---|---|---|
-| 4°C setback | 100 (at 7–9.5°C) | 19.1 | 4.1 | 4.61 |
-| No setback | 2 | 29.0 | 6.5 | 4.43 |
-| Heating off | 2 | 6.0 | 1.8 | 3.4 |
-
-### Full cycle energy (measured, 23:00–12:00, ~8°C outside)
-
-| Regime | Overnight kWh elec | Recovery kWh elec | Total | COP |
-|---|---|---|---|---|
-| 4°C setback | 4.1 | 3.6 | 7.7 | 4.51 |
-| No setback | 6.5 | 1.7 | 8.2 | 4.42 |
-| Heating off | 1.8 | 5.1 | 6.9 | 4.06 |
-
-## Key findings
-
-### 1. Setback uses less total energy but may cost more depending on timing
-
-At blended rate (17p) throughout: 4°C setback uses 7.7 kWh vs 8.2 kWh (no setback) = less energy.
-
-But if recovery spills past 07:00 it doesn't matter on this tariff — blended rate is the same before and after 07:00. The only rate difference is **Cosy (14.05p) vs blended (17p)** — a 3p/kWh differential. The strategy should maximise heating in the Cosy window and minimise it at blended rate.
-
-### 2. DHW currently steals the Cosy morning window
-
-The current eco DHW schedule (05:05–07:10) consumes 64% of the Cosy morning window. This is controllable — DHW timing and mode (normal 1h / eco 2h) are both adjustable.
-
-### 3. Optimal strategy: OFF overnight, DHW first in Cosy, recover at Cosy rate
-
-The model (calibrated from measured data) recommends:
-
-```
-22:00  Heating OFF
-       (rooms cool 0.3°C/hr, wind calm, zero electricity)
-04:00  DHW normal mode (Cosy starts, outside still warmest = best DHW COP)
-05:00  DHW complete, heating ON at 21°C (Cosy rate)
-05:30  Rooms at 19.6°C, recovering at 1.0°C/hr
-06:30  Rooms at 20.6°C
-07:00  Rooms at 20.9°C — Cosy window ends
-07:00+ Steady state at mid-peak (minimal, rooms already at target)
+eBUS commands (already set):
+```bash
+echo 'write -c 700 HwcTimer_Monday 05:30;07:00;13:00;15:00;22:00;00:00' | nc -w 2 localhost 8888
+# (same for all days)
 ```
 
-Room temperature trace: **21.0 → 19.2°C (04:00) → 19.1°C (05:00, post-DHW) → 20.9°C (07:00)**
+### DHW mode — seasonal manual switch
 
-### 4. Cost comparison (two-rate model: Cosy 14.05p, blended 17p)
+| Period | Mode | Rationale |
+|---|---|---|
+| **Cold season** (when house feels cold in morning) | **Normal** (~1h) | Faster DHW frees more Cosy time for space heating. Data: 19/20 eco cycles on cold mornings never recovered in 3 hours. Normal recovers 48/65 on cool days. |
+| **Mild season** (when house is warm through morning) | **Eco** (~2h) | Better COP (3.1 vs 2.5) saves ~£12/yr. House barely cools during eco DHW on mild days (0.2°C drop). |
 
-All strategies assume: heating is off/setback from some evening time, then restarted. DHW can be placed anywhere in the Cosy window (04:00–07:00) in normal (1h) or eco (2h) mode.
+Switch trigger: **when you first notice the house isn't warm by mid-morning, switch to Normal**. Switch back when it feels fine. Typically November → March based on temperature data.
 
-| Strategy | Blended kWh | Cosy kWh | Cost/night | Annual | vs current |
-|---|---|---|---|---|---|
-| No setback + eco DHW 05:00 (current) | 3.0 | 3.4 | 99p | £178 | baseline |
-| **OFF 22–04, DHW normal 04–05, heat 05–07** | **0** | **4.6** | **65p** | **£116** | **save £62** |
-| 4°C setback + eco DHW 05:00 (historical) | 4.1 | 3.6 | 120p | £216 | costs £38 more |
-| OFF 23–04, DHW normal 04–05, heat 05–07 | 0.4 | 4.2 | 66p | £119 | save £59 |
-| OFF 00–04, DHW normal 04–05, heat 05–07 | 0.8 | 3.8 | 67p | £121 | save £57 |
+Cannot be automated — hmu HwcMode is read-only via eBUS (confirmed by testing hex writes, -def writes, and searching ebusd GitHub issues).
 
-Note: "blended kWh" = electricity consumed outside 04:00–07:00. "Cosy kWh" = electricity consumed within 04:00–07:00. DHW electricity (~1.9 kWh) is included in whichever window it runs in.
+## Analysis journey and dead ends
 
-### 5. Why turning off + Cosy recovery beats setback
+### 1. OFF overnight + Cosy recovery (rejected)
 
-The rate differential is only 3p/kWh (17p blended vs 14.05p Cosy). But:
+Initial idea: turn HP OFF via eBUS at night, recover during morning Cosy window at cheap rate.
 
-- **6h off saves ~3 kWh** at blended rate (17p) = 51p saved overnight
-- **Recovery uses ~2 kWh** at Cosy rate (14.05p) = 28p spent on recovery
-- **Net saving: ~23p/night** from rate-shifting alone
-- Plus: **less total energy** — house loses less heat at lower ΔT during off period
+Built `src/overnight.rs` — Rust backtest with:
+- Cooling model calibrated from DHW events (k=0.039/hr, not idle cycles)
+- Recovery/maintenance heating bins separated
+- Three-rate Cosy tariff with 95% battery coverage
 
-The 4°C setback is worst because the HP cycles all night at blended rate (4.1 kWh × 17p) and still needs recovery, while achieving almost the same room cooling as turning off entirely (1.9°C vs 2.4°C drop — the setback heating barely slows the cooling).
+Results: adaptive strategy saves **£6/year** at 19.5°C target. The 4°C setback was already near-optimal. Live trial (28–29 March, OFF 23:15→04:00): leather room barely moved (21.6→21.1°C) but elvina dropped to 15.8°C.
 
-### 6. Diminishing returns from longer off periods
+**Rejected** because: savings are trivial, cold rooms (elvina, office) suffer badly, and the HP can't recover them in the Cosy window anyway.
 
-Each additional hour of off-period saves ~0.4 kWh at blended rate (7p) but requires ~0.4 kWh more recovery. If recovery is at Cosy rate (14.05p), the saving is 17-14.05 = 3p per shifted kWh. With longer off periods, recovery may spill past the Cosy window into blended rate, eliminating the benefit.
+### 2. Midnight OFF + 04:00 ON via crontab (trialled and removed)
 
-The optimal off-period is the longest that still allows full recovery within the 04:00–07:00 Cosy window. From the model: 6h off (22:00–04:00) drops rooms 1.8°C, recoverable in 2h (05:00–07:00 after 1h DHW).
+Deployed `cosy-scheduler` (Rust binary on pi5data) with crontab. Ran for one night. Removed because the 19°C setback via VRC 700 timer achieves the same thing without external automation — the HP just doesn't fire if the house is above 19°C.
 
-## What needs to be trialled
+The `cosy-scheduler` binary remains at `/usr/local/bin/cosy-scheduler` on pi5data for potential future use.
 
-The recommended strategy is modelled, not measured. The key parameters are calibrated from measured data, but the specific combination needs validation:
+### 3. DHW timing optimisation (partially implemented)
 
-1. **DHW in normal mode at 04:00** — verify it completes by 05:00 and the VRC 700 transitions cleanly to space heating
-2. **Recovery rate 05:00–07:00** — verify rooms recover 1.8°C in 2h at Cosy rate
-3. **Room temps at 07:00** — verify ≥19.5°C across scored rooms
+Moving DHW windows to align with Cosy periods: **implemented**. The afternoon window shortened to 13:00–15:00 to avoid peak spills.
 
-### eBUS commands for trial
+Moving DHW later in the morning window (heat first, DHW at 06:00): **no benefit**. Data showed the HP can't recover the house even with 2h of pre-DHW heating. The measured heating rate during morning Cosy is **negative** at all outside temperatures — the house cools even with the HP running flat out.
+
+### 4. Thermal pre-charging before peak (not worth it)
+
+Eliminating all HP usage during 16:00–19:00 peak saves **£7/year**. The battery already covers 95% of peak usage. Not worth the complexity.
+
+### 5. Battery makes scheduling mostly irrelevant
+
+The Powerwall covers 95% of non-Cosy HP usage at effective Cosy rate (14.63p/kWh). Total HP electricity by tariff band (512 days):
+- Cosy: 1992 kWh (32%)
+- Mid-peak: 3549 kWh (57%)
+- Peak: 696 kWh (11%)
+
+With battery: effective cost £912 vs £1596 naive (no battery). The battery has already captured most of the tariff arbitrage. Scheduling optimisation yields £15–40/year total.
+
+## Calibrated model parameters
+
+### Cooling (from 27,047 DHW minutes + 40,479 long-idle minutes)
+
+- k = 0.039/hr (house cools 0.039°C/hr per °C of indoor-outdoor ΔT)
+- Thermal capacity: 6,723 Wh/°C (τ = 25.8 hours)
+- At 12°C ΔT: 0.47°C/hr cooling → 3.3°C drop over 7h off
+
+Note: calibrated from DHW events (genuine "no space heating" conditions), not short idle cycles. The idle-cycle rate (k=0.014) was 3× too slow because surrounding rooms were still warm from recent heating.
+
+### Heating recovery (from emonhp data, heating state with indoor_t rising)
+
+| T_out | Heat W | Elec W | COP | MWT |
+|---|---|---|---|---|
+| -2–0°C | 5700 | 1849 | 3.08 | 30.5°C |
+| 2–4°C | 5180 | 1420 | 3.65 | 31.3°C |
+| 6–8°C | 4045 | 841 | 4.81 | 30.2°C |
+| 10–12°C | 2913 | 481 | 6.06 | 28.3°C |
+
+### DHW (436 cycles ≥30 min)
+
+| Mode | Duration | Electricity | COP | House temp drop |
+|---|---|---|---|---|
+| Normal | 58 min avg | 1.19 kWh | ~2.5 | 0.2°C (cold), 0.1°C (mild) |
+| Eco | 108 min avg | 1.66 kWh (cold) / 1.7 kWh (mild) | ~3.3 | 0.5°C (cold), 0.2°C (mild) |
+
+## Revert instructions
 
 ```bash
-# On pi5data, schedule via at/cron:
-
-# 22:00: heating off
-echo 'write -c 700 Z1OpMode off' | nc -w 2 localhost 8888
-
-# 04:00: heating on + DHW trigger
-echo 'write -c 700 Z1OpMode auto' | nc -w 2 localhost 8888
-# (DHW scheduling via VRC 700 timer — set HwcTimer to 04:00-05:00 window)
-
-# Revert to normal:
+# Restore old 4°C setback:
 echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888
-echo 'write -c 700 Z1OpMode auto' | nc -w 2 localhost 8888
+
+# Restore old heating timer (day from 05:00):
+for day in Monday Tuesday Wednesday Thursday Friday Saturday Sunday; do
+  echo "write -c 700 Z1Timer_${day} 05:00;-:-;-:-;-:-;-:-;-:-" | nc -w 2 localhost 8888
+done
+
+# Restore old DHW timers (pre-optimisation):
+for day in Monday Tuesday Wednesday Thursday Friday Saturday Sunday; do
+  echo "write -c 700 HwcTimer_${day} 05:00;07:00;13:00;16:00;-:-;-:-" | nc -w 2 localhost 8888
+done
 ```
 
-### Measurement plan
+## Related files
 
-Run for 3+ nights at similar outside temps. Compare against:
-- Measured 4°C setback baseline (508 nights)
-- Measured no-setback (2 nights)
-- Model prediction
-
-Collect:
-- `emon/heatpump/heatmeter_Energy` + `electric_Energy` (cumulative, hourly)
-- `ebusd/poll/BuildingCircuitFlow` (state classification)
-- `ebusd/poll/FlowTemp` + `ReturnTemp` (MWT)
-- Room temps from Zigbee sensors (all 13)
-- Outside temp from `ebusd/poll/OutsideTemp`
-
-## Assumptions and limitations
-
-- Cooling rate calibrated from 2 experiment nights in March — may differ in deep winter (colder outside, higher ΔT, faster cooling)
-- Recovery rate measured from post-setback mornings — recovery from 6h off may be slightly different
-- Battery roundtrip losses absorbed into blended 17p rate — actual varies
-- DHW normal mode duration assumed 1h — verify with VRC 700
-- Model uses average winter outside temp profile — individual nights vary
-- Wind effects not modelled — windy nights will cool faster
-- Occupancy patterns (door opening, showers) not modelled
-
-## eBUS status code notes
-
-`StatuscodeNum` is **unreliable for DHW detection** on the Arotherm. Code 134 ("off/frost") appears during the entire DHW cycle when the diverter switches flow to the cylinder. Use `BuildingCircuitFlow` instead: >900 L/h = DHW, 780–900 = heating, <100 = off.
-
-## Related documents
-
-- `AGENTS.md` — setback history, eBUS state classification, operational model accuracy
-- `docs/rust-migration-plan.md` — thermal model development roadmap
-- `model/thermal-config.toml` — current model configuration
+- `src/overnight.rs` — Rust backtest model (30 strategies × 324 nights)
+- `cosy-scheduler/` — standalone Rust binary for pi5data (deployed but unused)
+- `model/overnight.py` — initial Python model (superseded by Rust version)
+- `AGENTS.md` — setback history, eBUS commands, operational model

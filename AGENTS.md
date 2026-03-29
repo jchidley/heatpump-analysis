@@ -33,6 +33,7 @@ Also includes shell-based monitoring scripts deployed to pi5data, and extensive 
 | Octopus summary | `cargo run -- octopus` |
 | Gas vs HP comparison | `cargo run -- --all-data gas-vs-hp` |
 | Baseload analysis | `cargo run -- --all-data baseload` |
+| Overnight optimizer | `cargo run -- --all-data overnight` |
 | **Rust thermal model** | |
 | Calibrate (cooldown) | `cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml` |
 | Validate (holdout) | `cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml` |
@@ -70,6 +71,9 @@ thermal/      → Thermal submodules (error.rs, influx.rs, report.rs)
 scripts/      → Shell scripts deployed to pi5data (DHW trigger, eBUS polling)
 ```
 
+Standalone binaries:
+- `cosy-scheduler/` — Rust binary deployed to pi5data, reads outside temp from eBUS, logs DHW recommendations. Zero dependencies (pure std). Cross-compiled for aarch64-unknown-linux-musl. Currently unused (VRC 700 timer handles scheduling) but available at `/usr/local/bin/cosy-scheduler` on pi5data.
+
 Git submodules:
 - `avrdb_firmware/` — AVR-DB firmware (EmonTx4/EmonPi2/EmonTx5), compiled hex files for flashing
 - `EmonScripts/` — emonSD install/update scripts, firmware upload tools
@@ -99,7 +103,7 @@ Removed Mar 2026. Was `scripts/dhw-auto-trigger.sh` on pi5data. Replaced by manu
 
 ## eBUS Polling
 
-`scripts/ebusd-poll.sh` runs on pi5data as a systemd service. Pure shell script using `nc` + `mosquitto_pub`. Reads 25 eBUS values every 30s (+ 16 more every 5 min) via `nc localhost 8888` and publishes to `ebusd/poll/*` MQTT topics. Replaces the previous Python-in-Docker version that reinstalled dependencies on every container restart.
+`scripts/ebusd-poll.sh` runs on pi5data as a systemd service. Pure shell script using `nc` + `mosquitto_pub`. Reads 25 eBUS values every 30s (+ 17 more every 5 min, including Z2RoomTemp) via `nc localhost 8888` and publishes to `ebusd/poll/*` MQTT topics. Replaces the previous Python-in-Docker version that reinstalled dependencies on every container restart.
 
 Deploy: `scp scripts/ebusd-poll.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/ebusd-poll.sh /usr/local/bin/ && sudo systemctl restart ebusd-poll"`
 
@@ -112,7 +116,7 @@ cd ~/github/octopus && npm run cli -- refresh   # Refresh Octopus data
 ```
 
 - Electricity Apr 2020→present, Gas Apr 2020→Jul 2024 (half-hourly)
-- Current tariff: **Cosy Fix** (off 14.05p, mid 28.65p, peak 42.97p). 82.6% HP electricity at off-peak.
+- Current tariff: **Cosy Fix** (off 14.05p, mid 28.65p, peak 42.97p). Three Cosy windows: 04:00–07:00, 13:00–16:00, 22:00–00:00. Battery effective rate 14.63p/kWh. 82.6% HP electricity at off-peak.
 - Temperature: eBUS primary (real-time), Met Office control (hourly), ERA5-Land for gas era (+1.0°C bias correction)
 - 102-day data gap Dec 2023→Mar 2024 (unfillable)
 
@@ -214,7 +218,7 @@ See [docs/house-layout.md](docs/house-layout.md) for full building physics: room
 See [docs/room-thermal-model.md](docs/room-thermal-model.md) for HP capacity analysis, EWI opportunity, FRV strategy, overnight data findings.
 
 Key facts for agents:
-- **13 rooms**, all sensored (Office + Landing added 24 Mar 2026). All SNZB-02P on v2.2.0.
+- **13 rooms**, all sensored (Office + Landing added 24 Mar 2026). All SNZB-02P on v2.2.0. Conservatory also has VRC 700 built-in sensor (mapped to Z2RoomTemp via `Z2RoomZoneMapping=VRC700`, room modulation OFF — read-only, no control impact). Polled every 5 min via `ebusd/poll/Z2RoomTemp`.
 - **15 radiators**, no TRVs. Kitchen and Landing have no radiator. Sterling rad is OFF.
 - **Pipe topology**: 22mm primary (most rads) vs two 15mm branches (hall+front-horizontal, jackcarol+office) — 15mm branches are flow-starved.
 - **Bathroom MVHR**: Vent-Axia Tempra LP, 9 L/s, 78% HR, runs 24/7. Door open 24h except during/after showers. Drives whole-house airflow via stairwell.
@@ -224,7 +228,10 @@ Key facts for agents:
 - **eBUS heating control**: `write -c 700 Z1OpMode off/auto` toggles heating via ebusd on pi5data. DHW unaffected. Tested 24 Mar 2026. `at` scheduler on pi5data for timed experiments.
 - **Bare CH pipes in floor void**: 2m of 35mm flow + return (bare copper) in the gap between kitchen ceiling and bathroom floor. Heats both rooms (~25W each at MWT=31). Not insulated — insulating would save ~50W continuous.
 - **Morning demand analysis** (117 winter days, Nov 2025–Feb 2026): HP peaks at 4.8kW avg / 7.5kW max during 06:00-08:00 recovery. COP drops from 4.42 (evening steady) to 3.70 (morning recovery). Recovery MWT 38°C vs evening 32°C. DHW cycle at 06:00-07:00 (114/120 days) immediately precedes heating recovery — double stress on HP.
-- **Setback disabled 26 Mar 2026 (trial)**: `Z1NightTemp` changed from 17°C to 21°C (matches `Z1DayTemp`). Trialling no overnight setback — previously had 4°C setback (midnight→05:00) causing recovery spike to 4.8kW/38°C MWT at worst COP. Analysis of 117 winter days showed setback was cost-neutral (£7/winter) but recovery stressed the HP. Without setback: steady 3.5kW/32°C all night, bedrooms cool naturally via closed doors. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888` on pi5data.
+- **Overnight strategy (revised 29 Mar 2026)**: `Z1NightTemp`=19°C, `Z1DayTemp`=21°C. Night mode 00:00–04:00 (aligned to mid-peak dead zone between evening and morning Cosy windows). Previously 17°C setback (house never dropped that far naturally — paying for nothing) then briefly trialled full OFF (rejected — elvina dropped to 15.8°C, £6/yr saving not worth it). 19°C setback costs ~£20/yr and only fires on coldest nights. See `docs/overnight-strategy-analysis.md` for full analysis. Key finding: **HP is at capacity on cold days** — house stabilises at 19.5–20°C regardless of strategy. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888` on pi5data.
+- **DHW timer windows (set 29 Mar 2026)**: 05:30–07:00, 13:00–15:00, 22:00–00:00. Morning window starts at 05:30 — the latest time where 100% of Normal DHW cycles finish within Cosy (worst case 06:58, p90=77m, max=88m). HP heats house for 1.5h first (04:00–05:30) at Cosy rate before DHW. Eco spills ~30 min past 07:00 in mild season (40p/year — not worth seasonal adjustment). Afternoon shortened from 16:00 to 15:00 to prevent peak spills (18 historical). Evening added for post-shower top-ups. No crontab needed — same schedule year-round.
+- **DHW mode**: eco year-round, manually switch to normal when house feels cold in mornings (typically Nov→Mar). Eco saves ~£12/yr on COP (3.1 vs 2.5) but takes 2h vs 1h. On cold days eco steals too much Cosy heating time — 19/20 eco cold-morning cycles never recovered in 3h. Cannot automate — `hmu HwcMode` is read-only via eBUS.
+- **Cosy tariff**: THREE windows (04:00–07:00, 13:00–16:00, **22:00–00:00**), not two. Battery covers 95% of non-Cosy at effective 14.63p/kWh. Scheduling optimisation yields £15–40/yr total — battery has already captured most arbitrage.
 - **Door states**: Bathroom + Office + Shower normally open. Jack&Carol open day/closed night. Elvina/Aldora/Sterling always closed. Leather↔conservatory SG door open mornings (dog fed in conservatory), closed rest of day and overnight. Front partial. Kitchen↔Hall↔Conservatory always open.
 - **SNZB-02P v2.1.0 bug**: readings freeze at power-on value. v2.2.0 fixes it. Always verify readings vary before trusting.
 
@@ -407,7 +414,15 @@ With all three fixed + J&C draught-proofing + EWI SE wall 30m²: MWT drops to 43
 
 EWI is the big win: **19% heat demand reduction**. At same 20°C target, HP runs at 84% capacity (vs 106% currently at 5°C outside). Less cycling, less wear, more headroom. Payback ~23 years on energy, but comfort and HP longevity are the real drivers.
 
+## Completed (March 2026)
+
+- ~~**Overnight heating optimisation**~~ — built Rust backtest (`src/overnight.rs`), Python model (`model/overnight.py`), and `cosy-scheduler` binary. Trialled OFF overnight, rejected (£6/yr saving, elvina drops to 15.8°C). Settled on 19°C setback 00:00–04:00 via VRC 700 timer. Key finding: HP at capacity on cold days, house stabilises at 19.5–20°C regardless of strategy.
+- ~~**DHW timer alignment**~~ — moved to 05:30–07:00, 13:00–15:00, 22:00–00:00 (Cosy-aligned, morning delayed for 1.5h house heating first). Prevents afternoon peak spills.
+- ~~**Cosy tariff discovery**~~ — confirmed three Cosy windows (was assuming two). Evening 22:00–00:00 window means overnight heating before midnight is cheap.
+
 ## Planned Enhancements
+
+**Priority insight (Mar 2026):** On cold days (<6°C) the 5kW HP is at capacity — house equilibrium is 19.5–20°C regardless of scheduling, setback, DHW timing, or FRVs. The only interventions that help on cold days are those that **reduce total heat loss**: EWI (£5k, 19% demand reduction), J&C draught-strip (£30, 60–150W), sterling floor insulation. Door closers and FRVs don't help — on cold days the HP delivers the same total watts regardless, heat just redistributes between rooms. Minimising leather→conservatory SG door open time on cold mornings helps leather comfort (1.4°C dip measured) but doesn't change whole-house equilibrium.
 
 See [docs/roadmap.md](docs/roadmap.md) for full details:
 - ~~**eBUS integration into analysis**~~ — Done. Rust `thermal-operational` uses `BuildingCircuitFlow` from eBUS for HP state classification (heating/DHW/off) and `FlowTemp`/`ReturnTemp` for MWT. eBUS status codes (StatuscodeNum) are **unreliable for DHW detection** on the Arotherm — code 134 appears during both off AND DHW. Flow rate is definitive.
@@ -416,10 +431,10 @@ See [docs/roadmap.md](docs/roadmap.md) for full details:
 - **Cost analysis subcommand** — tariff data and cost calculations could be a proper Rust subcommand.
 - ~~**Controlled cooldown experiments**~~ — Night 1 (24-25 Mar, doors normal, 7.5°C avg) and Night 2 (25-26 Mar, all doors closed, 5.0°C avg) complete. Calibrated doorway Cd=0.20 and landing chimney ACH=1.30. Bathroom sensor moved from airing cupboard to wall (was 3°C high).
 - ~~**Office + Landing sensors**~~ — added 24 Mar 2026. 13/13 room coverage complete.
-- **Kitchen→conservatory door closer + cat gap** — Door closer doesn't save energy directly (doorway heat just substitutes for conservatory radiator output — same total HP work). The value is **thermal decoupling**: eliminates conservatory's solar/wind variability from affecting kitchen/hall temps, and enables independently lowering the conservatory target. Saving = £16/yr per °C of conservatory target drop (154 W/K total loss coefficient). At 14°C target (3°C drop): £48/yr. At 10°C target (7°C drop): £111/yr. Cat gap (0.15m × 0.3m) for the cat has negligible buoyancy exchange (0.8% of open door). Consider pairing with IR panel for occasional occupancy comfort — 0.8kW IR at 14°C base feels like 19°C, costs £31/yr for 1.5h/day winter use.
-- **Leather→conservatory SG door** — UA=21.12 W/K (single-glazed panels in timber frame). Door mostly closed already (open mornings for dog). At leather 21°C, conservatory 5°C: conducts 337W. Secondary glazing or heavy curtain more effective than a closer — the conduction through single glass is the issue, not the air gap.
+- **Kitchen→conservatory door closer** — Re-evaluated via equilibrium model Mar 2026. Closing the door makes **no meaningful difference** to the rest of the house. At equilibrium the doorway exchange is ~170W = 0.07°C across the house. Closing it actually makes the kitchen colder (loses the warm convective flow from hall→kitchen→conservatory that accidentally heats the kitchen, which has no radiator). The conservatory radiator (1,300W at equilibrium) cannot be turned off — conservatory drops to ~5°C without it. On cold days the HP is at capacity — same total output regardless of door state, heat just redistributes. Not worth doing.
+- **Leather→conservatory SG door** — UA=21.12 W/K conduction through single-glazed panels (closed). When **open** for the dog (mornings ~07:00–09:30), buoyancy exchange adds **1,500–2,000W** at 10°C ΔT — measured as a **1.4°C dip in leather** over 2.6 hours on 11 coldest mornings (data from emonth2 Nov 2025–Mar 2026). On cold days the HP is at capacity and cannot compensate — same total output regardless of door state. The dip hurts leather comfort but doesn't affect whole-house equilibrium. Minimising open time on cold mornings is the only mitigation. A door closer doesn't help for conduction (253W through glass when closed) — secondary glazing or heavy curtain would.
 - **Jack&Carol bay window draught-proofing** — moisture-proven leakage: ACH=1.00 even calm (Night 2), ACH=1.89 windy (Night 1). Wind adds 0.89 ACH. Draught strip frame joints. Saves ~60W calm, ~150W windy. Becomes system bottleneck once elvina closes vents.
 - **Aldora rad upgrade** — 909W DP DF replaces 376W towel (FREE, reuse existing rad). Removes aldora as bottleneck. Unblocks opening trickle vents (currently closed — too cold) for mould risk (58.8% RH).
-- **FRV installation** — model is calibrated. Leather (30°C), front (28°C), shower (25°C) massively overheat at -3°C design day. FRVs on these three 22mm radiators would allow MWT to drop a further 3-5°C, worth more annual savings than the EWI. Calculate exact settings from equilibrium model, install, and verify with sensors.
+- **FRV installation** — ⚠ **Re-evaluated after overnight analysis (Mar 2026).** The equilibrium model showed leather/front/shower overheat at -3°C design day, suggesting FRVs would help. BUT measured data shows the HP is at capacity on cold days (<6°C) and the house only reaches 19.5–20°C — every watt from every radiator is needed. FRVs would restrict output from the largest radiators (leather 4752W, front 4801W) precisely when the HP can't spare it. FRVs only help on mild days when the HP has headroom and rooms overshoot, which is a comfort issue not an efficiency one. **Deprioritised** — the real cold-day wins are reducing heat loss (EWI, draught-strip, floor insulation), not redistributing insufficient output.
 - **Sterling floor insulation** — mineral wool between joists (leather ceiling / sterling floor). Sterling occupant prefers cold + opens windows → leather's heat goes straight outside. Insulating stops this: leather retains heat, Sterling gets cold room, HP saves energy. Best single-room intervention after EWI.
 - **EWI on SE wall** — ~30m² solid brick (hall, front, jack&carol, office), U 2.11→0.23. DIY, before next winter. Model predicts: 19% heat demand reduction (23,670→19,139 kWh/yr), MWT drops 49→43°C at -3°C, annual saving £216/yr. HP runs at 84% capacity vs 106% currently. Main benefit is comfort (20°C achievable everywhere) and HP headroom, not payback (£5k DIY — roughly the same as the entire HP+controller+cylinder cost).
