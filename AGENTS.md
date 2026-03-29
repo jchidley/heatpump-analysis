@@ -100,7 +100,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - Thresholds are 5kW-specific — 7kW model's heating rate (20 L/min) overlaps 5kW DHW rate
 - Two HDD base temps: 15.5°C (UK standard) vs 17°C (gas-era regression)
 - `octopus.rs` reads from `~/github/octopus/data/` — path hardcoded
-- Radiator T50 values duplicated in `config.toml` AND `model/house.py` — keep in sync
+- Radiator T50 values duplicated in `config.toml` (analysis.rs) AND `thermal_geometry.json` (thermal.rs + house.py) — keep in sync
 - SNZB-02P v2.1.0 bug: readings freeze at power-on value. v2.2.0 fixes it. Verify readings vary.
 - Bathroom sensor was in airing cupboard until 25 Mar 2026 21:00 — historical data reads ~3°C high
 - `emon/heatpump/heatmeter_FlowRate` reads ~1 L/min constantly — DHW circuit meter, useless for state classification. Use `BuildingCircuitFlow`.
@@ -118,5 +118,5 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - Don't modify `~/github/octopus/` from this project
 - Don't modify monitoring infrastructure from here — use SSH to devices directly
 - Don't tune Cd or landing ACH independently — jointly calibrated
-- Thermal model room definitions must match between `thermal_geometry.json`, `model/house.py`, and `config.toml` radiators
+- Thermal model: `thermal_geometry.json` is source of truth for rooms/geometry (consumed by Rust + Python). `config.toml` radiators must match.
 - Rust thermal outputs are authoritative when command exists; Python for exploratory only

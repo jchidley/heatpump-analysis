@@ -186,7 +186,7 @@ Hysteresis zone (14.7–15.0 L/min) prevents rapid switching during diverter val
 | `daily_hp_by_state()` assumes 1-minute sample interval | octopus.rs | `SAMPLE_HOURS = 1/60` — different interval → wrong energy |
 | DHW tracking (161L capacity, boost logic) lives in z2m-hub | `~/github/z2m-hub/` | Changing usable volume requires updating `DHW_FULL_LITRES` |
 | gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs | Must stay consistent with analysis.rs thresholds |
-| Radiator T50 values duplicated in `config.toml` and `model/house.py` | Both files | Out-of-sync → inconsistent radiator output calculations |
+| Radiator T50 values duplicated in `config.toml` and `thermal_geometry.json` | `config.toml` (analysis.rs), `thermal_geometry.json` (thermal.rs + house.py) | Out-of-sync → inconsistent radiator output between analysis and thermal commands |
 | Room geometry shared via `data/canonical/thermal_geometry.json` | `model/house.py`, `src/thermal.rs` | Both consume same file; `model/audit_model_dimensions.py` verifies wiring |
 | `model/house.py` InfluxDB token hardcoded as constant | `INFLUX_TOKEN` | Token rotation requires code change |
 | Thermal regression baselines must be refreshed after intentional model changes | `artifacts/thermal/baselines/` | Stale baselines → false regression failures |
@@ -214,7 +214,7 @@ Hysteresis zone (14.7–15.0 L/min) prevents rapid switching during diverter val
 | A threshold in `config.toml` | Re-run analysis. Consider `DELETE FROM simulated_samples` and re-running `fill-gaps` |
 | DHW flow thresholds | Check gaps.rs TempBinModel. Update `docs/explanation.md` |
 | Room geometry | Edit `data/canonical/thermal_geometry.json`. Run `model/audit_model_dimensions.py` to verify. Re-run thermal calibration |
-| Radiator T50 in config.toml | Also update `model/house.py` `build_rooms()` and `data/canonical/thermal_geometry.json` |
+| Radiator T50 in config.toml | Also update `data/canonical/thermal_geometry.json` (thermal.rs + house.py read from there) |
 | Room ventilation ACH in model | Joint calibration — changing one room may require adjusting others |
 | Doorway Cd or landing ACH | Jointly calibrated — verify against Night 1/Night 2 data |
 | Thermal model physics | Run `scripts/thermal-regression-ci.sh`. Update baselines if intentional |

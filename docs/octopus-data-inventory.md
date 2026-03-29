@@ -68,7 +68,7 @@ startAt,endAt,readAt,value,unit,source,durationInSeconds
 
 | Variable | Purpose | Source |
 |----------|---------|--------|
-| `OCTOPUS_API_KEY` | REST API authentication | `ak set octopus` (**not yet stored**) |
+| `OCTOPUS_API_KEY` | REST API authentication | `ak get octopus` (GPG-encrypted) |
 | `OCTOPUS_ACCOUNT_NUMBER` | Account lookup | Manual |
 | `OCTOPUS_MPAN` | Electricity meter point | Auto-discovered by `npm run cli -- sync-env` |
 | `OCTOPUS_MARKET_SUPPLY_POINT_ID` | Same as MPAN | Auto-discovered |
