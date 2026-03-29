@@ -47,7 +47,13 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `octopus` | Octopus Energy data summary (consumption + weather + monthly breakdown) |
 | `gas-vs-hp` | Compare gas-era vs heat-pump-era energy use (normalised by degree days) |
 | `baseload` | Whole-house electricity minus heat pump electricity |
+| `overnight` | Overnight heating strategy optimizer — backtest optimal schedules |
 | `all` | Run summary + cop-by-temp + hourly + daily + degree-days |
+| `thermal-calibrate` | Calibrate thermal model from InfluxDB cooldown data |
+| `thermal-validate` | Validate thermal model on holdout windows |
+| `thermal-fit-diagnostics` | Period-by-period cooldown fit diagnostics |
+| `thermal-operational` | Operational validation (heating/DHW/off with solar) |
+| `thermal-snapshot` | Export/import reproducibility snapshots (human-gated) |
 
 ### Options
 
@@ -83,22 +89,23 @@ cargo run -- --all-data design-comparison
 ## Documentation
 
 ### Understanding the system
-- **[docs/explanation.md](docs/explanation.md)** — How the operating model works and why (state machine, flow rates, gap filling)
+- **[docs/explanation.md](docs/explanation.md)** — How the operating model works (state machine, flow rates, gap filling)
 - **[docs/hydraulic-analysis.md](docs/hydraulic-analysis.md)** — Pump curves, flow rate degradation, y-filter diagnosis
 - **[docs/dhw-cylinder-analysis.md](docs/dhw-cylinder-analysis.md)** — Cylinder heat exchange, WWHR performance, standby losses
+- **[docs/overnight-strategy-analysis.md](docs/overnight-strategy-analysis.md)** — Overnight heating strategy and DHW timer optimisation
 
 ### Building physics
-- **[docs/house-layout.md](docs/house-layout.md)** — Room connectivity, door states, thermal relationships, radiators, pipe topology, ventilation, sensors
-- **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — Room thermal model: methodology, calibration, overnight experiments, equilibrium analysis, moisture model
+- **[docs/house-layout.md](docs/house-layout.md)** — Room connectivity, door states, radiators, pipe topology, sensors
+- **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — Room thermal model: methodology, calibration, equilibrium, moisture
 
 ### Operations
-- **[docs/dhw-auto-trigger.md](docs/dhw-auto-trigger.md)** — Emergency DHW recharge automation (historical — removed Mar 2026, replaced by z2m-hub)
-- **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Full monitoring infrastructure (emonhp, emondhw, pi5data, eBUS, MQTT, InfluxDB, Grafana)
+- **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Monitoring infrastructure (devices, MQTT, eBUS, InfluxDB, Grafana)
+- **[docs/emon-installation-runbook.md](docs/emon-installation-runbook.md)** — How to rebuild/provision emon devices
 
 ### Reference
-- **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit and integration status
+- **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit
 - **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements
-- **[docs/rust-migration-plan.md](docs/rust-migration-plan.md)** — Python→Rust migration policy and execution plan
+- **[docs/rust-migration-plan.md](docs/rust-migration-plan.md)** — Python→Rust migration policy
 - **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
 
 ## About This Code

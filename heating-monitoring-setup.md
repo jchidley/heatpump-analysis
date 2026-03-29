@@ -63,11 +63,11 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 ### emondhw (10.0.1.46) — DHW Metering
 - **Hardware**: Raspberry Pi Zero 2 W (arm64, 426MB RAM)
 - **OS**: Debian 12 Bookworm arm64 (clean minimal rebuild in progress)
-- **Role**: DHW heat metering (Kamstrup Multical 403W702UK), dhw-auto-trigger
+- **Role**: DHW heat metering (Kamstrup Multical 403W702UK)
 - **Services**:
   - **emonhub** — reads Multical heat meter via Modbus (`/dev/ttyACM0`, QinHeng CH34x USB serial, 19200 baud, even parity, address 8)
   - **Mosquitto** — local MQTT with bridge to pi5data (`emon/#`)
-  - **dhw-auto-trigger.py** — watches DHW flow, forces HP DHW charge on prolonged draw
+- **Note**: dhw-auto-trigger removed Mar 2026 — DHW boost now handled by z2m-hub on pi5data
 - **Note**: ebusd moved to pi5data Docker (was previously on emondhw)
 - **SSH**: `ssh pi@emondhw`
 - **Credentials**: `ak get emon-pi-credentials` / Bitwarden "emon pi, pi credentials"
@@ -108,12 +108,13 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 - **Role**: 3-channel CT energy monitor, DS18B20 temperatures, Zigbee2MQTT gateway
 - **CT channels**: P1=DNO grid (+import/−export), P2=House consumption, P3=Solar (P4–P6 unused)
 - **DS18B20**: temp_high (`28-00000ee9cb6d`), temp_low (`28-00000ee9e94f`) — 1-wire on GPIO17, same space different heights
-- **Zigbee2MQTT**: Docker container (v2.9.1), Sonoff USB 3.0 dongle on `/dev/ttyUSB0` (`zstack` adapter), 8 paired devices:
-  - 4× SONOFF SNZB-02P temp/humidity: bathroom, shower, front, conservatory
-  - 3× SONOFF ZBMINI switches: hall, kitchen, landing
-  - 1× Aqara RTCGQ14LM motion sensor: landing_motion
-  - **Active (March 2026)**: landing, hall, landing_motion. Other 5 devices dead since Nov 2024 — need re-pairing.
+- **Zigbee2MQTT**: Docker container (v2.9.1), Sonoff USB 3.0 dongle on `/dev/ttyUSB0` (`zstack` adapter), **21 paired devices** (updated Mar 2026):
+  - 12× SONOFF SNZB-02P temp/humidity (all rooms except leather which uses emonth2)
+  - 4× SONOFF ZBMINI switches: hall, kitchen, landing, top_landing
+  - 3× SONOFF S60ZBTPG smart plugs
+  - 2× Aqara motion sensors (landing_motion, hall_motion)
   - **WebSocket API**: `ws://emonpi:8080/api` (no auth) — pushes all cached device state on connect
+  - All SNZB-02P on firmware v2.2.0 (fixes v2.1.0 freeze bug)
 - **Mosquitto**: listening on `0.0.0.0:1883` with password auth (user `emonpi`, pass `emonpimqtt2016`). Config in `/etc/mosquitto/conf.d/network.conf`.
 - **Services**: emonhub, mosquitto, Docker (Z2M), emonPiLCD (I2C 0x3c)
 - **SSH**: `ssh pi@emonpi`
@@ -141,7 +142,7 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 **ebusd → pi5data Mosquitto** (direct, ebusd runs in Docker on pi5data):
 | Topic | Source | Data |
 |---|---|---|
-| `ebusd/poll/*` | ebusd-poll.py | 25+ heat pump values (see below) |
+| `ebusd/poll/*` | ebusd-poll.sh | 25+ heat pump values (see below) |
 
 **emonpi → pi5data** (bridged):
 | Topic | Source | Data |
@@ -234,13 +235,13 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 | 101-107 | Heating (shutdown/blocked/prerun/**active**/overrun) |
 | 111-117 | Cooling cycle |
 | 125 | Heating immersion heater |
-| 132-137 | **DHW** (blocked/prerun/**active**/immersion/overrun) |
+| 132-137 | **DHW** (blocked/prerun/active/immersion/overrun). **⚠ Code 134 is unreliable** — appears during both off/frost standby AND active DHW. Use `BuildingCircuitFlow` for DHW detection. |
 | 202 | Air purging |
 | 240 | Compressor oil heating |
 | 516 | **Defrost active** |
 | 252-590 | Various faults |
 
-Key: **104** = heating, **134** = DHW, **100** = standby, **516** = defrost
+Key: **104** = heating, **134** = off/frost standby (**⚠ also appears during DHW — unreliable for DHW detection; use BuildingCircuitFlow instead**), **100** = standby, **516** = defrost. See AGENTS.md for the definitive eBUS state classification using BuildingCircuitFlow.
 
 ### InfluxDB Buckets & Measurements
 
@@ -476,14 +477,13 @@ sudo ./scripts/backup-sdcard.sh /dev/sda /path/to/output-name
 |---|---|
 | `/etc/emonhub/emonhub.conf` | emonhub config (Multical 403 via MinimalModbus) |
 | `/etc/mosquitto/conf.d/bridge.conf` | MQTT bridge to pi5data (`emon/#` only) |
-| `/usr/local/bin/dhw-auto-trigger.py` | DHW auto-trigger script |
-| `/etc/systemd/system/dhw-auto-trigger.service` | DHW auto-trigger service |
+| *(dhw-auto-trigger removed Mar 2026 — replaced by z2m-hub on pi5data)* | |
 
 ### pi5data (ebusd)
 | Path | Purpose |
 |---|---|
 | `~/monitoring/docker-compose.yml` | Docker stack (includes ebusd + ebusd-poll containers) |
-| `~/monitoring/ebusd/ebusd-poll.py` | eBUS polling script (mounted into container) |
+| `/usr/local/bin/ebusd-poll.sh` | eBUS polling script (systemd service on host, replaced Docker Python version) |
 
 ### emonhp
 | Path | Purpose |
@@ -503,63 +503,32 @@ sudo ./scripts/backup-sdcard.sh /dev/sda /path/to/output-name
 - 3 eBUS masters detected: 0x10, 0x71, 0x03
 - HW ID: 0020184838 (Vaillant)
 - Controller: VWZIO (0010031644)
-- Zone 1 "HOUSE": day 21°C, night 17°C, heat curve 0.55
-- DHW: target 45°C, eco mode, auto schedule 05:00-07:00 + 13:00-16:00
+- Zone 1 "HOUSE": day 21°C, night 19°C (revised 29 Mar 2026, was 17°C), heat curve 0.55
+- DHW: target 45°C, eco mode (manual switch to normal in cold season), schedule 05:30-07:00 + 13:00-15:00 + 22:00-00:00 (Cosy-aligned, revised 29 Mar 2026)
 - Typical DHW cycle: 30-45 minutes, starts at ~36-38°C return, reaches 53-55°C flow
 
-## What Was Done (2026-03-19)
+## eBUS DHW Boost Command
 
-1. **Found eBUS adapter** on network (ebus-9a0478, 10.0.1.41)
-2. **Updated eBUS firmware** from 20241027 → 20260317 (config backed up first)
-3. **Turned on emondhw** (10.0.1.46) — enabled SSH, added keys, fixed `.ssh` ownership
-4. **Started ebusd** on emondhw — was installed but not running, added MQTT publishing
-5. **Turned on emonhp** (10.0.1.169) — had been offline
-6. **Fixed emonhp Apache** — `.htaccess` owned by `jack:jack` instead of `www-data:www-data` (fixed via SD card on pi5data)
-7. **Enabled SSH on emonhp** — created `/boot/ssh`, added keys via SD card
-8. **Enabled SSH on emonpi** — same process via SD card (emonpi still not booted)
-9. **Set up pi5data monitoring stack** — Mosquitto + InfluxDB + Telegraf + Grafana via Docker
-10. **Configured MQTT bridges** — emondhw and emonhp bridge `emon/#` to pi5data
-11. **Created ebusd-poll.py** — polls 25+ eBUS values every 30s, publishes to MQTT
-12. **Created Grafana dashboards** — DHW, eBUS heat pump, emonhp heat pump
-13. **Restarted emonhub on emonhp** — MBUS heat meter reconnected
+The `HwcSFMode` (Hot Water Cylinder Special Function Mode) on the VRC 700 forces a one-off DHW cylinder charge:
 
-## What Was Done (2026-03-20)
+```bash
+# Force DHW charge (from pi5data host):
+echo "write -c 700 HwcSFMode load" | nc -w 5 localhost 8888 | head -1
 
-14. **emonpi SD card — dead card diagnosed** — persistent filesystem corruption (hundreds of broken inodes), wouldn't repair after multiple e2fsck passes. Data backed up to pi5nvme.
-15. **emonpi SD card — flashed new card** — emonSD-01Feb24 onto 14.5GB card, but image (14.84GB) didn't fit. Truncated partition 3, fixed with fdisk + mkfs.ext2, but initially failed to boot due to `console=serial0,115200` in cmdline.txt from old backup (conflicts with EmonPi2 ttyAMA0).
-16. **emonpi — booted on working spare card** — pre-existing 14.8GB card with data from Apr 2024. Added SSH keys, MQTT bridge to pi5data. EmonPi2 data flowing.
-17. **Historical data imported to InfluxDB** — two separate buckets:
-    - `emonpi-apr2024`: 15.6M points from working card (Apr–Nov 2024, 22 feeds)
-    - `emonpi-nov2024`: 28.9M points from dead card backup (Nov 2024–Mar 2026, 6 feeds: V1, DNO_Power, House_Power, House_Energy, Solar_Energy, DNO_Energy)
-18. **Feed identification** — analysed data patterns to identify old card feeds: Ch1=DNO power (+import/-export), Ch2=House consumption (always +ve), energy accumulators for DNO/House/Solar. Confirmed with Cosy tariff pattern analysis.
-19. **Created historical Grafana dashboards** — one per bucket with correct feed names
-20. **pi5data disk cleanup** — cleaned apt cache (795MB), journal logs (130MB), rpi-image-gen/work (3.1GB), compressing 29GB backup image
+# Reset to auto (optional — HP resets automatically after charge):
+echo "write -c 700 HwcSFMode auto" | nc -w 5 localhost 8888 | head -1
+```
 
-## What Was Done (2026-03-20 afternoon)
+| Value | Effect |
+|-------|--------|
+| 0 = auto | Normal scheduled operation |
+| 6 = load | **Force immediate DHW cylinder charge** |
 
-21. **emonpi rebuilt from scratch** — fresh Raspberry Pi OS Lite (Bookworm arm64), minimal install: emonhub, mosquitto, Docker + Z2M, emonPiLCD. No emoncms web UI.
-22. **EmonPi2 firmware updated** — V1.0.2 → emon_DB_6CT v2.1.1 (via `atmega_firmware_upload.sh`)
-23. **Zigbee2MQTT configured** — Docker container, Sonoff USB 3.0 dongle, 7 devices restored, Home Assistant discovery disabled
-24. **emonhub cleaned up** — removed stale USB0/SPI/radio node configs, added DS18B20 names (temp_high, temp_low), 1-wire on GPIO17
-25. **MQTT architecture unified** — all 3 emon devices bridge to pi5data. Telegraf simplified to subscribe only to local Mosquitto. Bridge configs renamed to `bridge.conf` (removed duplicate `bridge-pi5data.conf` files that caused mosquitto start failures on emonpi and emondhw)
-26. **Static DHCP reservations** — added to router (dnsmasq on 10.0.0.1) for emonpi, emonhp, emondhw, pi5data
-27. **DNS fixed on emonhp** — added `UseDomains=yes` to systemd-networkd config so short hostnames resolve via `chidley.home` domain
-28. **Credentials moved to GPG store** — `ak get emon-pi-credentials` (also in Bitwarden)
-29. **Git submodules added** — `avrdb_firmware/`, `EmonScripts/`, `emonhub/` for firmware and install tooling
-30. **SD card backup script** — `scripts/backup-sdcard.sh` (dd sparse → PiShrink → xz)
-31. **Old emonpi SD card backed up** — PiShrink + xz on pi5nvme (15GB → 1.6GB)
-32. **All configs backed up** — configs, MySQL dumps, phpfina data, Z2M data on pi5data (`/home/jack/backups/emon-configs/20260320/`)
-33. **InfluxDB measurement consolidation** — old `mqtt_consumer` measurement data (Mar 19–20) copied into `emon` measurement using Flux `to()`. All dashboards now query only `emon`. The `host` tag is dropped in queries to merge `backfill` and live Telegraf series.
-34. **Grafana colour standard** — consistent colours applied across all dashboards: same physical measurement = same colour regardless of source (e.g. `heatmeter_FlowT` and `FlowTemp` both red). New `emonpi-live` dashboard created for CT power, DS18B20 temps, Zigbee sensors, and light switches.
-35. **Grafana unit fixes** — emonhp Flow Rate (`m³/h`) and Volume (`m³`) had garbled UTF-8 units, fixed with custom axis suffixes
+z2m-hub uses this command for the DHW boost button on the mobile dashboard. The HP charges the cylinder to target temperature then returns to normal operation automatically.
 
-## What Was Done (2026-03-21)
+## Setup History
 
-36. **emondhw rebuilt from scratch** — fresh Pi OS Lite Bookworm arm64 via `custom.toml` firstboot (the official Raspberry Pi method). Pi Zero 2 W, WiFi-only. Previous attempts using manual NM connection files and wpa_supplicant.conf failed — WiFi radio stays soft-blocked on Bookworm without proper firstboot initialisation.
-37. **`custom.toml` method documented** — the correct headless provisioning method for Bookworm. Places a TOML file on boot partition; `firstboot` reads it and calls `imager_custom` to configure hostname, user, SSH, WiFi (including rfkill unblock and regulatory domain), timezone. Replaces all the manual methods that don't work.
-38. **emondhw provisioned** — installed mosquitto + bridge (`emon/#` to pi5data), emonhub with MinimalModbus interfacer for Kamstrup Multical 403 (`/dev/ttyACM0`, 19200 baud, even parity, address 8). No ebusd (moved to pi5data Docker).
-39. **Old emondhw SD card backed up** — PiShrink + xz on pi5nvme (30GB → 1.3GB)
-40. **InfluxDB taxonomy unified** — migrated all `mqtt_consumer` and `emonpi` measurement data to `emon` across all three buckets (`energy`, `emonpi-apr2024`, `emonpi-nov2024`). Old measurements deleted. All buckets now use consistent `emon` measurement with `source` + `field` tags.
+System built 2026-03-19 to 2026-03-21. Full journal entries archived in git history (commit range for this file). Key outcomes captured in the current state of this document and in `docs/emon-installation-runbook.md`.
 
 ## emonhp vs eBUS — What Each Provides
 
@@ -635,62 +604,9 @@ Both needed: emonhp alone can't distinguish heating from DHW. eBUS alone can't g
 - *Note: Apr-Jun 2024 had different CT assignments — feeds were rearranged in Nov 2024*
 
 
-## What Was Done (2026-03-20 evening session)
+## Outstanding TODO
 
-36. **SSH access fixed to emonpi** — host key changed (fresh SD card), removed old known_hosts entry. Added all 5 SSH keys to `authorized_keys` (was missing Windows keys).
-37. **Data gap diagnosed** — ~2hr gap caused by manual Docker restart on pi5data (16:58 UTC) plus emondhw Mosquitto crash (14:20 UTC). emondhw local emoncms also had gap since it depends on local MQTT.
-38. **emonhp gap backfilled** — 8,463 points recovered from emoncms.org for the 14:21-16:58 UTC gap period (electric_Power, electric_Energy, heatmeter_*, emonth2 temp/humidity). Written to InfluxDB via line protocol API.
-39. **MQTT bridges hardened** — Changed emondhw and emonhp bridges from QoS 0 to **QoS 1 + `cleansession false`**. Messages now queue during pi5data outages.
-40. **ebusd-poll.py made resilient** — Added 3-attempt retry with 2s delay for MQTT publish failures.
-41. **Grafana dashboards fixed** — All queries updated from `mqtt_consumer` to `(emon or mqtt_consumer)` to combine old and new measurement names. Legends fixed: "value" replaced with proper names (Thermal/Electric, Flow/Return, Temperature/Humidity). Single-series panels have legends hidden.
-42. **Historical emonhp data imported** — 12.2M points from emoncms.org (Oct 21 2024 to Mar 20 2026) at 30s resolution into `energy` bucket. Feeds: electric_Power/Energy, heatmeter_Power/Energy/FlowT/ReturnT/FlowRate, emonth2 temp/humidity, DHW_flag, metoffice outside_temperature.
-43. **Historical emonpi data copied** — emonpi-apr2024 (15.6M points) and emonpi-nov2024 (24.7M points) copied from separate buckets into the `energy` bucket using Flux `to()`, enabling unified queries.
-44. **EmonPi2 Unified dashboard created** — Combines apr2024, nov2024, and live EmonPi2 data using Flux `union()`. Shows V1, DNO Grid, House Power, Circuit Breakdown, Solar, Room Temp/Humidity, DS18B20, Energy Cumulative, Live P1-P6.
-45. **Delta T panel fixed** — Changed from querying `heatmeter_DeltaT` (live only) to computing `FlowT - ReturnT` via Flux `join()`, giving full coverage back to Oct 2024.
-46. **Flow rate units normalised** — emoncms.org stores in l/min, live MBUS data is m3/h. Dashboard query converts live data (x 1000/60) so everything displays in l/min.
-47. **Outside temperature imported** — 149,098 points from emoncms.org metoffice feed (Oct 2024 to Mar 2026) at 5-minute intervals. Added to emonhp dashboard.
-48. **Room humidity added to dashboard** — emonhp dashboard now shows room temperature + humidity on dual-axis panel with proper display names.
-49. **ebusd moved to pi5data** — ebusd now runs as Docker container on pi5data, connecting directly to eBUS adapter at 10.0.1.41:9999 over the network. Eliminates dependency on emondhw for eBUS data. ebusd-poll also runs as Docker container on pi5data.
-50. **emondhw emoncms.org apikey is placeholder** — The `emoncmsorg` interfacer in emonhub has apikey `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (not configured). Multical data is NOT sent to emoncms.org.
-51. **emonpi Mosquitto opened to network** (2026-03-21) — Added `listener 1883 0.0.0.0` + password auth (`/etc/mosquitto/conf.d/network.conf`, `/etc/mosquitto/passwd`). Allows pi5data (and any LAN device) to publish commands directly to Z2M via MQTT. Bridge topic for zigbee2mqtt changed from `+` (one-level) to `#` (multi-level, bidirectional).
-52. **Zigbee2MQTT automation service** (2026-03-21) — `z2m-automations.sh` deployed to pi5data as systemd service. Watches `landing_motion` occupancy via MQTT, turns `landing` ZBMINI on/off with 60s timeout. Interim solution until Rust z2m-hub replaces it.
-53. **Aqara motion sensor confirmed active** — `landing_motion` (RTCGQ14LM) reporting occupancy, illuminance, battery (29%), temperature. 30s detection interval cooldown.
-54. **Z2M pi extension rewritten** — WebSocket-based (`ws://emonpi:8080/api`) instead of bridged MQTT via pi5data. All device state (including battery devices) available from cache on connect. New actions: health_check, restart, configure, options, bridge_options, logs.
-
-## TODO
-
-- [x] Boot emonpi, verify SSH, add MQTT bridge to pi5data — DONE (working spare card)
-- [x] Import historical data into InfluxDB — DONE (two buckets, 44.5M points total)
-- [x] Flash emonPi2 firmware — DONE (emon_DB_6CT v2.1.1)
-- [x] Rebuild emonpi from clean minimal install — DONE (2026-03-20, Pi OS Lite + emonhub + Z2M)
-- [x] Set up Zigbee2MQTT on emonpi — DONE (Docker v2.9.1, 8 devices, 3 active, no Home Assistant)
-- [x] Set up static DHCP for all monitoring devices — DONE (dnsmasq on router)
-- [x] Unify MQTT bridge architecture — DONE (all devices bridge to pi5data, Telegraf local only)
-- [x] Back up old emonpi SD card — DONE (PiShrink + xz, 1.6GB on pi5nvme)
-- [x] Credentials in GPG store — DONE (`ak get emon-pi-credentials`)
-- [x] Rebuild emondhw from clean minimal install — DONE (2026-03-21, custom.toml + emonhub + Multical 403)
-- [ ] Investigate emonhp emonTxV5 (USB serial device not present — cable issue?)
-- [ ] Add Statuscode panel to Grafana with value mappings (104→Heating, 134→DHW, etc.)
-- [ ] Build COP dashboard (combine eBUS yield/consumed with MBUS heat meter data)
-- [ ] Set up InfluxDB retention policy / downsampling for long-term storage
-- [ ] Change Grafana admin password
-- [ ] Consider adding DS18B20 temperature sensors on emonhp (commented out in config)
-- [x] Import historical data from emoncms.org into InfluxDB — DONE (12.2M points, Oct 2024 to Mar 2026)
-- [ ] Set up Grafana alert for BuildingCircuitFlow < 600 l/h (filter cleaning reminder)
-- [ ] Track CircPumpPower trend to see if controller reduces pump speed with clean filter
-- [ ] Investigate what emonpi "feed 6" was (constant -5, dead/unused channel on old card)
-- [x] Merge emonpi-apr2024 and emonpi-nov2024 into energy bucket — DONE (unified dashboard created)
 - [ ] Rebuild emonhp from clean minimal install
-- [x] Add emonpi Zigbee data to Grafana dashboard — DONE (emonpi-live dashboard)
-- [x] Move ebusd to pi5data Docker — DONE (eliminates emondhw dependency)
-- [x] Harden MQTT bridges with QoS 1 + cleansession false — DONE
-- [x] Import outside temperature from emoncms.org — DONE (149k points)
-- [x] Fix Grafana dashboard labels ("value" -> proper names) — DONE
-- [x] Normalise flow rate units (m3/h vs l/min) — DONE
-- [ ] Fix emondhw emoncms.org apikey (currently placeholder)
-- [ ] Stop ebusd on emondhw (now redundant, running on pi5data)
-- [ ] Consider running emonhub Multical reader on pi5data too (remove emondhw dependency entirely)
-- [ ] Re-pair 5 dead Zigbee devices (kitchen, bathroom, shower, front, conservatory — all dead since Nov 2024)
-- [x] Open emonpi Mosquitto to network — DONE (0.0.0.0:1883 with password auth)
-- [x] Deploy z2m-automations.sh to pi5data — DONE (motion → landing light)
-- [ ] Build z2m-hub Rust server (replace z2m-automations.sh + serve SPA dashboard)
+- [ ] Set up InfluxDB retention policy / downsampling for long-term storage
+- [ ] Set up Grafana alert for BuildingCircuitFlow < 600 l/h (filter cleaning reminder)
+- [ ] Change Grafana admin password

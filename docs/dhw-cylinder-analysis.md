@@ -438,7 +438,7 @@ Eco mode front-loads the high-COP operation — most energy is delivered in the 
 ## emonhp vs eBUS — complementary data sources
 
 - **emonhp** (MBUS heat meter + SDM120) = independent auditor. MID-certified, legal "truth" for energy accounting. Used by the state machine in `analysis.rs`.
-- **eBUS** (via ebusd on pi5data) = inside view. Operating modes via `StatuscodeNum` (104=heating, 134=DHW, 100=standby, 516=defrost), compressor speed, refrigerant circuit.
+- **eBUS** (via ebusd on pi5data) = inside view. Operating modes, compressor speed, refrigerant circuit. **Note:** `StatuscodeNum` is unreliable for DHW detection — code 134 appears during both off/frost standby AND active DHW. Use `BuildingCircuitFlow` (> 900 L/h = DHW, 780–900 = heating, < 100 = off) for state classification.
 - **Multical** (on emondhw) = demand side. Actual DHW delivery to taps.
 
 Together: HP electricity → HP heat output → cylinder → useful heat at taps.
@@ -502,7 +502,7 @@ From 181 cycles over 90 days of emoncms data (pre-dating the InfluxDB setup):
 
 ### How it works
 
-1. Finds the last DHW charge event via eBUS `StatuscodeNum == 134` (Warm_Water_Compressor_active) in the `ebusd_poll` measurement
+1. Finds the last DHW charge event via eBUS (originally used `StatuscodeNum == 134`, but z2m-hub now uses `BuildingCircuitFlow` > 900 L/h as the definitive DHW indicator)
 2. Gets the Multical cumulative volume (`dhw_volume_V1`) at charge end and now → `drawn_reg` (ground truth, 10L steps)
 3. Finds when the register last changed value (last reading with a different V1)
 4. Integrates `dhw_flow` since that last register step → `frac` (0–9.9L interpolation within current 10L window)
@@ -558,7 +558,7 @@ The eBUS `StatuscodeNum` values relevant to DHW:
 | 101 | Heating_Prerun | Pump starting for heating |
 | 104 | Heating_Compressor_active | Space heating |
 | 107 | Heating_Overrun | Post-heating circulation |
-| **134** | **Warm_Water_Compressor_active** | **DHW charging** |
+| **134** | **Off/frost standby** | **⚠ Also appears during DHW — unreliable for DHW detection. Use BuildingCircuitFlow instead.** |
 | 516 | Deicing_active | Defrost cycle |
 
 These are available in InfluxDB as `ebusd_poll.StatuscodeNum` (numeric, from ebusd-poll.sh) and `ebusd.RunDataStatuscode` (string, from ebusd's own MQTT publishing).

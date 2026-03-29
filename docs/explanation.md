@@ -93,12 +93,12 @@ DHW timer windows are set via eBUS on the VRC 700: **05:30–07:00, 13:00–15:0
 
 Previously (before 29 Mar 2026), DHW triggered at ~05:05 and ~13:05 daily under the old VRC 700 schedule.
 
-Previously, an emergency DHW auto-trigger script on pi5data forced a cylinder recharge via eBUS when prolonged draws were detected. This was **removed March 2026** — replaced by manual boost via z2m-hub dashboard (`~/github/z2m-hub/`). See [dhw-auto-trigger.md](dhw-auto-trigger.md) for historical documentation.
+Previously, an emergency DHW auto-trigger script on pi5data forced a cylinder recharge via eBUS when prolonged draws were detected. This was **removed March 2026** — replaced by manual boost via z2m-hub dashboard (`~/github/z2m-hub/`).
 
 ### eBUS and Multical metering (added March 2026)
 
 In addition to the emonHP bundle, the system now has:
-- **eBUS adapter** — decodes internal HP communication (operating mode, compressor speed, target flow temp, cylinder temp, COP calculations). eBUS provides the definitive operating state via `StatuscodeNum` (104=heating, 134=DHW, 100=standby, 516=defrost).
+- **eBUS adapter** — decodes internal HP communication (operating mode, compressor speed, target flow temp, cylinder temp, COP calculations). eBUS provides real-time HP state, but **`StatuscodeNum` is unreliable for DHW detection** — code 134 appears during both off/frost standby AND active DHW charging. The Rust thermal model uses `BuildingCircuitFlow` (L/h) instead: > 900 = DHW, 780–900 = heating, < 100 = off.
 - **Multical DHW meter** on emondhw — measures the secondary (tap water) side of the cylinder, giving T1 (hot out), T2 (cold in), flow rate, and thermal power. This enables end-to-end DHW efficiency tracking.
 
 Both feed into InfluxDB on pi5data via MQTT bridges. DHW remaining litres tracking is handled by z2m-hub (`~/github/z2m-hub/`), which polls ebusd directly via TCP, detects charge completion, and tracks usage via Multical volume register — writing `dhw.remaining_litres` to InfluxDB. See [dhw-cylinder-analysis.md](dhw-cylinder-analysis.md) for full details including cylinder specification, stratification model, temperature optimisation, and live monitoring setup.

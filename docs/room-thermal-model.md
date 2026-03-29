@@ -367,6 +367,14 @@ After Night 1, heating restored at 07:00. HP started at 6.7kW/83% compressor, se
 
 Not over-radiatored (contrary to earlier model snapshot during warmup). The 2×K3 radiators (T50=5,700W) are needed — the conservatory is the coldest ground floor room overnight and has the highest heat loss rate (0.59°/h). Solar gain through the glazed roof provides ~1°C of daytime warming above kitchen temperature, but this disappears after dark.
 
+### Kitchen↔conservatory door closer (evaluated, not worth doing)
+
+Equilibrium model shows closing the kitchen↔conservatory door makes **no meaningful difference** to the rest of the house. The doorway exchange is ~170W = 0.07°C spread across the whole house. Closing it actually makes the kitchen colder — the kitchen (no radiator) depends on the warm convective flow from hall→kitchen→conservatory. The conservatory radiator (~1,300W at equilibrium) cannot be turned off either — conservatory drops to ~5°C without it. On cold days the HP is at capacity and delivers the same total watts regardless of door state — heat just redistributes between rooms.
+
+### Leather↔conservatory SG door analysis
+
+UA=21.12 W/K conduction through single-glazed panels (closed). When **open** for the dog (mornings ~07:00–09:30), buoyancy exchange adds **1,500–2,000W** at 10°C ΔT — measured as a **1.4°C dip in leather** over 2.6 hours on 11 coldest mornings (data from emonth2 Nov 2025–Mar 2026). On cold days the HP is at capacity and cannot compensate. The dip hurts leather comfort but doesn’t affect whole-house equilibrium. Minimising open time on cold mornings is the only mitigation. Secondary glazing or heavy curtain would reduce conduction (253W through glass when closed).
+
 Replacing the glazed roof with solid insulated (£10-15k) is **not justified** given adequate comfort. After EWI on the SE wall, the HP will have spare capacity, and the conservatory benefits indirectly from warmer neighbouring rooms.
 
 ## HP Capacity at Design Conditions

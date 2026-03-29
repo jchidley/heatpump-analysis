@@ -21,8 +21,7 @@ Each emon host bridges required topics to central Mosquitto on `pi5data`.
 emonhp  ──bridge──┐
 emondhw ──bridge──┼──> pi5data mosquitto -> telegraf -> influxdb -> grafana
 emonpi  ──bridge──┘                │
-                                   ├── ebusd (Docker) -> ebusd-poll.sh (systemd)
-                                   └── dhw-auto-trigger.sh (systemd)
+                                   └── ebusd (Docker) -> ebusd-poll.sh (systemd)
 ```
 
 Why:
@@ -225,7 +224,7 @@ Docker services (`~/monitoring/docker-compose.yml`):
 
 Systemd services (shell scripts on host):
 - `ebusd-poll` — reads 25+ eBUS values every 30s via `nc localhost 8888`, publishes to `ebusd/poll/*` MQTT topics
-- `dhw-auto-trigger` — watches `emon/multical/dhw_flow` via `mosquitto_sub`, triggers DHW charge via eBUS on sustained draw
+- *(dhw-auto-trigger removed Mar 2026 — DHW boost now handled by z2m-hub on pi5data)*
 
 Host packages: `mosquitto-clients`, `netcat-openbsd`, `tmux`
 
@@ -237,13 +236,6 @@ scp scripts/ebusd-poll.service jack@pi5data:/tmp/
 ssh jack@pi5data "sudo cp /tmp/ebusd-poll.sh /usr/local/bin/ && sudo chmod +x /usr/local/bin/ebusd-poll.sh && \
   sudo cp /tmp/ebusd-poll.service /etc/systemd/system/ && \
   sudo systemctl daemon-reload && sudo systemctl enable --now ebusd-poll"
-
-# dhw-auto-trigger
-scp scripts/dhw-auto-trigger.sh jack@pi5data:/tmp/
-scp scripts/dhw-auto-trigger.service jack@pi5data:/tmp/
-ssh jack@pi5data "sudo cp /tmp/dhw-auto-trigger.sh /usr/local/bin/ && sudo chmod +x /usr/local/bin/dhw-auto-trigger.sh && \
-  sudo cp /tmp/dhw-auto-trigger.service /etc/systemd/system/ && \
-  sudo systemctl daemon-reload && sudo systemctl enable --now dhw-auto-trigger"
 ```
 
 ---
@@ -515,7 +507,7 @@ Expected style:
 - [x] `mosquitto` active + bridge to pi5data active (`emon/#`)
 - [x] `emonhub` active, publishing `emon/multical/dhw_*`
 - [x] Multical 403 data visible in InfluxDB on pi5data (measurement `emon`, source `multical`)
-- Note: ebusd and dhw-auto-trigger run on pi5data, not on emondhw
+- Note: ebusd runs on pi5data, not on emondhw. dhw-auto-trigger removed Mar 2026 (replaced by z2m-hub).
 
 ## 11b) Minimal acceptance checklist (`emonhp`)
 
@@ -532,7 +524,7 @@ Expected style:
 - [ ] Docker services running: mosquitto, influxdb, grafana, telegraf, ebusd
 - [ ] ebusd port 8888 exposed and reachable from host (`echo info | nc -w 2 localhost 8888`)
 - [ ] `ebusd-poll` systemd service active, publishing `ebusd/poll/*` to MQTT
-- [ ] `dhw-auto-trigger` systemd service active, subscribed to `emon/multical/dhw_flow`
+- *(dhw-auto-trigger removed Mar 2026 — DHW boost handled by z2m-hub)*
 - [ ] emon data arriving from all bridges (emonpi, emonhp, emondhw)
 - [ ] Host packages: `tmux`, `mosquitto-clients`, `netcat-openbsd`
 
@@ -634,4 +626,4 @@ sudo systemctl restart emonhub
 
 - If DNS fails on a host, fix resolver/search-domain first (`UseDomains=yes` for systemd-networkd hosts).
 - Keep installs minimal; add components only when required by a concrete data path.
-- The old Python `dhw-auto-trigger.py` has an inverted peak-block bug — do not deploy it. Use `dhw-auto-trigger.sh` instead.
+- Both Python and shell dhw-auto-trigger scripts have been removed (Mar 2026). DHW boost is now handled by z2m-hub on pi5data.

@@ -2,439 +2,121 @@
 
 ## What This Is
 
-Rust CLI tool that syncs heat pump data from emoncms.org to local SQLite, then analyses it with Polars. Vaillant Arotherm Plus 5kW at 6 Rhodes Avenue, London N22 7UT.
-
-Also includes shell-based monitoring scripts deployed to pi5data, and extensive monitoring infrastructure documentation.
-
-## Data Access
+Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5kW at 6 Rhodes Avenue, London N22 7UT.
 
 - emoncms dashboard: `https://emoncms.org/app/view?name=MyHeatpump&readkey=1b00410c57d5df343ede7c09e6aab34f`
-- Read API key (read-only, safe to share): `1b00410c57d5df343ede7c09e6aab34f`
+- Read API key (read-only): `1b00410c57d5df343ede7c09e6aab34f`
 
 ## Commands
 
 | Task | Command |
 |------|---------|
 | Build | `cargo build` |
-| Run | `cargo run -- <subcommand>` |
 | Sync data | `cargo run -- --apikey KEY sync` |
 | Analyse (7 days) | `cargo run -- --days 7 summary` |
-| Analyse (date range) | `cargo run -- --from 2025-01-01 --to 2025-01-31 summary` |
 | Analyse (all data) | `cargo run -- --all-data all` |
-| With simulated | `cargo run -- --all-data --include-simulated summary` |
-| Export CSV | `cargo run -- --days 30 export -o output.csv` |
-| Degree days | `cargo run -- --all-data degree-days` |
-| Indoor temp | `cargo run -- --all-data indoor-temp` |
-| DHW analysis | `cargo run -- --all-data dhw` |
-| COP vs spec | `cargo run -- --all-data cop-vs-spec` |
-| Design comparison | `cargo run -- --all-data design-comparison` |
-| Gap report | `cargo run -- gaps` |
-| Fill gaps | `cargo run -- fill-gaps` |
 | Octopus summary | `cargo run -- octopus` |
-| Gas vs HP comparison | `cargo run -- --all-data gas-vs-hp` |
-| Baseload analysis | `cargo run -- --all-data baseload` |
+| Gas vs HP | `cargo run -- --all-data gas-vs-hp` |
 | Overnight optimizer | `cargo run -- --all-data overnight` |
-| **Rust thermal model** | |
-| Calibrate (cooldown) | `cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml` |
-| Validate (holdout) | `cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml` |
-| Fit diagnostics | `cargo run --bin heatpump-analysis -- thermal-fit-diagnostics --config model/thermal-config.toml` |
-| Operational validation | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
-| Snapshot export | `cargo run --bin heatpump-analysis -- thermal-snapshot export --config model/thermal-config.toml --signoff-reason "reason" --approved-by-human` |
+| Thermal calibrate | `cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml` |
+| Thermal validate | `cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml` |
+| Thermal operational | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
+| Thermal snapshot | `cargo run --bin heatpump-analysis -- thermal-snapshot export --config model/thermal-config.toml --signoff-reason "reason" --approved-by-human` |
 | Regression check | `bash scripts/thermal-regression-ci.sh` |
-| Refresh baselines | `bash scripts/refresh-thermal-baselines.sh` |
-| **Python thermal model (legacy)** | |
-| Fetch sensor data | `uv run --with influxdb-client --with numpy --with scipy python model/house.py fetch [hours]` |
-| Room summary | `uv run --with influxdb-client --with numpy --with scipy python model/house.py rooms` |
-| Energy balance | `uv run --with influxdb-client --with numpy --with scipy python model/house.py analyse` |
-| Fit cooldown | `uv run --with influxdb-client --with numpy --with scipy python model/house.py fit` |
-| Connections | `uv run --with influxdb-client --with numpy --with scipy python model/house.py connections` |
-| Equilibrium | `uv run --with influxdb-client --with numpy --with scipy python model/house.py equilibrium [T_out] [MWT] [solar_sw W/m²] [solar_ne W/m²]` |
-| Moisture analysis | `uv run --with influxdb-client --with numpy --with scipy python model/house.py moisture` |
+| Python equilibrium | `uv run --with influxdb-client --with numpy --with scipy python model/house.py equilibrium [T_out] [MWT]` |
+| Python moisture | `uv run --with influxdb-client --with numpy --with scipy python model/house.py moisture` |
 
-`--apikey` only needed for `feeds` and `sync`. Analysis reads from `heatpump.db`.
-Octopus commands read from `~/github/octopus/data/` (usage_merged.csv, weather.json, config.json).
-`gas-vs-hp` and `baseload` also need `heatpump.db` for HP state machine data.
+`--apikey` only needed for `feeds` and `sync`. Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands.
 
 ## Architecture
 
-```
-config.toml   → All domain constants, thresholds, feed IDs, reference data (TOML)
-config.rs     → Deserializes config.toml into typed structs (global singleton)
-emoncms.rs    → API client (used only by sync)
-db.rs         → SQLite storage + DataFrame loading
-analysis.rs   → State machine + all Polars queries (no DB/API dependency)
-gaps.rs       → Gap detection + synthetic data (accesses SQLite directly)
-octopus.rs    → Octopus Energy integration + gas-vs-HP comparison
-main.rs       → CLI routing (25+ subcommands)
-thermal.rs    → Thermal model: calibration, validation, operational, solar, snapshot
-thermal/      → Thermal submodules (error.rs, influx.rs, report.rs)
-scripts/      → Shell scripts deployed to pi5data (DHW trigger, eBUS polling)
-```
-
-Standalone binaries:
-- `cosy-scheduler/` — Rust binary deployed to pi5data, reads outside temp from eBUS, logs DHW recommendations. Zero dependencies (pure std). Cross-compiled for aarch64-unknown-linux-musl. Currently unused (VRC 700 timer handles scheduling) but available at `/usr/local/bin/cosy-scheduler` on pi5data.
-
-Git submodules:
-- `avrdb_firmware/` — AVR-DB firmware (EmonTx4/EmonPi2/EmonTx5), compiled hex files for flashing
-- `EmonScripts/` — emonSD install/update scripts, firmware upload tools
-- `emonhub/` — data multiplexer (serial/MBUS/MQTT interfacers)
-- `ebusd/` — eBUS daemon config
-
 See `docs/code-truth/` for detailed architecture, patterns, and decisions.
+
+```
+config.toml          → Domain constants, thresholds, feed IDs, radiators
+src/analysis.rs      → State machine + Polars queries
+src/thermal.rs       → Thermal model (3,500 lines): calibration, validation, operational, solar, snapshot
+src/thermal/         → Submodules: error.rs, influx.rs, report.rs
+src/overnight.rs     → Overnight strategy backtest
+model/house.py       → Python thermal model (equilibrium, moisture — shares thermal_geometry.json with Rust)
+data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust + Python)
+model/thermal-config.toml → Thermal model config (InfluxDB, test nights, bounds)
+```
 
 ## Monitoring Infrastructure
 
-Four devices — see `heating-monitoring-setup.md` for full details (MQTT topics, eBUS data dictionary, credentials).
-
 | Device | IP | Role |
 |---|---|---|
-| emonpi | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Z2M (19 Zigbee devices) |
+| emonpi | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Z2M (21 Zigbee devices) |
 | emonhp | 10.0.1.169 | Heat meter + SDM120 → emoncms.org |
 | emondhw | 10.0.1.46 | Multical DHW meter |
 | pi5data | 10.0.1.230 | Central hub: Docker (Mosquitto, InfluxDB, Telegraf, Grafana, ebusd) + systemd |
 
-MQTT: each emon device bridges to pi5data. Credentials: `emonpi` / `emonpimqtt2016`.
-Z2M: `ws://emonpi:8080/api` (no auth). z2m-hub manages automations (`~/github/z2m-hub/`).
-eBUS: 25+ values every 30s via `ebusd-poll.sh` on pi5data.
+MQTT credentials: `emonpi` / `emonpimqtt2016`. Z2M: `ws://emonpi:8080/api` (no auth).
 
-## DHW Auto-Trigger — REMOVED
-
-Removed Mar 2026. Was `scripts/dhw-auto-trigger.sh` on pi5data. Replaced by manual boost via z2m-hub mobile dashboard (`~/github/z2m-hub/`). Historical documentation in `docs/dhw-auto-trigger.md`.
-
-## eBUS Polling
-
-`scripts/ebusd-poll.sh` runs on pi5data as a systemd service. Pure shell script using `nc` + `mosquitto_pub`. Reads 25 eBUS values every 30s (+ 17 more every 5 min, including Z2RoomTemp) via `nc localhost 8888` and publishes to `ebusd/poll/*` MQTT topics. Replaces the previous Python-in-Docker version that reinstalled dependencies on every container restart.
-
-Deploy: `scp scripts/ebusd-poll.sh jack@pi5data:/tmp/ && ssh jack@pi5data "sudo cp /tmp/ebusd-poll.sh /usr/local/bin/ && sudo systemctl restart ebusd-poll"`
-
-## Octopus Energy Integration
-
-Data from `~/github/octopus/` — see `docs/octopus-data-inventory.md` for full audit.
-
-```bash
-cd ~/github/octopus && npm run cli -- refresh   # Refresh Octopus data
-```
-
-- Electricity Apr 2020→present, Gas Apr 2020→Jul 2024 (half-hourly)
-- Current tariff: **Cosy Fix** (off 14.05p, mid 28.65p, peak 42.97p). Three Cosy windows: 04:00–07:00, 13:00–16:00, 22:00–00:00. Battery effective rate 14.63p/kWh. 82.6% HP electricity at off-peak.
-- Temperature: eBUS primary (real-time), Met Office control (hourly), ERA5-Land for gas era (+1.0°C bias correction)
-- 102-day data gap Dec 2023→Mar 2024 (unfillable)
-
-## Key Measured Performance
-
-All from actual data (state machine + Octopus + emoncms):
-
-| Metric | Value | Source |
-|--------|-------|--------|
-| Heating COP | 4.74 | State machine, heating days with HDD > 0.5 |
-| DHW COP | 3.46 | State machine |
-| Overall COP (instantaneous) | 5.09 | analysis.rs summary |
-| Heating heat/HDD | 8.8 kWh | HP era, emoncms temps |
-| Gas-era heating heat/HDD | 9.2 kWh | Gas × 90% − DHW est., ERA5+1.0°C |
-| DHW demand | 11.0 kWh/day | HP heat meter, state machine |
-| Annual HDD (5-yr avg) | 1,503 | Bias-corrected ERA5, base 15.5°C |
-| House baseload | ~9 kWh/day | Octopus whole-house − HP SDM120 |
-| Blended elec rate (HP era) | 17.07p/kWh | Octopus Cosy, consumption-weighted |
-| Weighted gas rate (all gas era) | 5.66p/kWh | Octopus tariffs, consumption-weighted |
-
-### Annual cost comparison (current tariffs, typical weather)
-
-| | Gas combi | Heat pump |
-|---|---|---|
-| Gas consumed | 19,157 kWh | — |
-| Electricity consumed | — | 3,951 kWh |
-| Fuel cost | £1,125 | £674 |
-| Gas standing charge | £115 | £0 |
-| **Total** | **£1,239** | **£674** |
-| **Annual saving** | | **£565 (46%)** |
+See `heating-monitoring-setup.md` for full details, `docs/emon-installation-runbook.md` for rebuild procedures.
 
 ## Key Domain Model
 
-Operating states classified by flow rate (Arotherm 5kW fixed pump = 14.3 L/min):
+Operating states classified by flow rate (5kW fixed pump = 14.3 L/min):
 - **Heating**: flow_rate 14.0–14.5, DT > 0, heat > 0
 - **DHW**: flow_rate ≥ 15.0 (enter) / < 14.7 (exit), DT > 0, heat > 0
-- **Defrost**: heat ≤ 0 OR DT < −0.5 (any flow rate)
+- **Defrost**: heat ≤ 0 OR DT < −0.5
 - **Idle**: elec ≤ 50W
 
-Thresholds in `config.toml` `[thresholds]`. Originally 16.0/15.0 for DHW — tightened to 15.0/14.7 in March 2026 due to y-filter sludge reducing DHW flow. Safe because heating is software-clamped at 14.3. See `docs/hydraulic-analysis.md`.
+Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.7 in Mar 2026 (y-filter sludge). See `docs/hydraulic-analysis.md`.
 
 ### eBUS state classification (Rust thermal model)
 
-The Rust `thermal-operational` command uses **`ebusd/poll/BuildingCircuitFlow`** (L/h) as the primary HP state classifier — NOT `StatuscodeNum`.
+`thermal-operational` uses `BuildingCircuitFlow` (L/h): > 900 = DHW, 780–900 = heating, < 100 = off.
 
-| BuildingCircuitFlow | L/min | State | Notes |
-|---|---|---|---|
-| > 900 L/h | > 15.0 | **DHW** | ~1240 L/h = 20.7 L/min, diverter to cylinder |
-| 780–900 L/h | 13–15 | **Heating** | ~860 L/h = 14.3 L/min, normal CH circuit |
-| < 100 L/h | < 1.7 | **Off** | Standby/idle |
+**⚠ `StatuscodeNum` is unreliable for DHW detection.** Code 134 appears during both off/frost standby AND active DHW. Never mean-aggregate status codes — use `last()`.
 
-**⚠ eBUS `StatuscodeNum` is unreliable for DHW detection.** Code 134 ("off/frost standby") appears during the entire 1–2 hour DHW cycle when the diverter switches flow to the cylinder. Code 34 (actual DHW code) appears only briefly (~10 min) during transitions. Mean-aggregating status codes (e.g., `mean(34, 100) = 67`) produces garbage — always use `last()` aggregation for status codes.
+## Key Facts
 
-Arotherm eBUS status codes observed (Mar 2026):
-- **34**: DHW (brief transition, ~90 min total in 4 days)
-- **100**: Off/standby (~620 min)
-- **101**: Standby warm (~205 min)
-- **103**: Pump overrun (~6 min)
-- **104**: Heating (~3989 min = 66h)
-- **107**: Heating transition (~12 min)
-- **133**: Frost protection (~5 min)
-- **134**: Off/frost standby (~800 min) — **also appears during DHW!**
-- **516**: DHW variant (~15 min)
+- **13 rooms**, all sensored. 12× SNZB-02P (v2.2.0) + 1 emonth2 (leather). See `docs/house-layout.md`.
+- **15 radiators**, no TRVs. Kitchen and Landing have no radiator. Sterling rad OFF.
+- **House**: HTC 261 W/K, 180m², 1930s solid brick + 2010 loft. HP maxes out at ~2°C outside.
+- **Cosy tariff**: THREE windows (04:00–07:00, 13:00–16:00, 22:00–00:00). Battery effective rate 14.63p/kWh.
+- **Overnight**: 19°C setback 00:00–04:00. DHW windows: 05:30–07:00, 13:00–15:00, 22:00–00:00. See `docs/overnight-strategy-analysis.md`.
+- **DHW**: 300L Kingspan Albion, usable 161L, 45°C target, eco/normal manual seasonal switch. See `docs/dhw-cylinder-analysis.md`.
+- **Thermal model**: calibrated Night 1/Night 2 (24-26 Mar 2026). Cd=0.20, landing ACH=1.30. See `docs/room-thermal-model.md`.
+- **Annual saving**: £565 (46%) vs gas combi at current Cosy tariff.
+- **Octopus data**: `~/github/octopus/` — refresh via `cd ~/github/octopus && npm run cli -- refresh`
 
 ## Feed Notes
 
-- `503101` (indoor_temp) = emonth2 sensor in **Leather room only**, not whole-house
-- `503093` (outside_temp) = Met Office hourly, not Arotherm OAT sensor. Reads ~1.0°C warmer than ERA5-Land (507-day overlap). Used as control/cross-check for HP era; ERA5 bias-corrected +1.0°C for gas era. For real-time analysis, prefer `ebusd/poll/OutsideTemp` (Arotherm OAT, every 30s).
+- `503101` (indoor_temp) = emonth2 in **Leather room only**, not whole-house
+- `503093` (outside_temp) = Met Office hourly. For real-time, prefer `ebusd/poll/OutsideTemp` (30s)
 - `512889` (DHW_flag) = dead since Dec 2024
-- Solar PV + battery system installed (not yet integrated):
-    - 7× Trina 440W panels (TSM-440NEG9RC.27), 3.08 kWp, single string
-    - Fox ESS F3600 inverter (3.6kW, dual MPPT — one MPPT input used)
-    - Tesla Powerwall 2 (13.5 kWh) + Gateway
-    - Commissioned: 19/04/2024, Emlite M24 generation meter
-
-## Hydraulic System
-
-See `docs/hydraulic-analysis.md`. Key: heating flow clamped at **14.3 L/min**, DHW 21.3 L/min (post y-filter clean Mar 2026). Idle flow rate is the early warning for sludge buildup.
-
-## DHW Cylinder
-
-See `docs/dhw-cylinder-analysis.md` for full analysis. Key numbers: Kingspan Albion 300L, usable **161L**, **45°C target** (optimal), standby loss 13W, eco mode ~115 min at 3.0 kW. DHW tracking via z2m-hub (`DHW_FULL_LITRES = 161`).
-
-## Reference Data (config.toml)
-
-- House: HTC 261 W/°C, floor area 180m², solid brick + 2010-standard top floor
-- Radiators: 15× Stelrad, total T50 = 25,133W, output calculator with correction factor. Largest radiators (DP DF, TP TF) were the biggest single cost — more expensive than the HP itself.
-- System cost (new equipment, DIY install, no grant): Arotherm Plus 5kW **£3,624** + VRC 700 controller **£198** + Kingspan Albion 300L cylinder **£1,483** + 8 new Stelrad radiators ~**£2,744** = **~£8,048**. Five radiators pre-existed (bathroom ×2, shower, elvina, sterling, jack&carol). Gas disconnected entirely. Payback 14 years on equipment at £565/yr saving (17.07p blended Cosy rate). All self-installed — no labour costs.
-- Arotherm spec: COP curve at -3°C (35°C→4.48, 55°C→3.06)
-- Gas era: 18,702 kWh/yr gas, 90% boiler, 11.82 kWh/day hot water
-- Insulation improved between gas and HP eras (heat/HDD dropped ~4%)
-- Solid wall insulation planned but not yet done
-- Spreadsheet models: `Heating needs for the house.xlsx` (U-values, radiators, HDD), `Utility - Gas Electric-Jack_Laptop.xlsx` (gas/electric history, PV, degree days, hot water)
-
-## House Layout & Room Sensors
-
-See [docs/house-layout.md](docs/house-layout.md) for full building physics: room connectivity, door states, thermal relationships, radiator inventory, pipe topology, ventilation, sensors.
-
-See [docs/room-thermal-model.md](docs/room-thermal-model.md) for HP capacity analysis, EWI opportunity, FRV strategy, overnight data findings.
-
-Key facts for agents:
-- **13 rooms**, all sensored (Office + Landing added 24 Mar 2026). All SNZB-02P on v2.2.0. Conservatory also has VRC 700 built-in sensor (mapped to Z2RoomTemp via `Z2RoomZoneMapping=VRC700`, room modulation OFF — read-only, no control impact). Polled every 5 min via `ebusd/poll/Z2RoomTemp`.
-- **15 radiators**, no TRVs. Kitchen and Landing have no radiator. Sterling rad is OFF.
-- **Pipe topology**: 22mm primary (most rads) vs two 15mm branches (hall+front-horizontal, jackcarol+office) — 15mm branches are flow-starved.
-- **Bathroom MVHR**: Vent-Axia Tempra LP, 9 L/s, 78% HR, runs 24/7. Door open 24h except during/after showers. Drives whole-house airflow via stairwell.
-- **Outside temp**: eBUS `ebusd/poll/OutsideTemp` primary (30s), Met Office feed 503093 as control. Open-Meteo for outside humidity (moisture model).
-- **Construction**: 1930s solid brick, all internal walls single brick. Ground floor: kitchen=concrete slab, conservatory=concrete slab (yr 2000), hall/front/leather=suspended timber. Leather has spiral cellar. Office+landing have 100mm insulated floor over hall (U≈0.25). Loft=2010 timber stud.
-- **HP capacity**: maxes out at ~2°C outside (95% runtime). EWI on SE wall (50m², £5k DIY) would add 84 W/K = 32% HTC reduction.
-- **eBUS heating control**: `write -c 700 Z1OpMode off/auto` toggles heating via ebusd on pi5data. DHW unaffected. Tested 24 Mar 2026. `at` scheduler on pi5data for timed experiments.
-- **Bare CH pipes in floor void**: 2m of 35mm flow + return (bare copper) in the gap between kitchen ceiling and bathroom floor. Heats both rooms (~25W each at MWT=31). Not insulated — insulating would save ~50W continuous.
-- **Morning demand analysis** (117 winter days, Nov 2025–Feb 2026): HP peaks at 4.8kW avg / 7.5kW max during 06:00-08:00 recovery. COP drops from 4.42 (evening steady) to 3.70 (morning recovery). Recovery MWT 38°C vs evening 32°C. DHW cycle at 06:00-07:00 (114/120 days) immediately precedes heating recovery — double stress on HP.
-- **Overnight strategy (revised 29 Mar 2026)**: `Z1NightTemp`=19°C, `Z1DayTemp`=21°C. Night mode 00:00–04:00 (aligned to mid-peak dead zone between evening and morning Cosy windows). Previously 17°C setback (house never dropped that far naturally — paying for nothing) then briefly trialled full OFF (rejected — elvina dropped to 15.8°C, £6/yr saving not worth it). 19°C setback costs ~£20/yr and only fires on coldest nights. See `docs/overnight-strategy-analysis.md` for full analysis. Key finding: **HP is at capacity on cold days** — house stabilises at 19.5–20°C regardless of strategy. Revert: `echo 'write -c 700 Z1NightTemp 17' | nc -w 2 localhost 8888` on pi5data.
-- **DHW timer windows (set 29 Mar 2026)**: 05:30–07:00, 13:00–15:00, 22:00–00:00. Morning window starts at 05:30 — the latest time where 100% of Normal DHW cycles finish within Cosy (worst case 06:58, p90=77m, max=88m). HP heats house for 1.5h first (04:00–05:30) at Cosy rate before DHW. Eco spills ~30 min past 07:00 in mild season (40p/year — not worth seasonal adjustment). Afternoon shortened from 16:00 to 15:00 to prevent peak spills (18 historical). Evening added for post-shower top-ups. No crontab needed — same schedule year-round.
-- **DHW mode**: eco year-round, manually switch to normal when house feels cold in mornings (typically Nov→Mar). Eco saves ~£12/yr on COP (3.1 vs 2.5) but takes 2h vs 1h. On cold days eco steals too much Cosy heating time — 19/20 eco cold-morning cycles never recovered in 3h. Cannot automate — `hmu HwcMode` is read-only via eBUS.
-- **Cosy tariff**: THREE windows (04:00–07:00, 13:00–16:00, **22:00–00:00**), not two. Battery covers 95% of non-Cosy at effective 14.63p/kWh. Scheduling optimisation yields £15–40/yr total — battery has already captured most arbitrage.
-- **Door states**: Bathroom + Office + Shower normally open. Jack&Carol open day/closed night. Elvina/Aldora/Sterling always closed. Leather↔conservatory SG door open mornings (dog fed in conservatory), closed rest of day and overnight. Front partial. Kitchen↔Hall↔Conservatory always open.
-- **SNZB-02P v2.1.0 bug**: readings freeze at power-on value. v2.2.0 fixes it. Always verify readings vary before trusting.
 
 ## Gotchas
 
-- All domain constants, feed IDs, thresholds, and reference data live in `config.toml` — edit there, not in code
-- `config.toml` must be next to the executable or in the current working directory
-- `gaps.rs` bypasses `db.rs` — writes to SQLite tables directly
-- `fill_gap_interpolate()` in gaps.rs still uses hardcoded feed IDs (`"503094"`, etc.) — not migrated to config
-- No tests — validate changes against real data output
-- Simulated data in separate table (`simulated_samples`) — never mixed unless `--include-simulated`
-- DB schema is `CREATE TABLE IF NOT EXISTS` — no migrations
-- Polars pinned to 0.46 (0.53 available) — untested on newer versions
-- Outside temp feed (Met Office) is lower resolution (~hourly) than HP feeds (~10s)
-- Thresholds are 5kW-specific — 7kW model would need different values (its heating rate = 20 L/min overlaps 5kW DHW rate)
-- Two different HDD base temps: 15.5°C (UK standard in thresholds) vs 17°C (gas-era regression in house config)
-- `octopus.rs` reads from `~/github/octopus/data/` — path hardcoded in `default_data_dir()`
+- All domain constants in `config.toml` — edit there, not in code
+- `gaps.rs` bypasses `db.rs` — writes to SQLite directly. `fill_gap_interpolate()` has hardcoded feed IDs
 - `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs, not in config.toml
-- `--all-data` start timestamp hardcoded in `resolve_time_range()`, duplicates `config.toml` value
-- `daily_hp_by_state()` assumes exactly 1-minute sample interval (`SAMPLE_HOURS = 1/60`)
-- Gas-era DHW estimated at 11.82 kWh/day (from config) — not measured. HP-era DHW is measured by state machine.
-- `scripts/dhw-auto-trigger.py` is the old Python version — **do not deploy**. Shell version also removed (Mar 2026). DHW boost now handled by z2m-hub.
-- `scripts/ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP connection hanging — without `head -1`, each `nc` call waits 5s for the server to close.
-- Multical `dhw_volume_V1` register has **10L resolution** — ground truth for draw tracking. `dhw_flow` integration interpolates between steps (resets at each step, clamped 0–9.9L). Use `dhw_flow` at 2s resolution for sub-litre analysis (e.g., thermocline pinpointing).
-- DHW remaining uses 161L capacity (z2m-hub `DHW_FULL_LITRES` constant) — validated at 2s resolution by T1 inflection during shower draws. Don't change without re-validating against draw+T1 data at full resolution.
-- SNZB-02P sensors on firmware v2.1.0 (8448) have a known bug: readings freeze at power-on value. Always verify sensor readings **vary over time** before using them in analysis. A flat reading across changing conditions = broken sensor, not thermal equilibrium.
-- **Bathroom sensor was in airing cupboard until 25 Mar 2026 21:00.** All bathroom temp/humidity data before this time reads ~3°C high and humidity ~15% low. Moved to open wall. Historical bathroom data should NOT be used for model calibration without correction.
-- SNZB-02P OTA updates flood InfluxDB with ~4 readings/sec of spam during transfer. Delete the OTA period data from InfluxDB after each update.
-- `Heating needs for the house.xlsx`: Leather "Windows" uses ΔT=19°C but faces conservatory (internal, actual ΔT ≈ 0.5°C). All internal wall ΔT=5°C assumptions overestimate by 2-10× vs measured ~1.5°C.
-- **eBUS `StatuscodeNum` is unreliable for DHW detection** — code 134 appears during both standby AND active DHW heating. Use `BuildingCircuitFlow` (> 900 L/h = DHW, 780–900 = heating, < 100 = off). Never mean-aggregate status codes — use `last()`.
-- **PV calibration 0.087 is for the sloping PV plane**, not vertical. Divide by 1.4 to get vertical irradiance. Rust code handles this in `pv_to_sw_vertical_irradiance()`. Don't apply a tilt factor on top of 0.087 for sloping windows — that double-counts.
-- **Conservatory is not a modelable room** for heating purposes. 30m² of glass, sub-hour thermal time constant, massive solar/wind sensitivity, variable door coupling. Exclude from scoring. Use its sensor as a NE weather proxy.
-- **Landing chimney model breaks during heating** — predicts wrong sign 9/14 periods. ACH=1.30 to outside is correct for cooldown calibration but wrong for operational use where stairwell convection reverses. Keep excluded from scoring.
-- **Two binaries in the workspace** — `cargo run` is ambiguous. Use `cargo run --bin heatpump-analysis -- ...` for the main CLI, `cargo run --bin thermal-regression-check -- ...` for regression checks.
-- **`emon/heatpump/heatmeter_FlowRate`** reads ~1 L/min constantly — it's the DHW circuit heat meter, NOT the main CH circuit. Useless for state classification. Use `ebusd/poll/BuildingCircuitFlow` instead.
+- `--all-data` start timestamp hardcoded in `resolve_time_range()`, duplicates config.toml value
+- Polars pinned to 0.46 (0.53 available) — untested on newer versions
+- Thresholds are 5kW-specific — 7kW model's heating rate (20 L/min) overlaps 5kW DHW rate
+- Two HDD base temps: 15.5°C (UK standard) vs 17°C (gas-era regression)
+- `octopus.rs` reads from `~/github/octopus/data/` — path hardcoded
+- Radiator T50 values duplicated in `config.toml` AND `model/house.py` — keep in sync
+- SNZB-02P v2.1.0 bug: readings freeze at power-on value. v2.2.0 fixes it. Verify readings vary.
+- Bathroom sensor was in airing cupboard until 25 Mar 2026 21:00 — historical data reads ~3°C high
+- `emon/heatpump/heatmeter_FlowRate` reads ~1 L/min constantly — DHW circuit meter, useless for state classification. Use `BuildingCircuitFlow`.
+- PV calibration 0.087 is for sloping plane, ÷1.4 for vertical. P3 CT reads 6.7kW for 3.08kWp array (includes Powerwall).
+- Conservatory excluded from thermal scoring (30m² glass, sub-hour time constant). Landing excluded (chimney model wrong for heating).
+- Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
+- DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
+- `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
 
 ## Boundaries
 
-- Don't change operating state thresholds without re-validating against the full dataset
+- Don't change operating state thresholds without re-validating full dataset
 - Don't mix simulated and real data by default
 - Don't commit `heatpump.db` or API keys
-- Don't modify `~/github/octopus/` from this project — refresh via `npm run cli -- refresh`
-- Keep `HDD_BASE_C` in `octopus.rs` in sync with `HDD_BASE_TEMP` in `analysis.rs` (both read from config now)
-- Keep `GAS_DHW_KWH_PER_DAY` and `BOILER_EFFICIENCY` in `octopus.rs` in sync with config.toml `[gas_era]`
-- Human-facing docs: `docs/` (Diátaxis style) — see `docs/code-truth/` for derived-from-code docs
-- This file (`AGENTS.md`) is the single LLM context source. `docs/code-truth/` is for human comprehension.
-- InfluxDB `energy` bucket contains: live MQTT data, 12.2M historical emonhp points from emoncms.org (Oct 2024+), 40M historical emonpi points from phpfina backups (Apr 2024+), 149k outside temperature points from Met Office, `dhw.remaining_litres` (written by z2m-hub), Zigbee room sensor data (12× SNZB-02P temp/humidity from Mar 2026, topic `zigbee2mqtt/*_temp_humid`), eBUS data (25+ values every 30s, topics `ebusd/poll/*` and `ebusd/hmu/*`)
-- Don't modify monitoring infrastructure from this project — use SSH to emonpi/emondhw/emonhp/pi5data directly
-- Don't store credentials in plaintext — use `ak get emon-pi-credentials` at runtime
-- Always verify SNZB-02P sensor readings **vary over time** before using in analysis — stuck readings look like real data
-- Thermal model (`model/house.py`) room definitions must match AGENTS.md radiator/pipe/ventilation data — don't update one without the other
-- Moisture model uses Open-Meteo for outside humidity — assumes 75% if API unavailable
-- Thermal mass estimates are construction-based, not measured — suspended timber floors have much less mass than concrete slabs
-- `analyse()` gives misleading results during warmup transients — use for steady-state only
-- InfluxDB token for pi5data is in `model/house.py` constants — same token as Telegraf config on pi5data
-
-## Room Thermal Model
-
-Python model in `model/house.py` — see [docs/room-thermal-model.md](docs/room-thermal-model.md) for full documentation.
-
-Lumped-parameter thermal network: 13 room sensors + eBUS outside temp + HP heat meter. Zero free parameters in fabric model — all from physics, measurements, or construction. Two calibrated parameters from controlled experiments (landing chimney ACH, doorway Cd).
-
-**Architecture** (refactored 25 Mar 2026):
-- `RoomDef`: physical properties only (floor area, external fabric, radiators, ventilation ACH, occupancy). No analysis results in room definitions.
-- `InternalConnection`: symmetric wall/floor conduction between rooms. Defined ONCE per connection. U_internal_wall = 2.37 W/m²K (100mm brick + plaster, calculated).
-- `Doorway`: buoyancy-driven convective exchange (Cd=0.20, calibrated). Stairwell marked as "chimney" — modelled as landing ventilation ACH instead.
-- `build_sensor_map()`: single function for sensor→room mapping, shared by all analysis.
-- DHW cylinder heat: 75W cylinder surface + 42W insulated pipes + 16W shower residual → bathroom.
-- Body heat: 70W sleeping, 100W active, per occupant from `overnight_occupants`.
-
-**Calibration (Night 1 vs Night 2, 24-26 Mar 2026)**:
-- Night 1: doors normal, T_out avg 8.5°C
-- Night 2: all doors closed, T_out avg 5.0°C
-- Doorway Cd = 0.20 (buoyancy exchange for standard doors)
-- Landing chimney ACH = 1.30 (stairwell stack effect, was 0.15)
-- Stairwell doorways (hall↔landing, landing↔shower) disabled — chimney captured by ACH
-- Bathroom sensor moved from airing cupboard to room wall (was reading 3°C high)
-
-**Room stacking** (confirmed):
-```
-Loft:    Aldora    | Elvina        | Shower
-1st:     Sterling  | Jack&Carol    | Bathroom  (+ Office, Landing)
-Ground:  Leather   | Front         | Kitchen   (+ Conservatory, Hall)
-```
-1st-floor ceilings are INTERNAL connections to loft rooms (U=0.44), not external.
-
-**Model accuracy — cooldown calibration (26 Mar 2026, Python)**:
-
-| Mode | RMSE | Good | All within range |
-|---|---|---|---|
-| Cooldown (8h) | 0.41°C | 9/13 | 13/13 (0.5–2×) |
-| Warmup (8h) | 1.16°C | 7/13 | 11/13 (<2°C) |
-| Equilibrium | 1.2°C | 7/13 | 11/13 (<2°C) |
-
-**Model accuracy — operational validation (28 Mar 2026, Rust `thermal-operational`)**:
-
-Scored rooms = 11 (excluding conservatory + landing). 4-day range, 28 segments, BCF-based state classification, PV+Open-Meteo solar.
-
-| HP State | N records | RMSE °C/hr | MAE | Bias |
-|---|---|---|---|---|
-| **Off** | 40 | **0.128** | 0.096 | +0.001 |
-| **DHW** | 83 | **0.266** | 0.173 | +0.126 |
-| **Heating** | 117 | 0.472 | 0.223 | -0.006 |
-| **All** | 240 | **0.368** | 0.185 | +0.041 |
-
-Per-room (scored, all states): leather 0.100, sterling 0.059, hall 0.149, jackcarol 0.174, elvina 0.193, front 0.203, aldora 0.215 — all good. Shower 0.261, bathroom 0.383, kitchen 0.536 — mediocre (unmodelled heat sources). Office 1.020 — poor (coupled to landing chimney).
-
-Key insight: **every DHW cycle (~2h, twice daily) is a free cooldown experiment** — radiators off, rooms cool naturally. DHW periods provide ~4h/day of validation data.
-
-**Excluded rooms** (`model/thermal-config.toml` `exclude_rooms`):
-- **Conservatory**: glazed buffer (30m² glass), massive solar/wind sensitivity, untargetable by heating. RMSE 0.686 even with solar model. Gets +6°C in morning from NE sun, cools all afternoon. Variable door coupling to house changes thermal circuit topology.
-- **Landing**: chimney model structurally wrong for operational mode — gets wrong sign 9/14 periods. ACH=1.30 models stairwell airflow as outdoor ventilation loss, but it's actually bidirectional inter-floor air exchange. During heating, warm air rises and *heats* landing; model predicts *cooling*. Valid for cooldown calibration (weaker convection), invalid for operational use.
-
-Remaining outliers in scored rooms: kitchen (bare pipes in floor void, no radiator), bathroom (shower events, variable door regime), office (small room coupled to landing chimney).
-
-**Commands**: `fetch [hours]`, `rooms`, `connections`, `analyse`, `fit`, `equilibrium [T_out] [MWT] [solar_sw] [solar_ne]`, `moisture`
-
-**Solar gain model** (added 26 Mar 2026, refined 28 Mar 2026):
-- `SolarGlazing` per room with area, orientation (SW/NE), tilt, g-value, shading factor.
-- **SW irradiance**: PV (EmonPi2 P3) as proxy. PV calibration: 0.087 W/m² per W = irradiance on the **sloping PV plane** (same plane as elvina's velux). Divide by 1.4 to get vertical reference: 0.062 W/m² per W for vertical windows. Rust code applies tilt factor per-element (1.0× vertical, 1.4× sloping, 1.2× horizontal).
-- **NE irradiance**: Open-Meteo `direct_normal_irradiance` + `diffuse_radiation`, decomposed via solar geometry (Spencer solar position + surface angle-of-incidence) to NE vertical and NE horizontal surfaces. No local sensor for NE — future SE solar array planned (perpendicular to ground, pointing SE) will provide direct NE-adjacent measurement.
-- Key shading: office 0.05 (fabric blind), jack&carol 0.20 (blind set back), conservatory 0.14 (NE, shaded from ~11:00).
-- House faces SW (front). PV panels on elvina's sloping SW roof.
-- **⚠ P3 CT scaling incorrect** — reads 6.7kW for 3.08kWp array (includes Powerwall). CT ratio needs fixing in emonpi config. Used as relative proxy only.
-
-**Measured heat loss** (Night 2, all doors closed, T_out avg 5.0°C — pure fabric + ventilation):
-
-| Room | Measured W | Effective W/K | Radiator T50 | Rad @MWT31 | Status |
-|---|---|---|---|---|---|
-| Conservatory | 1016 | 78.2 | 5700 | 989 | 27W short |
-| Front | 495 | 34.8 | 4801 | 735 | +240W spare |
-| Leather | 485 | 28.7 | 4752 | 519 | tight |
-| Hall | 452 | 33.4 | 2376 | 392 | 60W short |
-| Kitchen | 281 | 20.1 | 0 | — | no rad |
-| Office | 267 | 20.2 | 1345 | 229 | 38W short |
-| Jack&Carol | 247 | 17.6 | 1950 | 305 | OK with body heat |
-| Elvina | 227 | 17.4 | 909 | 158 | 69W short (bottleneck) |
-| Bathroom | 209 | 15.3 | 996 | 161 | 48W short (DHW helps) |
-| Sterling | 135 | 9.9 | 0 (off) | — | heated by leather below |
-| Aldora | 94 | 6.5 | 376 | 56 | 37W short (body heat covers) |
-| Landing | 64 | 4.7 | 0 | — | chimney + neighbours |
-| Shower | 51 | 3.8 | 752 | 123 | +72W spare |
-
-**Humidity-derived ventilation** (Night 1 windy vs Night 2 calm, occupied rooms):
-
-| Room | Night 1 ACH (windy) | Night 2 ACH (calm) | Wind adds | Model ACH | Notes |
-|---|---|---|---|---|---|
-| Jack&Carol | 1.89 | 1.00 | +0.89 | 0.80 | Bay window leaks. Fix: draught-strip. |
-| Elvina | 0.71 | 0.22 | +0.49 | 0.70 | Trickle vents voluntary (closeable). Sloping roof acts as wind scoop. |
-| Aldora | 0.37 | 0.28 | +0.09 | 0.30 | Well-sealed flat roof. Mould risk (has trickle vents but closes them — too cold without rad upgrade). |
-
-**Doorway effects** (Night 1 − Night 2, normalised for outside temp):
-
-| Room | Effect °C/h | Meaning |
-|---|---|---|
-| Landing | +0.17 | Chimney: warm air rises ground→loft through stairwell |
-| Kitchen | +0.16 | Exports heat through 2 open doorways to hall+conservatory |
-| Shower, Front | +0.08 | Borderline (near 0.05 noise floor) |
-| Office, Conservatory | ~0 | Receive heat through doors — closing doors hurts them |
-
-**Moisture model**: tracks absolute humidity per room. Surface RH uses physics-based calculation (U_max × Rsi × ΔT, not fixed 3°C). Cross-validates ACH_moisture vs ACH_thermal. Aldora remains at mould risk (RH ~59%, has trickle vents but keeps them closed because room is too cold — blocked by rad upgrade).
-
-**Bottleneck sequence** (from equilibrium model):
-1. **Elvina** (vents open, ACH=0.70): forces MWT to 49°C at -3°C. Voluntary — close vents to fix (FREE).
-2. **Aldora** (376W towel rad): forces MWT to 47°C. Fix: upgrade to 909W DP DF (FREE, reuse existing rad).
-3. **Bathroom** (996W towel rads, 25.6 W/K external): forces MWT to 45°C. DHW cylinder helps (93W). Hardest to fix.
-
-With all three fixed + J&C draught-proofing + EWI SE wall 30m²: MWT drops to 43°C at -3°C (COP 3.76 vs 3.31 baseline).
-
-**Intervention analysis** (equilibrium model, uniform 20°C target):
-
-| Intervention | Cost | MWT at -3°C | Annual heat | Annual cost | Saving |
-|---|---|---|---|---|---|
-| Current | — | 49°C | 23,670 kWh | £894 | — |
-| + Conserv door closer + target 14°C | ~£15 | 49°C | 23,220 kWh | £846 | £48 |
-| + Elvina vents closed | £0 | 47°C | 22,190 kWh | £812 | £82 |
-| + Aldora rad upgrade | FREE | 45°C | 22,190 kWh | £812 | £82 |
-| + J&C draught-strip | ~£30 | 45°C | 21,720 kWh | £794 | £100 |
-| + EWI SE 30m² | ~£5k | 43°C | 18,690 kWh | £629 | £265 |
-
-EWI is the big win: **19% heat demand reduction**. At same 20°C target, HP runs at 84% capacity (vs 106% currently at 5°C outside). Less cycling, less wear, more headroom. Payback ~23 years on energy, but comfort and HP longevity are the real drivers.
-
-## Completed (March 2026)
-
-- ~~**Overnight heating optimisation**~~ — built Rust backtest (`src/overnight.rs`), Python model (`model/overnight.py`), and `cosy-scheduler` binary. Trialled OFF overnight, rejected (£6/yr saving, elvina drops to 15.8°C). Settled on 19°C setback 00:00–04:00 via VRC 700 timer. Key finding: HP at capacity on cold days, house stabilises at 19.5–20°C regardless of strategy.
-- ~~**DHW timer alignment**~~ — moved to 05:30–07:00, 13:00–15:00, 22:00–00:00 (Cosy-aligned, morning delayed for 1.5h house heating first). Prevents afternoon peak spills.
-- ~~**Cosy tariff discovery**~~ — confirmed three Cosy windows (was assuming two). Evening 22:00–00:00 window means overnight heating before midnight is cheap.
-
-## Planned Enhancements
-
-**Priority insight (Mar 2026):** On cold days (<6°C) the 5kW HP is at capacity — house equilibrium is 19.5–20°C regardless of scheduling, setback, DHW timing, or FRVs. The only interventions that help on cold days are those that **reduce total heat loss**: EWI (£5k, 19% demand reduction), J&C draught-strip (£30, 60–150W), sterling floor insulation. Door closers and FRVs don't help — on cold days the HP delivers the same total watts regardless, heat just redistributes between rooms. Minimising leather→conservatory SG door open time on cold mornings helps leather comfort (1.4°C dip measured) but doesn't change whole-house equilibrium.
-
-See [docs/roadmap.md](docs/roadmap.md) for full details:
-- ~~**eBUS integration into analysis**~~ — Done. Rust `thermal-operational` uses `BuildingCircuitFlow` from eBUS for HP state classification (heating/DHW/off) and `FlowTemp`/`ReturnTemp` for MWT. eBUS status codes (StatuscodeNum) are **unreliable for DHW detection** on the Arotherm — code 134 appears during both off AND DHW. Flow rate is definitive.
-- **Solar PV + battery** — system installed, details above. Self-consumption analysis, DHW scheduling to solar peak.
-- ~~**Solar gain model**~~ — Done in Rust `thermal-operational` (28 Mar 2026). PV (P3) for SW irradiance, Open-Meteo DNI+DHI decomposed via solar geometry for NE. Per-room glazing from `thermal_geometry.json`. PV calibration: 0.087 W/m² per W = sloping plane, ÷1.4 for vertical reference. Future **SE solar array** (perpendicular to ground, pointing SE) planned as direct irradiance sensor — architecture ready (`se_vertical` from Open-Meteo as placeholder, `("SE", _)` branch in `solar_gain_full`).
-- **Cost analysis subcommand** — tariff data and cost calculations could be a proper Rust subcommand.
-- ~~**Controlled cooldown experiments**~~ — Night 1 (24-25 Mar, doors normal, 7.5°C avg) and Night 2 (25-26 Mar, all doors closed, 5.0°C avg) complete. Calibrated doorway Cd=0.20 and landing chimney ACH=1.30. Bathroom sensor moved from airing cupboard to wall (was 3°C high).
-- ~~**Office + Landing sensors**~~ — added 24 Mar 2026. 13/13 room coverage complete.
-- **Kitchen→conservatory door closer** — Re-evaluated via equilibrium model Mar 2026. Closing the door makes **no meaningful difference** to the rest of the house. At equilibrium the doorway exchange is ~170W = 0.07°C across the house. Closing it actually makes the kitchen colder (loses the warm convective flow from hall→kitchen→conservatory that accidentally heats the kitchen, which has no radiator). The conservatory radiator (1,300W at equilibrium) cannot be turned off — conservatory drops to ~5°C without it. On cold days the HP is at capacity — same total output regardless of door state, heat just redistributes. Not worth doing.
-- **Leather→conservatory SG door** — UA=21.12 W/K conduction through single-glazed panels (closed). When **open** for the dog (mornings ~07:00–09:30), buoyancy exchange adds **1,500–2,000W** at 10°C ΔT — measured as a **1.4°C dip in leather** over 2.6 hours on 11 coldest mornings (data from emonth2 Nov 2025–Mar 2026). On cold days the HP is at capacity and cannot compensate — same total output regardless of door state. The dip hurts leather comfort but doesn't affect whole-house equilibrium. Minimising open time on cold mornings is the only mitigation. A door closer doesn't help for conduction (253W through glass when closed) — secondary glazing or heavy curtain would.
-- **Jack&Carol bay window draught-proofing** — moisture-proven leakage: ACH=1.00 even calm (Night 2), ACH=1.89 windy (Night 1). Wind adds 0.89 ACH. Draught strip frame joints. Saves ~60W calm, ~150W windy. Becomes system bottleneck once elvina closes vents.
-- **Aldora rad upgrade** — 909W DP DF replaces 376W towel (FREE, reuse existing rad). Removes aldora as bottleneck. Unblocks opening trickle vents (currently closed — too cold) for mould risk (58.8% RH).
-- **FRV installation** — ⚠ **Re-evaluated after overnight analysis (Mar 2026).** The equilibrium model showed leather/front/shower overheat at -3°C design day, suggesting FRVs would help. BUT measured data shows the HP is at capacity on cold days (<6°C) and the house only reaches 19.5–20°C — every watt from every radiator is needed. FRVs would restrict output from the largest radiators (leather 4752W, front 4801W) precisely when the HP can't spare it. FRVs only help on mild days when the HP has headroom and rooms overshoot, which is a comfort issue not an efficiency one. **Deprioritised** — the real cold-day wins are reducing heat loss (EWI, draught-strip, floor insulation), not redistributing insufficient output.
-- **Sterling floor insulation** — mineral wool between joists (leather ceiling / sterling floor). Sterling occupant prefers cold + opens windows → leather's heat goes straight outside. Insulating stops this: leather retains heat, Sterling gets cold room, HP saves energy. Best single-room intervention after EWI.
-- **EWI on SE wall** — ~30m² solid brick (hall, front, jack&carol, office), U 2.11→0.23. DIY, before next winter. Model predicts: 19% heat demand reduction (23,670→19,139 kWh/yr), MWT drops 49→43°C at -3°C, annual saving £216/yr. HP runs at 84% capacity vs 106% currently. Main benefit is comfort (20°C achievable everywhere) and HP headroom, not payback (£5k DIY — roughly the same as the entire HP+controller+cylinder cost).
+- Don't modify `~/github/octopus/` from this project
+- Don't modify monitoring infrastructure from here — use SSH to devices directly
+- Don't tune Cd or landing ACH independently — jointly calibrated
+- Thermal model room definitions must match between `thermal_geometry.json`, `model/house.py`, and `config.toml` radiators
+- Rust thermal outputs are authoritative when command exists; Python for exploratory only

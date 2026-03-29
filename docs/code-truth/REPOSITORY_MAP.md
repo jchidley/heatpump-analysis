@@ -1,4 +1,4 @@
-<!-- code-truth: 3af9fd0 -->
+<!-- code-truth: f9694e2 -->
 
 # Repository Map
 
@@ -7,8 +7,8 @@
 | File | Concern |
 |------|---------|
 | `config.toml` | All domain constants, thresholds, feed IDs, house data, radiator inventory, Arotherm specs, gas-era history |
-| `Cargo.toml` | Dependencies and build configuration |
-| `AGENTS.md` | LLM agent context (canonical project documentation). Heavily updated Mar 2026 with calibration results, system costs, intervention analysis. |
+| `Cargo.toml` | Dependencies and build configuration (two binaries: `heatpump-analysis`, `thermal-regression-check`) |
+| `AGENTS.md` | LLM agent context (canonical project documentation, ~440 lines) |
 | `CLAUDE.md` | Points to AGENTS.md |
 | `README.md` | Human-facing quick start, command reference, project philosophy |
 | `heatpump.db` | SQLite database (gitignored, created by `sync`) |
@@ -17,201 +17,171 @@
 
 ## Source Modules
 
-### `src/main.rs` — CLI entry point (498 lines)
+### `src/main.rs` — CLI entry point (599 lines)
 
-- Loads `config.toml` at startup (tries next to executable, falls back to cwd)
-- Defines `Cli` struct with clap derive macros (20 subcommands)
-- Routes each subcommand to the appropriate module functions
-- Owns time-range resolution logic (`--days`, `--from`/`--to`, `--all-data`)
-- Helper: `load_dataframe()` abstracts real vs simulated data loading
-- `resolve_time_range()` — hardcodes `1_729_555_200` for `--all-data`, duplicating `config.toml`'s `default_sync_start_ms`
+Defines 25 CLI subcommands via clap derive. Loads `config.toml` at startup. Routes to analysis functions, DB operations, thermal commands.
 
-### `src/config.rs` — Configuration layer (211 lines)
+### `src/config.rs` — Configuration (213 lines)
 
-- Deserializes `config.toml` into typed structs (`Config`, `Emoncms`, `Thresholds`, `House`, `Arotherm`, `Radiator`, `GasEra`)
-- Global singleton via `once_cell::OnceCell` — loaded once by `main()`, accessed via `config::config()` from any module
-- Contains computed helpers:
-  - `Arotherm::expected_cop_at_flow_temp()` — linear interpolation on manufacturer COP curve
-  - `radiator_correction_factor()` — ΔT50 correction using `(actual_dt / 50)^1.3`
-  - `total_radiator_output_at_flow_temp()` — sum across all radiators with correction
-- `Emoncms::feed_id(&self, name)` — look up feed ID by name (replaces hardcoded string literals)
+Deserialises `config.toml` into typed structs. Global singleton via `once_cell::OnceCell`. All modules access via `config::config()`.
 
-### `src/emoncms.rs` — API client (83 lines)
+### `src/emoncms.rs` — API client (82 lines)
 
-- `Client` struct wrapping `reqwest::blocking::Client` with an API key
-- Two methods: `list_feeds()` and `feed_data(id, start, end, interval)`
-- Base URL read from `config().emoncms.base_url`
-- Returns `Vec<DataPoint>` where `DataPoint = (i64, Option<f64>)` (timestamp_ms, value)
+Minimal HTTP client for emoncms.org REST API. Used only by `sync` command. Blocking reqwest with 100ms politeness delay.
 
-### `src/db.rs` — SQLite storage and DataFrame loading (503 lines)
+### `src/db.rs` — SQLite storage (507 lines)
 
-- **Schema**: three tables (`feeds`, `samples`, `sync_state`) + optional `simulated_samples` and `gap_log` (created by gaps.rs)
-- **Sync**: `sync_all()` iterates config feed definitions, fetches in 7-day chunks at 60s interval, stores non-null values. Tracks last sync timestamp per feed.
-- **DataFrame loading**: `load_dataframe()` / `load_dataframe_with_simulated()` builds a Polars DataFrame by:
-  1. Collecting all distinct timestamps in range
-  2. Creating a column per feed (using the `column` field from config feed definitions)
-  3. Optionally merging simulated samples (gap-filled data never overwrites real data)
-- **Daily helpers**: `load_daily_energy()` (cumulative meter deltas), `load_daily_outside_temp()` (daily avg/min/max)
+Three tables: `feeds`, `samples` (WITHOUT ROWID), `sync_state`. WAL mode. `load_dataframe()` and `load_dataframe_with_simulated()` are the two DataFrame loading paths. Also provides `load_daily_outside_temp()` and `load_daily_energy()` for degree-day analysis.
 
-### `src/analysis.rs` — State machine and Polars analysis (950 lines)
+### `src/analysis.rs` — State machine + Polars queries (986 lines)
 
-This is the largest Rust module. Two concerns:
+Core HP analysis. `classify_states()` implements the hysteresis state machine (flow rate → heating/DHW/defrost/idle). `enrich()` adds `cop`, `delta_t`, `state` columns. All analysis functions take enriched DataFrames and print to stdout.
 
-**1. State classification** (`classify_states()`, `enrich()`)
-- Hysteresis state machine processing rows in time order
-- Uses `config().thresholds` for all transition boundaries
-- `enrich()` adds `cop`, `delta_t`, and `state` columns to any DataFrame
+### `src/gaps.rs` — Gap detection + synthetic data (648 lines)
 
-**2. Analysis functions** (each prints directly to stdout)
-- `summary()` — overall stats + breakdown by state
-- `cop_by_outside_temp()` — COP in 2°C outside temp bands, heating only
-- `hourly_profile()` — averages by hour of day, heating only
-- `daily_energy()` — daily totals from cumulative meter deltas
-- `degree_days()` — HDD analysis with weekly/monthly/period summaries + gas-era comparison
-- `indoor_temp()` — Leather room sensor stats, hourly profile, comfort vs outside temp
-- `dhw_analysis()` — DHW energy vs gas-era design estimate
-- `cop_vs_spec()` — actual COP vs Arotherm manufacturer curve at each spec flow temp
-- `design_comparison()` — house properties, radiator output table, gas vs HP comparison
+`TempBinModel` builds temperature-bin power profiles from real data. `fill_gap()` generates synthetic samples scaled to match cumulative meter readings. Writes to separate `simulated_samples` table. Bypasses `db.rs` — manages own schema.
 
-### `src/gaps.rs` — Gap detection and synthetic data (638 lines)
+### `src/octopus.rs` — Octopus Energy integration (814 lines)
 
-- `find_gaps()` — finds monitoring gaps > N minutes using windowed SQL on the elec_power feed
-- `TempBinModel` — builds per-°C-bin averages for heating and DHW from real data, plus DHW fraction by hour
-- `fill_gap()` — generates per-minute synthetic samples, scales power so integrated energy matches cumulative meters
-- `fill_gap_interpolate()` — linear interpolation for gaps < 10 minutes
-- `print_gap_report()` — lists all gaps with duration, energy, and fill status
-- **Known issue**: `fill_gap_interpolate()` still uses hardcoded feed IDs (`"503094"`, `"503096"`, `"503098"`, `"503099"`, `"503100"`) — not migrated to config lookup
+Reads from `~/github/octopus/data/` (CSV + JSON). Gas-vs-HP comparison, baseload analysis, monthly breakdown with HDD. ERA5 bias correction (+1.0°C) as Rust constant.
 
-### `src/octopus.rs` — Octopus Energy integration (708 lines)
+### `src/overnight.rs` — Overnight strategy optimizer (1,442 lines)
 
-- Loads data from `~/github/octopus/data/` (usage_merged.csv for consumption, weather.json for temps, config.json for gas unit conversion)
-- **Temperature hierarchy**: emoncms (Met Office, Oct 2024+) preferred over ERA5-Land (bias-corrected +1.0°C)
-- `load_consumption()` → half-hourly Polars DataFrame with gas m³→kWh conversion
-- `load_weather()` → daily DataFrame with date, tmean, hdd, source (hybrid emoncms + ERA5)
-- `daily_totals()` — aggregates to daily elec/gas kWh
-- `daily_hp_by_state()` — converts enriched DataFrame to daily heating/DHW energy split
-- `print_gas_vs_hp()` — dual-era comparison with state machine split
-- `print_baseload()` — whole-house minus HP electricity
-- **Note**: `ERA5_BIAS_CORRECTION_C` (1.0°C) is a Rust constant, not in config.toml
+Backtest model for overnight heating strategies. Calibrated cooling model (k=0.039/hr from DHW events), three-rate Cosy tariff, battery coverage. Evaluates 30 strategies × 324 winter nights.
 
-## Python Thermal Model
+### `src/thermal.rs` — Thermal model (3,506 lines)
 
-### `model/house.py` — Room-by-room thermal network (1397 lines)
+The largest module. Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorway exchange, solar gain. Five public entry points:
 
-Python script (run via `uv run --with influxdb-client --with numpy --with scipy`). Not part of the Rust build — a separate analysis tool.
+| Function | Command | What it does |
+|----------|---------|-------------|
+| `calibrate()` | `thermal-calibrate` | Grid search over Cd + landing ACH against Night 1/Night 2 cooldown rates |
+| `validate()` | `thermal-validate` | Run calibrated model on holdout windows, check pass/fail thresholds |
+| `fit_diagnostics()` | `thermal-fit-diagnostics` | Period-by-period cooldown diagnostics from HP status codes |
+| `operational_validate()` | `thermal-operational` | Full operational validation with heating/DHW/off, solar gain, BCF-based state |
+| `snapshot_export()` / `snapshot_import()` | `thermal-snapshot` | Human-gated reproducibility workflow |
 
-**Data types** (dataclasses):
-- `RadiatorDef`: T50 rating, pipe branch, active flag
-- `ExternalElement`: area, U-value, ground flag
-- `InternalConnection`: symmetric wall/floor/ceiling conduction between two rooms (defined once)
-- `Doorway`: buoyancy-driven convective exchange between two rooms (state: open/closed/partial/chimney)
-- `SolarGlazing`: area, orientation (SW/NE), tilt, g-value, shading factor
-- `RoomDef`: physical properties (floor area, ceiling height, construction, radiators, external fabric, solar, sensor, ACH, heat recovery, occupants)
+Key internal functions:
+- `room_energy_balance()` — cooldown-only balance (radiators=0, solar=0)
+- `full_room_energy_balance()` — operational balance with MWT, radiators, solar, body heat
+- `solar_gain_full()` — per-room solar from PV (SW) + Open-Meteo DNI/DHI (NE)
+- `classify_hp_state_from_flow()` — BCF-based state classification (>900=DHW, 780-900=heating, <100=off)
+- `build_rooms()` / `build_connections()` / `build_doorways()` — house definition from `thermal_geometry.json`
 
-**Physics functions**:
-- `radiator_output()` — EN442: Q = T50 × (ΔT/50)^1.3
-- `external_loss()` — fabric heat loss to outside/ground
-- `ventilation_loss()` — Q = 0.335 × ACH × V × ΔT × (1 - η)
-- `wall_conduction()` — linear U×A × ΔT through internal walls
-- `doorway_exchange()` — buoyancy-driven bi-directional flow: Q = (Cd/3) × W × √(g×H³×|ΔT|/T_mean) × ρCp × ΔT
-- `occupant_heat()` — 70W sleeping / 100W active per person
-- `solar_gain()` — irradiance × area × g × shading × tilt_factor
-- `estimate_thermal_mass()` — construction-based, from wall/floor/ceiling areas
-- `room_energy_balance()` — complete balance for one room (all components)
+### `src/thermal/error.rs` — Typed domain errors (99 lines)
 
-**House definition** (`build_rooms()`, `build_connections()`, `build_doorways()`):
-- 13 rooms with full physical properties
-- ~25 internal connections (walls + floors/ceilings)
-- ~9 doorways (including 2 chimney-marked stairwell openings)
-- Pipe topology in `PIPE_BRANCHES` dict
+`ThermalError` enum with `thiserror` derive. 20+ variants covering config, InfluxDB, parsing, calibration, and snapshot errors.
 
-**Analysis commands**:
-- `fetch [hours]` — pulls data from InfluxDB on pi5data to `model/data/*.csv`
-- `rooms` — room summary table (area, thermal mass, T50, ext UA, ACH)
-- `connections` — list all inter-room connections and doorways
-- `analyse` — steady-state energy balance at latest snapshot
-- `fit` — cooldown analysis: measured vs predicted cooling rates during heating-off periods
-- `equilibrium [T_out] [MWT] [solar_sw] [solar_ne]` — solve for steady-state room temps using scipy fsolve
-- `moisture` — overnight humidity analysis with ACH cross-validation
+### `src/thermal/influx.rs` — InfluxDB queries (352 lines)
 
-**Calibration constants** (from Night 1/Night 2 experiments, 24-26 Mar 2026):
-- `DOORWAY_CD = 0.20` (discharge coefficient, joint calibration)
-- `U_INTERNAL_WALL = 2.37` (100mm brick + plaster, calculated)
-- `U_TIMBER_FLOOR = 1.58` (uninsulated joists + boards)
-- Landing `ventilation_ach = 1.30` (chimney effect, calibrated)
-- `DHW_CYLINDER_UA = 1.6` W/K (from T1 standby decline measurement)
+Flux query builders for room temps, outside temp, HP status codes, PV power, building circuit flow, MWT. Parses annotated CSV responses.
 
-Data files stored in `model/data/` (gitignored):
-- `room_temps.csv`, `outside_temp.csv`, `hp_state.csv`, `hp_status.csv`
+### `src/thermal/report.rs` — Output formatting (44 lines)
 
-| To change... | Look in... |
-|--------------|-----------|
-| Room fabric, radiator, or sensor data | `model/house.py` `build_rooms()` |
-| Internal wall/floor connections | `model/house.py` `build_connections()` |
-| Doorway states or dimensions | `model/house.py` `build_doorways()` |
-| Ventilation assumptions | Individual room `ventilation_ach` in `build_rooms()` |
-| Solar glazing properties | Individual room `solar` list in `build_rooms()` |
-| Physical constants (U_internal, Cd, etc.) | Module-level constants in `model/house.py` |
-| InfluxDB connection | `model/house.py` `INFLUX_*` constants |
-| Free-cooling detection | `model/house.py` `fit()` `HEATING_OFF_CODES` |
-| Body heat / moisture rates | `model/house.py` `BODY_HEAT_*`, `MOISTURE_*` constants |
+Table printer and RMSE calculator shared across thermal commands.
+
+## Standalone Binaries
+
+### `src/bin/thermal-regression-check.rs` (525 lines)
+
+Compares fresh thermal artifacts against baseline JSON files. Checks per-room RMSE/bias drift against thresholds in `artifacts/thermal/regression-thresholds.toml`.
+
+### `src/bin/cosy-scheduler.rs` (163 lines)
+
+Deployed to pi5data. Reads outside temp from eBUS, logs DHW recommendations. Zero dependencies (pure std). Currently unused — VRC 700 timer handles scheduling.
+
+### `cosy-scheduler/` (separate Cargo workspace member)
+
+Cross-compiled for aarch64-unknown-linux-musl. Same code as `src/bin/cosy-scheduler.rs` but with its own `Cargo.toml` for cross-compilation.
+
+## Python Model
+
+### `model/house.py` (1,239 lines)
+
+Lumped-parameter thermal network. 13 rooms with fabric, radiators, ventilation, doorways, solar. Commands: `fetch`, `rooms`, `connections`, `analyse`, `fit`, `equilibrium`, `moisture`.
+
+### `model/calibrate.py` (340 lines)
+
+Fitting thermal parameters from controlled cooldown data. Outputs calibrated Cd and landing ACH.
+
+### `model/overnight.py` (692 lines)
+
+Initial Python overnight model. Superseded by `src/overnight.rs`.
+
+### `model/extract_house_inventory.py` (1,531 lines)
+
+Extracts dimensional data from XLSX scans and building plans. Produces `model/data/inventory/` artifacts and `data/canonical/thermal_geometry.json`.
+
+### `model/audit_model_dimensions.py` (123 lines)
+
+Verifies Python and Rust wiring to canonical geometry. Checks 509 geometry/provenance fields.
+
+## Configuration
+
+### `config.toml` — Domain constants
+
+Six sections: `emoncms` (feeds, sync), `thresholds` (state machine, HDD), `house` (HTC, floor area), `arotherm` (spec curves), `radiators` (15 entries), `gas_era` (monthly gas data).
+
+### `model/thermal-config.toml` — Thermal model config
+
+InfluxDB connection, test night windows, objective function config (excluded rooms, prior weight), calibration bounds/steps, validation windows, fit diagnostics config, wind model (disabled).
+
+### `artifacts/thermal/regression-thresholds.toml` — Regression gates
+
+Per-room absolute RMSE thresholds and delta thresholds for regression checks.
+
+### `data/canonical/thermal_geometry.json` — Room geometry
+
+Single source of truth for room dimensions, external fabric, internal connections, doorways, solar glazing. Consumed by both Python (`model/house.py`) and Rust (`src/thermal.rs`). Provenance tracked.
 
 ## Scripts
 
-All deployed to pi5data `/usr/local/bin/` as systemd services.
+| Script | Location | Deployment | Purpose |
+|--------|----------|-----------|---------|
+| `scripts/ebusd-poll.sh` | `ebusd-poll` systemd on pi5data | `scp` + `systemctl restart` | Reads 25+ eBUS values every 30s via `nc`, publishes to MQTT |
+| `scripts/ebusd-poll.service` | `/etc/systemd/system/` on pi5data | Part of ebusd-poll deploy | Systemd unit |
+| `scripts/backup-sdcard.sh` | Run on imaging host (pi5nvme) | Manual | dd → PiShrink → xz backup pipeline |
+| `scripts/thermal-regression-ci.sh` | Local/CI | `bash scripts/thermal-regression-ci.sh` | Runs thermal commands + regression check against baselines |
+| `scripts/refresh-thermal-baselines.sh` | Local | After intentional model changes | Generates fresh baseline artifacts |
 
-| File | Service | Purpose |
-|------|---------|---------|
-| `scripts/ebusd-poll.sh` | `ebusd-poll` | Reads 25 eBUS values every 30s via `nc`, publishes to MQTT |
-| `scripts/ebusd-poll.service` | — | Systemd unit for eBUS poll |
-| `scripts/backup-sdcard.sh` | — | SD card backup utility |
+## Artifacts
 
-**Removed scripts** (Mar 2026, replaced by z2m-hub at `~/github/z2m-hub/`):
-- `scripts/dhw-auto-trigger.sh` + `.service` — DHW boost now manual via z2m-hub dashboard
-- `scripts/z2m-automations.sh` — motion→light automation now in z2m-hub Rust server
+```
+artifacts/thermal/
+  regression-thresholds.toml           # Per-room RMSE thresholds
+  baselines/
+    thermal-calibrate-baseline.json    # Reference calibration output
+    thermal-validate-baseline.json     # Reference validation output
+    thermal-fit-diagnostics-baseline.json
+    README.md
+  snapshots/                           # Human-signed reproducibility snapshots
+    thermal-snapshot-*/
+      manifest.json
+      files/                           # Config + thresholds at snapshot time
+```
 
-## Documentation
+## Concern Mapping
 
-| Path | Content | Type (Diátaxis) |
-|------|---------|-----------------|
-| `README.md` | Quick start, command reference, project philosophy | Signpost |
-| `docs/explanation.md` | How the operating model works (state machine, flow rates, gap filling) | Explanation |
-| `docs/hydraulic-analysis.md` | Pump curves, flow degradation, y-filter diagnosis, post-clean results | Explanation |
-| `docs/dhw-auto-trigger.md` | Emergency DHW recharge automation (removed, historical) | How-to + Explanation |
-| `docs/dhw-cylinder-analysis.md` | Cylinder heat exchange, standby loss, stratification, live remaining-litres, PHE evaluation, temperature optimisation | Explanation |
-| `docs/octopus-data-inventory.md` | Audit of Octopus data sources, coverage, integration status | Reference |
-| `docs/roadmap.md` | Planned enhancements (eBUS ✅, Octopus ✅, Z2M ✅, room model partially ✅) | Reference |
-| `docs/emonpi-rebuild-status-2026-03-20.md` | emonpi rebuild checklist and status | Reference |
-| `docs/emon-installation-runbook.md` | Generic emon device installation procedure | How-to |
-| `docs/house-layout.md` | Building physics: room connectivity, door states, thermal relationships, radiators, pipe topology, ventilation, sensors, glazing | Explanation |
-| `docs/room-thermal-model.md` | Room thermal model: methodology, calibration, Night 1/2 results, HP capacity, EWI analysis, FRV strategy, solar gain, moisture | Explanation |
-| `docs/code-truth/` | This documentation set (derived from code) | — |
-| `heating-monitoring-setup.md` | Full monitoring infrastructure: devices, MQTT, eBUS, InfluxDB, Grafana, credentials | Reference |
+| Change | Look in |
+|--------|---------|
+| Operating state thresholds | `config.toml` `[thresholds]`, then `analysis.rs::classify_states()` |
+| Feed IDs or column names | `config.toml` `[emoncms.feeds]`, then `db.rs` and `analysis.rs` |
+| Radiator data | `config.toml` `[radiators]` AND `model/house.py` `build_rooms()` AND `data/canonical/thermal_geometry.json` |
+| Room geometry / fabric | `data/canonical/thermal_geometry.json` (consumed by both Rust and Python) |
+| Thermal calibration bounds | `model/thermal-config.toml` `[bounds]` |
+| eBUS polling | `scripts/ebusd-poll.sh` on pi5data |
+| Octopus data refresh | `~/github/octopus/` project — `npm run cli -- refresh` |
+| DHW tracking/boost | `~/github/z2m-hub/` project |
+| Zigbee automations | `~/github/z2m-hub/` project |
+| Monitoring infrastructure | `heating-monitoring-setup.md`, `docs/emon-installation-runbook.md` |
 
-## External Dependencies
+## Git Submodules (upstream reference only)
 
-| Path | What it provides |
-|------|-----------------|
-| `~/github/octopus/data/usage_merged.csv` | Half-hourly Octopus consumption (electricity + gas, Apr 2020 → present) |
-| `~/github/octopus/data/weather.json` | ERA5-Land daily temps + HDD |
-| `~/github/octopus/data/config.json` | Gas m³→kWh conversion factors (calorific value, correction factor) |
-| `ebusd/` (submodule) | ebusd source (reference only, not built from this project) |
-
-## Change Guide
-
-| To change... | Look in... |
-|--------------|-----------|
-| Operating thresholds (flow rates, defrost DT, HDD base) | `config.toml` `[thresholds]` |
-| Feed IDs or add new feeds | `config.toml` `[[emoncms.feeds]]` |
-| House thermal properties | `config.toml` `[house]` |
-| Radiator inventory (Rust analysis) | `config.toml` `[[radiators]]` |
-| Gas-era reference data | `config.toml` `[gas_era]` |
-| State machine logic | `src/analysis.rs` `classify_states()` |
-| New analysis subcommand | `src/analysis.rs` (function) + `src/main.rs` (Commands enum + match) |
-| Gap-fill model or strategy | `src/gaps.rs` |
-| Octopus data loading or comparison | `src/octopus.rs` |
-| Room thermal model (fabric, ventilation, equilibrium) | `model/house.py` |
-| DHW boost/tracking | `~/github/z2m-hub/` (z2m-hub Rust server) |
-| eBUS polling values | `scripts/ebusd-poll.sh` |
-| Z2M automations | `~/github/z2m-hub/` (z2m-hub Rust server) |
-| Monitoring infrastructure | `heating-monitoring-setup.md` |
+| Submodule | Purpose |
+|-----------|---------|
+| `avrdb_firmware/` | AVR-DB firmware hex files for flashing EmonPi2/EmonTx |
+| `EmonScripts/` | emonSD install/update scripts |
+| `emonhub/` | Data multiplexer (serial/MBUS/MQTT interfacers) |
+| `ebusd/` | eBUS daemon CSV config files |
+| `emoncms/` | Web framework (reference, not deployed on most devices) |
+| `emonPiLCD/` | OLED/LCD display + button handler for emonpi |

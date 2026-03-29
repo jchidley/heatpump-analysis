@@ -1,33 +1,28 @@
-<!-- code-truth: 3af9fd0 -->
+<!-- code-truth: f9694e2 -->
 
 # Patterns
 
-## Configuration: TOML + Global Singleton
+## Configuration: TOML + Global Singleton (main CLI)
 
 All domain constants live in `config.toml` and are accessed via `config::config()`:
 
 ```rust
-// In any module:
 use crate::config::config;
-
 let thresholds = &config().thresholds;
 let feed_id = config().emoncms.feed_id("elec_power");
 ```
 
-The singleton is initialised once in `main()` via `config::load(&path)`. Attempting to access it before loading panics with a clear message. This pattern replaced hardcoded constants scattered across 6 source files.
+Singleton initialised once in `main()` via `config::load(&path)`. Feed IDs always looked up by name, never by literal string.
 
-Feed IDs are always looked up by name, never by literal string:
-```rust
-// Good:
-config().emoncms.feed_id("outside_temp")
+**Cost to break**: Every module depends on `config()`. Replacing with dependency injection would touch every function.
 
-// Bad (was everywhere before config.toml migration):
-"503093"
-```
+**Exception**: `fill_gap_interpolate()` in gaps.rs still uses hardcoded feed ID strings. `ERA5_BIAS_CORRECTION_C` in octopus.rs is a Rust constant. These are known inconsistencies.
 
-**Cost to break**: Every module depends on `config()`. Replacing the singleton with dependency injection would touch every function signature.
+## Configuration: Separate TOML (thermal module)
 
-**Exception**: `fill_gap_interpolate()` in gaps.rs still uses hardcoded feed ID strings (`"503094"`, `"503096"`, etc.) and `ERA5_BIAS_CORRECTION_C` in octopus.rs is a Rust constant. These are known inconsistencies from the config migration.
+`thermal.rs` loads its own `ThermalConfig` from `model/thermal-config.toml`. Not connected to the `config.rs` singleton. This keeps the thermal module independent of the emoncms analysis pipeline.
+
+**Cost to break**: Merging into `config.toml` would couple thermal commands to the emoncms config structure.
 
 ## Analysis Functions: DataFrame In, Stdout Out
 
@@ -45,75 +40,46 @@ pub fn some_analysis(df: &DataFrame) -> Result<()> {
 }
 ```
 
-Key conventions:
-- Input is always a reference to an enriched DataFrame (already has `cop`, `delta_t`, `state` columns)
-- Functions never touch the database or API — they receive all data via parameters
+- Input: reference to enriched DataFrame (already has `cop`, `delta_t`, `state` columns)
+- Functions never touch database or API
 - Output goes directly to stdout via `println!`
-- No return values for display data — functions return `Result<()>`
-- Some functions take additional data (e.g. `degree_days` takes daily temp and energy vectors alongside the DataFrame)
+- Return `Result<()>` — no structured return values
 
-**Cost to break**: Moving to structured output (JSON, CSV) would require changing every analysis function. Currently all functions are tightly coupled to terminal output.
+**Cost to break**: Moving to structured output (JSON, CSV) would require changing every analysis function.
+
+## Thermal Functions: Typed Errors + JSON Artifacts
+
+Thermal commands use `ThermalResult<T>` with `ThermalError` enum (20+ variants via `thiserror`). No `anyhow` inside thermal module — typed errors from domain through infrastructure.
+
+Thermal commands produce JSON artifacts to `artifacts/thermal/`:
+```rust
+fn write_artifact(prefix: &str, artifact: &CalibrationArtifact) -> ThermalResult<PathBuf>
+```
+
+Artifacts contain: git SHA, config hash, window definitions, fitted params, per-room residuals. Used for regression checking.
+
+**Cost to break**: Changing artifact schema requires updating `thermal-regression-check` binary and baseline JSONs.
 
 ## Polars Usage Style
 
 - Always **lazy** evaluation: `.clone().lazy()...collect()?`
-- Column names are string literals: `col("elec_w")`, `col("state")`
-- Aggregations use inline expressions: `col("cop").mean().alias("avg_cop")`
-- Temperature banding via floor division: `(col("outside_t") / lit(2.0)).floor().cast(DataType::Int32) * lit(2)`
-- DataFrames are printed directly with `println!("{}", df)` — Polars' Display impl handles formatting
+- Column names as string literals: `col("elec_w")`, `col("state")`
+- Temperature banding via floor division: `(col("outside_t") / lit(2.0)).floor()`
+- DataFrames printed with `println!("{}", df)` — Polars Display handles formatting
 
-**Cost to break**: Polars pinned to 0.46. Upgrading would require auditing all lazy queries — Polars has frequent breaking API changes between minor versions.
+**Cost to break**: Polars pinned to 0.46. Upgrading would require auditing all lazy queries — frequent breaking API changes between minor versions.
 
-## Error Handling
+## Error Handling: Split by Module
 
-- All public functions return `anyhow::Result<()>` or `anyhow::Result<T>`
-- `.context("message")` on fallible operations for chain
-- `anyhow::ensure!()` for preconditions (e.g. API key present, database exists)
-- SQLite queries use `.unwrap_or(default)` for optional values (e.g. missing temp readings default to 0.0 or 10.0)
-- The state machine never fails — it uses `.unwrap_or(0.0)` for missing values
+| Module | Style | Pattern |
+|--------|-------|---------|
+| Main CLI boundary | `anyhow::Result<()>` | `.context("message")` chains |
+| analysis.rs, db.rs, gaps.rs, octopus.rs | `anyhow::Result<T>` | `anyhow::ensure!()` for preconditions |
+| thermal.rs + submodules | `ThermalResult<T>` = `Result<T, ThermalError>` | Typed errors via `thiserror` |
 
-**Cost to break**: Switching to typed errors would require defining error types and updating every `?` chain.
+State machine (`classify_states`) never fails — uses `.unwrap_or(0.0)` for missing values.
 
-## SQL: Parameterised vs Format Strings
-
-Two patterns coexist:
-
-**Parameterised** (for user/runtime values):
-```rust
-conn.prepare("SELECT ... WHERE feed_id = ?1 AND timestamp >= ?2")?
-```
-
-**Format strings** (for config-derived feed IDs in multi-join queries):
-```rust
-conn.prepare(&format!(
-    "SELECT ... FROM samples s_elec
-     JOIN samples s_heat ON s_heat.feed_id = '{}' ...",
-    feeds.feed_id("heat_power"),
-))?
-```
-
-The format string pattern is used in `gaps.rs` where queries join 6+ feeds — building the join clauses dynamically from config. Feed IDs come from the trusted config file, not user input, so SQL injection is not a concern.
-
-**Cost to break**: Low — parameterised queries could replace format strings, but the multi-join construction would become more verbose.
-
-## CLI Structure
-
-Commands use clap's derive macro with subcommands:
-
-```rust
-#[derive(Subcommand)]
-enum Commands {
-    Summary,
-    CopByTemp,
-    // ...20 variants
-}
-```
-
-Global flags (`--days`, `--all-data`, `--from`/`--to`, `--db`, `--include-simulated`) are on the parent `Cli` struct. Time range resolution happens once in `resolve_time_range()`, returning `(start_unix_s, end_unix_s)`.
-
-The `require_client()` and `require_db()` helpers enforce preconditions — `require_client()` fails if no API key, `require_db()` fails if the database file doesn't exist.
-
-**Cost to break**: Adding new subcommands is cheap (enum variant + match arm). Restructuring global flags would touch every command.
+**Cost to break**: Full typed-error migration for non-thermal modules would require defining error types and updating every `?` chain.
 
 ## Data Loading: Real vs Simulated
 
@@ -124,77 +90,75 @@ pub fn load_dataframe(conn, start, end) -> DataFrame        // real only
 pub fn load_dataframe_with_simulated(conn, start, end) -> DataFrame  // real + gap-filled
 ```
 
-When simulated data is included, an `is_simulated` boolean column is added. Simulated samples never overwrite real data — they only fill timestamps where no real sample exists.
+Simulated samples never overwrite real data. `is_simulated` boolean column added when included.
 
-**Cost to break**: Mixing simulated and real data would contaminate COP and energy analysis. The separation is a core integrity constraint.
+**Cost to break**: Mixing silently would contaminate COP and energy analysis. Core integrity constraint.
 
-## Sync: Chunked with Polite Throttling
+## Thermal Model: Physics in Code, Tunables in TOML/JSON
 
-Data download uses 7-day chunks with a 100ms sleep between API calls:
-```rust
-let chunk_ms: i64 = 7 * 86_400 * 1000;
-std::thread::sleep(std::time::Duration::from_millis(100));
-```
+Physical equations (`radiator_output`, `external_loss`, `ventilation_loss`, `wall_conduction`, `doorway_exchange`, `solar_gain_full`) are implemented as pure functions in Rust source code.
 
-Values are `INSERT OR IGNORE` — re-syncing the same period is idempotent and only adds new timestamps.
+Room definitions, geometry, and connections are loaded from `data/canonical/thermal_geometry.json` at runtime. Calibration bounds and windows are in `model/thermal-config.toml`.
 
-## Module Naming
+**Cost to break**: Moving physics equations to TOML would lose type safety. Moving geometry back into code would break the Python↔Rust sharing path and the audit pipeline.
 
-Modules match their concern directly:
-- `config` — configuration
-- `emoncms` — emoncms API
-- `db` — database
-- `analysis` — analysis
-- `gaps` — gap handling
-- `octopus` — Octopus Energy
+## Thermal Model: Symmetric Connections
 
-No prefix/suffix conventions (`_service`, `_module`, etc.), no trait abstractions, no generic types. Each module is a flat collection of functions and structs.
+All wall/floor/ceiling conduction and doorway exchange defined **once** per pair (as `InternalConnection` or `Doorway`), applied to both rooms in `room_energy_balance()`.
 
-## Python Thermal Model Patterns
+**Cost to break**: Defining in both rooms would double-count transfers. Adding a room requires defining all its connections in the geometry file.
 
-`model/house.py` follows different conventions from the Rust code:
+## Python Model Patterns
 
 ### Dataclass-based domain model
-Room definitions use `@dataclass` with typed fields. No inheritance. Physical properties only — no analysis results stored on room objects.
+Room definitions use `@dataclass`. No inheritance. Physical properties only.
 
 ### Pure physics functions
-Core calculations (`radiator_output()`, `external_loss()`, `ventilation_loss()`, etc.) are pure functions taking physical parameters and returning watts. No global state, no side effects.
+Core calculations are pure functions taking physical parameters, returning watts. No global state.
 
-### Symmetric connection definitions
-Internal connections (wall conduction, doorway exchange) are defined **once** per pair of rooms. `room_energy_balance()` iterates all connections and applies them to both sides. This eliminates double-counting bugs.
+### Shared geometry via JSON
+Room geometry loaded from `data/canonical/thermal_geometry.json` — same file consumed by Rust.
 
-**Cost to break**: Adding a new connection type would require: (1) a new dataclass, (2) a new physics function, (3) integration into `room_energy_balance()`, (4) a new `build_*()` function.
-
-### Constants at module level, not config file
-Physical constants (`U_INTERNAL_WALL`, `DOORWAY_CD`, `AIR_DENSITY`, etc.) are module-level Python constants. Room-specific values (ACH, occupants) are in `build_rooms()`. Neither is externalised to a config file.
-
-**Cost to break**: Moving to config would require parsing a file at import time and threading values through all functions. Low benefit — these are physics constants, not user-tuneable.
+### Constants at module level
+Physical constants (`U_INTERNAL_WALL`, `DOORWAY_CD`, `AIR_DENSITY`) are Python constants. Not externalised to config.
 
 ### CSV-based data pipeline
-Data is fetched from InfluxDB, written to CSV, then loaded from CSV. This provides an explicit cache and makes analysis reproducible without network access. Fetch is always explicit (`fetch` command).
+Data fetched from InfluxDB, written to CSV, loaded from CSV. Provides explicit cache and offline capability.
 
-**Cost to break**: Low — could switch to in-memory only, but loses the reproducibility and offline capability.
+## Shell Script Pattern (monitoring on pi5data)
 
-## Shell Script Pattern (monitoring scripts on pi5data)
-
-The remaining monitoring script (`ebusd-poll.sh`) follows this pattern:
-- All tunables as shell variables at the top of the file
-- `mosquitto_sub` for event subscription, `mosquitto_pub` for commands, `nc` for eBUS
+`ebusd-poll.sh`:
+- All tunables as shell variables at top
+- `mosquitto_pub` for MQTT, `nc | head -1` for eBUS TCP
 - `log()` helper with timestamp prefix
 - `cleanup()` trap for SIGTERM/SIGINT
-- systemd service for lifecycle management (`Restart=always`)
-- Deploy: `scp` to pi5data + `sudo systemctl restart <service>`
+- systemd service (`Restart=always`)
+- Deploy: `scp` to pi5data + `sudo systemctl restart`
 
-**Cost to break**: ebusd-poll.sh runs independently on pi5data. Changes require scp + systemd restart — no CI/CD.
+**Cost to break**: Runs independently on pi5data. No CI/CD.
+
+## Regression Testing Pattern
+
+```
+model change → run thermal commands → compare artifacts against baselines
+                                              │
+                                    thermal-regression-check binary
+                                              │
+                                    regression-thresholds.toml (per-room gates)
+```
+
+- `scripts/thermal-regression-ci.sh` orchestrates the full check
+- `scripts/refresh-thermal-baselines.sh` updates baselines after intentional changes
+- Missing baselines = hard failure (no skip path)
+- Never relax thresholds and change model logic in the same commit
 
 ## Notable Absences
 
 | What's missing | Why it matters |
 |---------------|---------------|
-| Tests | No unit, integration, or property tests in either Rust or Python. Validation by running against real data. |
-| CI/CD | No automated build, test, or deploy pipeline. |
-| Logging framework | Rust uses `println!`/`eprintln!`. Python uses `print()`. |
-| Structured output | All output is terminal-formatted text, not JSON/CSV (except Rust `export` command). |
-| Migration system | SQLite schema is `CREATE TABLE IF NOT EXISTS`. No versioning. |
-| Async | All I/O is blocking (intentional — see DECISIONS.md). |
-| Shared config between Rust and Python | Radiator T50s and room data exist in both `config.toml` and `model/house.py` independently. |
+| Tests | No unit, integration, or property tests. Validation by running against real data + regression baselines. |
+| CI/CD | No automated pipeline. GitHub workflow file exists for thermal regression but requires InfluxDB access. |
+| Logging framework | `println!`/`eprintln!` in Rust. `print()` in Python. |
+| Structured output | Terminal-formatted text (except `export` command and thermal JSON artifacts). |
+| Migration system | SQLite `CREATE TABLE IF NOT EXISTS`. No versioning. |
+| Async | All I/O blocking (intentional — no benefit for sequential CLI). |
