@@ -35,8 +35,10 @@ See `docs/code-truth/` for detailed architecture, patterns, and decisions.
 ```
 config.toml          → Domain constants, thresholds, feed IDs, radiators
 src/analysis.rs      → State machine + Polars queries
-src/thermal.rs       → Thermal model (3,500 lines): calibration, validation, operational, solar, snapshot
-src/thermal/         → Submodules: error.rs, influx.rs, report.rs
+src/thermal.rs       → Thin facade (re-exports public entry points)
+src/thermal/         → 15 submodules: config, geometry, physics, solar, wind, calibration,
+                       validation, diagnostics, operational, artifact, snapshot,
+                       error, influx, report
 src/overnight.rs     → Overnight strategy backtest
 model/house.py       → Python thermal model (equilibrium, moisture — shares thermal_geometry.json with Rust)
 data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust + Python)
@@ -79,7 +81,11 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - **House**: HTC 261 W/K, 180m², 1930s solid brick + 2010 loft. HP maxes out at ~2°C outside.
 - **Cosy tariff**: THREE windows (04:00–07:00, 13:00–16:00, 22:00–00:00). Battery effective rate 14.63p/kWh.
 - **Overnight**: 19°C setback 00:00–04:00. DHW windows: 05:30–07:00, 13:00–15:00, 22:00–00:00. See `docs/overnight-strategy-analysis.md`.
-- **DHW**: 300L Kingspan Albion, usable 161L, 45°C target, eco/normal manual seasonal switch. See `docs/dhw-cylinder-analysis.md`.
+- **DHW**: 300L Kingspan Albion, usable 161L, 45°C target, eco/normal manual seasonal switch. CylinderChargeHyst=5K (triggers at 40°C). See `docs/dhw-cylinder-analysis.md`.
+- **DHW cylinder sensors**: T1 (`emon/multical/dhw_t1`) = cylinder top / hot out. T2 (`emon/multical/dhw_t2`) = mains inlet / cold in. VR 10 NTC in dry pocket above bottom coil (`ebusd/poll/HwcStorageTemp`) = what VRC 700 uses for charging decisions. See `docs/dhw-fixes.md`.
+- **DHW system**: 3 eBUS devices — HMU (outdoor unit), VWZ AI (indoor unit, has SP1 cylinder sensor), VRC 700 (controller, scheduling brain). See `docs/vrc700-settings-audit.md`.
+- **⚠ eBUS timer encoding**: Never use `00:00` as a timer end time — use `-:-` instead. TTM byte `0x00` = start of day (not end). Byte `0x90` = `-:-` = "until end of day". A window with end < start is silently rejected by the VRC 700. `HwcSFMode` can get stuck on `load` after boost — monitor and reset to `auto`. See `docs/vrc700-settings-audit.md`.
+- **eBUS control flow**: VRC 700 sends SetMode to VWZ AI (not HMU directly). VWZ AI translates to 1280 real-time parameter messages to HMU. All write commands go to VRC 700 (`-c 700`). Direct HMU writes get overwritten within 10s. See `docs/pico-ebus-plan.md`.
 - **Thermal model**: calibrated Night 1/Night 2 (24-26 Mar 2026). Cd=0.20, landing ACH=1.30. See `docs/room-thermal-model.md`.
 - **Annual saving**: £565 (46%) vs gas combi at current Cosy tariff.
 - **Octopus data**: `~/github/octopus/` — refresh via `cd ~/github/octopus && npm run cli -- refresh`
@@ -108,6 +114,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - Conservatory excluded from thermal scoring (30m² glass, sub-hour time constant). Landing excluded (chimney model wrong for heating).
 - Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
+- `cosy-scheduler` binary exists on pi5data (`/usr/local/bin/`) but is retired — do not run. Writes to read-only `hmu HwcMode` and conflicts with timer-only operation.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
 
 ## Boundaries
