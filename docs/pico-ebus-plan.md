@@ -439,8 +439,26 @@ before midnight, unused slots use `-:-`.
 
 Sources:
 - `ebusd/src/lib/ebus/datatype.cpp` line 1337
-- `docs/ebus-specs/vaillant_ebus_v0.5.0.pdf` section 3.1.3
+- `docs/ebus-specs/vaillant_ebus_v0.5.0.pdf` section 3.1.3 (GetTimerProgram)
+  and section 3.2.2 (SetTimerProgram) — explicitly documents `90h = 24:00h`
+  and slave response `NN = 00h` (zero data bytes = the "empty" we see)
 - Live testing 30 March 2026 (fix confirmed immediately)
+
+### SetMode (Room Controller → Heat Pump)
+
+The VRC 700 sends `B5h 10h` (or its modern equivalent) every ~10s.
+From the Vaillant eBUS spec (section 3.5), the older VRS620 format is:
+
+```
+M8:  Lead water target temperature (°C, DATA1c)
+M9:  Service water target temperature (°C, DATA1c)
+M12: Status bits (bit 0 = heating, bit 1 = DHW) ← this is HwcDemand
+```
+
+Our VRC 700 uses a newer format (`SetMode QQ=10`) with more fields, but
+the core is the same: flow temp demand + DHW demand flag + status bits.
+The `grab result` output shows this as `10→08` traffic with count ~1570
+(every ~10s over 4+ hours).
 
 ### Write responses
 
