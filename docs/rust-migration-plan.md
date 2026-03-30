@@ -14,11 +14,11 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 
 ## Scope
 
-**In scope**: `model/house.py` (5 remaining commands)
+**In scope**: `model/house.py` (3 remaining commands to port)
 
 **Deleted** (fully superseded by Rust, removed 2026-03-30):
-- ~~`model/calibrate.py`~~ — replaced by `thermal-calibrate` command
-- ~~`model/overnight.py`~~ — replaced by `overnight` command in `src/overnight.rs`
+- `model/calibrate.py` — replaced by `thermal-calibrate`
+- `model/overnight.py` — replaced by `overnight` command
 
 **Utility scripts** (one-off, not part of migration):
 - `model/audit_model_dimensions.py` (123L) — one-off audit, keep for reference
@@ -30,56 +30,59 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 
 ### Implemented in Rust
 
-| Command | Status | Notes |
-|---------|--------|-------|
-| `thermal-calibrate` | ✅ | Grid search, Night 1/Night 2, JSON artifacts |
-| `thermal-validate` | ✅ | Holdout windows, pass/fail thresholds |
-| `thermal-fit-diagnostics` | ✅ | Period-by-period cooldown QA |
-| `thermal-operational` | ✅ | Heating/DHW/off, solar gain, BCF-based state |
-| `thermal-snapshot` | ✅ | Export/import with human signoff |
-| `thermal-rooms` | ✅ | Room summary table (geometry, thermal mass, radiators, pipes) |
-| `thermal-connections` | ✅ | Internal connections + doorway exchanges |
+| Command | Notes |
+|---------|-------|
+| `thermal-rooms` | Room summary table (geometry, thermal mass, radiators, pipes) |
+| `thermal-connections` | Internal connections + doorway exchanges |
+| `thermal-calibrate` | Grid search, Night 1/Night 2, JSON artifacts |
+| `thermal-validate` | Holdout windows, pass/fail thresholds |
+| `thermal-fit-diagnostics` | Period-by-period cooldown QA |
+| `thermal-operational` | Heating/DHW/off, solar gain, BCF-based state |
+| `thermal-snapshot` | Export/import with human signoff |
 
-All produce structured JSON artifacts to `artifacts/thermal/`. Regression baselines in `artifacts/thermal/baselines/`. Formula parity with Python verified (audit completed 2026-03-28, 509 checks, 0 mismatches).
+All calibration/validation/operational commands produce structured JSON artifacts to `artifacts/thermal/`. Regression baselines in `artifacts/thermal/baselines/`. Formula parity with Python verified (audit completed 2026-03-28, 509 checks, 0 mismatches).
 
 ### Remaining Python-only commands
 
-1. ~~**`thermal-rooms`**~~ — ✅ Ported 2026-03-30. Pure geometry table.
-2. ~~**`thermal-connections`**~~ — ✅ Ported 2026-03-30. Internal wall/doorway table.
-3. **`thermal-analyse`** — live energy balance from InfluxDB. Medium complexity.
-4. **`thermal-equilibrium`** — steady-state solver (`scipy.fsolve` → Gauss-Seidel or `nalgebra`). High complexity.
-5. **`thermal-moisture`** — humidity analysis. Medium complexity, lower priority.
+| # | Command | Complexity | Notes |
+|---|---------|-----------|-------|
+| 1 | `thermal-analyse` | Medium | Live energy balance from InfluxDB. Uses `full_room_energy_balance()` which already exists in `physics.rs`. |
+| 2 | `thermal-equilibrium` | High | Steady-state solver (`scipy.fsolve` → Gauss-Seidel iteration or `nalgebra`). Highest-value port — enables "what MWT do I need?" questions from Rust. |
+| 3 | `thermal-moisture` | Medium | Humidity analysis. Dew point, condensation risk. Lower priority. |
 
 After all ported, mark `model/house.py` as legacy.
 
-### Module layout (`src/thermal/`)
+### Module layout (`src/thermal/`, 15 submodules)
 
-  - `config.rs` — TOML config structs
-  - `geometry.rs` — room/connection/doorway types + JSON loading
-  - `physics.rs` — constants + thermal mass + energy balance
-  - `solar.rs` — solar position + irradiance
-  - `wind.rs` — Open-Meteo wind + multiplier
-  - `calibration.rs` — grid search + setup + predict/measured rates + time-series helpers
-  - `validation.rs` — metrics + residuals + validate()
-  - `diagnostics.rs` — cooldown detection + fit_diagnostics()
-  - `operational.rs` — HP state + segmentation + operational_validate()
-  - `artifact.rs` — artifact types + git meta + build/write
-  - `snapshot.rs` — export/import manifests
-  - `error.rs`, `influx.rs`, `report.rs`
+| Module | Responsibility |
+|--------|---------------|
+| `config.rs` | TOML config structs |
+| `geometry.rs` | Room/connection/doorway types + JSON loading |
+| `physics.rs` | Constants, thermal mass, energy balance equations |
+| `solar.rs` | Solar position + irradiance |
+| `wind.rs` | Open-Meteo wind + ventilation multiplier |
+| `calibration.rs` | Grid search + shared helpers |
+| `validation.rs` | Metrics, residuals, holdout validation |
+| `diagnostics.rs` | Cooldown detection + fit diagnostics |
+| `operational.rs` | HP state classification, operational validation |
+| `artifact.rs` | JSON artifact build/write |
+| `snapshot.rs` | Export/import manifests |
+| `display.rs` | `print_rooms()` and `print_connections()` CLI output |
+| `error.rs` | `ThermalError` enum |
+| `influx.rs` | InfluxDB Flux query builders |
+| `report.rs` | Table formatting + RMSE |
 
 ### Infrastructure — all complete ✅
 
-- ✅ Thermal module split (2026-03-29): 14 submodules, 4,155 lines
-- ✅ DRY cleanup (2026-03-29): 5 shared helpers, ~90 lines dedup
-- ✅ Regression baselines refreshed
-- ✅ `thermal-operational` in regression CI with thresholds + baseline (2026-03-30)
-- ✅ Lint gates (fmt + clippy) in `scripts/thermal-regression-ci.sh` (2026-03-30)
-- ✅ Hardcoded `INFLUX_TOKEN` removed from `model/house.py` — env var + `ak` fallback (2026-03-30)
-- ✅ `influxdb` and `grafana` credentials in `ak` GPG keystore (2026-03-30)
-- ✅ `cosy-scheduler` binary removed from pi5data (2026-03-30)
-- ✅ `docs/code-truth/` regenerated for thermal split + deleted files (2026-03-30)
-- ✅ Grafana DHW chart: 3 sensors with correct labels (2026-03-30)
-- ✅ z2m-hub dashboard: descriptive temperature labels (2026-03-30)
+All infrastructure tasks completed 2026-03-29 to 2026-03-30:
+- Thermal module split (monolith → 15 submodules) + DRY cleanup
+- Regression CI: 4 artifact types (calibrate, validate, fit-diagnostics, operational) + lint gates (fmt + clippy)
+- `INFLUX_TOKEN` removed from source — env var + `ak` fallback
+- `influxdb` + `grafana` credentials in `ak` GPG keystore
+- `cosy-scheduler` binary removed from pi5data
+- `docs/code-truth/` regenerated
+- Grafana DHW chart: 3 sensors with correct labels
+- z2m-hub dashboard: descriptive temperature labels
 
 ## Quality gates
 
@@ -87,7 +90,7 @@ Every change must pass:
 1. `cargo fmt --check`
 2. `cargo clippy --all-targets -- -D warnings`
 3. `cargo check`
-4. `bash scripts/thermal-regression-ci.sh` (thermal commands against baselines)
+4. `bash scripts/thermal-regression-ci.sh` (4 artifact types against baselines)
 
 Baseline lifecycle: generate artifacts → copy to `baselines/` (or use `scripts/refresh-thermal-baselines.sh`) → verify regression CI passes. Never relax thresholds and change model logic in the same commit.
 
