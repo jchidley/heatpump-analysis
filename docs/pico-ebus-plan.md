@@ -491,3 +491,77 @@ No way to update via ebusd or third-party adapters.
   changed on the aroTHERM controller physically. Confirmed by hex write
   testing and ebusd GitHub issues.
 - `hmu HwcModeW` — ebusd constructs hex writes but the HMU ignores them.
+
+## eBUS ecosystem and compatibility
+
+### Who uses eBUS
+
+eBUS was invented by Karl Dungs and standardised by the eBUS Interest Group
+(FH Ostfalia). Manufacturers using eBUS:
+
+| Manufacturer ID | Name | Notes |
+|---|---|---|
+| 0x06 | Dungs | Original inventor |
+| 0x10 | TEM | ebusd definitions available |
+| 0x19 | Wolf | Boilers, heat pumps. ebusd definitions available |
+| 0x40 | ENCON | ebusd definitions available |
+| 0x50 | Kromschröder | Burner controls |
+| 0x60 | Eberle | Thermostats |
+| 0xB5 | **Vaillant Group** | Largest eBUS user. Proprietary extensions (PB=0xB5). |
+| 0xC5 | Weishaupt | Boilers |
+| — | Ochsner | Heat pumps. ebusd definitions available |
+
+### Vaillant Group brands (same eBUS protocol)
+
+All use identical Vaillant eBUS extensions — same byte encoding, same
+register structure, same PB=0xB5 command set:
+
+- **Vaillant** (Germany, UK)
+- **Saunier Duval** (France)
+- **Bulex** (Belgium)
+- **AWB** (Netherlands)
+- **Protherm** (Eastern Europe)
+- **Glow-worm** (UK, budget range)
+
+### Vaillant controller family (all at address 0x15)
+
+| ebusd file | Controller | Era |
+|---|---|---|
+| `15.140.tsp` | calorMATIC 140 | ~2007 |
+| `15.370.tsp` | calorMATIC 370 | ~2010 |
+| `15.470.tsp` | calorMATIC 470 | ~2014 |
+| `15.700.tsp` | **VRC 700 (multiMATIC)** | ~2016 — **ours** |
+| `15.720.tsp` | VRC 720 (sensoCOMFORT) | ~2018 — symlink to 15.700.tsp |
+
+All use the same TTM timer encoding, same `B5h 24h` command structure,
+same data types. The VRC 700 is an evolution, not a redesign.
+
+Vaillant states all eBUS-equipped systems from 2007 onwards are compatible.
+
+### Implications for our firmware
+
+The `ebus-core` Rust crate and Pico W firmware are **not specific to our
+aroTHERM + VRC 700**. Because:
+
+1. **Protocol layer** (CRC, framing, arbitration, byte stuffing) is the
+   open eBUS standard — works with any eBUS device from any manufacturer.
+
+2. **Vaillant command layer** (PB=0xB5, register encoding, TTM, SetMode)
+   is shared across all Vaillant Group brands and all controllers from
+   calorMATIC 140 through VRC 720. Our firmware works with any of them.
+
+3. **Device-specific registers** (which registers exist at which addresses)
+   vary by device but follow the same structure. The ebusd-configuration
+   repo has definitions for ~30 Vaillant device types. Our ~30 hardcoded
+   commands are specific to our system, but adding support for other
+   Vaillant devices is just adding more entries to the lookup table.
+
+4. **Non-Vaillant eBUS devices** (Wolf, Weishaupt, Ochsner, etc.) use the
+   open eBUS standard for protocol and their own command bytes for
+   application data. The Pico W firmware's protocol layer works as-is;
+   only the decode/command tables differ.
+
+So the firmware is portable across the entire Vaillant range (thousands
+of installations with ebusd adapters), and the protocol core works with
+any eBUS device. This matters if the project is ever open-sourced —
+the potential user base is large.
