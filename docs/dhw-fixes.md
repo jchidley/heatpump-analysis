@@ -47,7 +47,7 @@ These documents correctly describe T1=hot/top, T2=cold/bottom:
 
 ## Grafana dashboard
 
-**TODO:** Verify that the Grafana "DHW Hot Water" dashboard labels T1 and T2 correctly. The Grafana admin password needs to be recovered to check dashboard definitions. The colour convention in `heating-monitoring-setup.md` maps dhw_t1 to red (flow/hot) and dhw_t2 to blue (return/cold), which is correct.
+**Verified 30 March 2026:** Grafana "DHW Hot Water" dashboard labels T1 and T2 correctly. T1 = "T1 Hot Out" (red), T2 = "T2 Cold In" (blue), plus "Cylinder Temp" (orange dashed) added for HwcStorageTemp. Grafana admin password recovered and stored in `ak` keystore.
 
 ## HwcStorageTemp behaviour
 
@@ -92,7 +92,7 @@ This is counterintuitive: "Inlet" = hot, "Outlet" = cold. It causes confusion be
 | MQTT topic | `emon/multical/dhw_t1` | 42°C | `emon/multical/dhw_t2` | 24°C |
 | InfluxDB field tag | `dhw_t1` | 42°C | `dhw_t2` | 24°C |
 | heating-monitoring-setup.md | "DHW hot water out" | ✓ | "DHW cold in post-WWHR" | ✓ |
-| Grafana dashboard | **TODO: check** | ? | **TODO: check** | ? |
+| Grafana dashboard | T1 Hot Out (red) | ✓ | T2 Cold In (blue) | ✓ |
 
 ### What to keep
 
