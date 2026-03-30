@@ -19,6 +19,14 @@ aggregate_bias_abs_delta_max = 0.10
 aggregate_within_1c_drop_max = 0.03
 require_aggregate_pass = true
 
+[operational]
+# Operational validation gates (thermal-operational).
+summary_all_rmse_abs_delta_max = 0.05
+summary_all_bias_abs_delta_max = 0.10
+summary_all_mae_abs_delta_max = 0.05
+records_count_drop_max = 0.15
+param_abs_delta_max = 0.25
+
 [fit_diagnostics]
 # Cooldown parity gates.
 rmse_abs_delta_max = 0.05

@@ -45,7 +45,15 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 
 ## Rust Thermal Model — Remaining Ports
 
-See [rust-migration-plan.md](rust-migration-plan.md) for the full plan. Five Python commands remain:
+See [rust-migration-plan.md](rust-migration-plan.md) for the full plan.
+
+**Infrastructure done** (2026-03-29): `thermal.rs` split into 15 submodules + DRY cleanup. `geometry.rs` and `physics.rs` are now cleanly importable for new ports.
+
+**Deleted** (2026-03-30):
+- ~~`model/calibrate.py`~~ — superseded by Rust `thermal-calibrate`
+- ~~`model/overnight.py`~~ — superseded by Rust `overnight`
+
+**Five Python commands remain** (in `model/house.py`):
 
 1. `thermal-rooms` — room summary table (pure geometry, low complexity)
 2. `thermal-connections` — internal wall/doorway table (pure geometry)

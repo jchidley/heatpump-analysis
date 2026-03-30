@@ -31,6 +31,8 @@ struct ThresholdConfig {
     #[serde(default)]
     validate: ValidateThresholds,
     #[serde(default)]
+    operational: OperationalThresholds,
+    #[serde(default)]
     fit_diagnostics: FitDiagnosticsThresholds,
 }
 
@@ -93,6 +95,32 @@ impl Default for ValidateThresholds {
             aggregate_bias_abs_delta_max: default_bias_delta(),
             aggregate_within_1c_drop_max: default_within_drop(),
             require_aggregate_pass: true,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OperationalThresholds {
+    #[serde(default = "default_rmse_delta")]
+    summary_all_rmse_abs_delta_max: f64,
+    #[serde(default = "default_bias_delta")]
+    summary_all_bias_abs_delta_max: f64,
+    #[serde(default = "default_rmse_delta")]
+    summary_all_mae_abs_delta_max: f64,
+    #[serde(default = "default_records_drop")]
+    records_count_drop_max: f64,
+    #[serde(default = "default_param_delta")]
+    param_abs_delta_max: f64,
+}
+
+impl Default for OperationalThresholds {
+    fn default() -> Self {
+        Self {
+            summary_all_rmse_abs_delta_max: default_rmse_delta(),
+            summary_all_bias_abs_delta_max: default_bias_delta(),
+            summary_all_mae_abs_delta_max: default_rmse_delta(),
+            records_count_drop_max: default_records_drop(),
+            param_abs_delta_max: default_param_delta(),
         }
     }
 }
@@ -305,9 +333,12 @@ fn run(cli: Cli) -> Result<(), String> {
             &thresholds.fit_diagnostics,
             &mut gate,
         )?,
+        "thermal-operational" => {
+            compare_operational(&baseline, &candidate, &thresholds.operational, &mut gate)?
+        }
         other => {
             return Err(format!(
-                "unsupported artifact command '{other}' (expected thermal-calibrate, thermal-validate, thermal-fit-diagnostics)"
+                "unsupported artifact command '{other}' (expected thermal-calibrate, thermal-validate, thermal-fit-diagnostics, thermal-operational)"
             ));
         }
     }
@@ -455,6 +486,57 @@ fn compare_fit_diagnostics(
         get_usize(baseline, "/summary_true_cooling/n")?,
         get_usize(candidate, "/summary_true_cooling/n")?,
         t.true_cooling_count_drop_max,
+    );
+
+    for p in [
+        "leather_ach",
+        "landing_ach",
+        "conservatory_ach",
+        "office_ach",
+        "doorway_cd",
+    ] {
+        let ptr = format!("/calibrated_params/{p}");
+        gate.check_abs_delta(
+            &format!("calibrated_params.{p}"),
+            get_f64(baseline, &ptr)?,
+            get_f64(candidate, &ptr)?,
+            t.param_abs_delta_max,
+        );
+    }
+
+    Ok(())
+}
+
+fn compare_operational(
+    baseline: &Value,
+    candidate: &Value,
+    t: &OperationalThresholds,
+    gate: &mut Gate,
+) -> Result<(), String> {
+    println!("\nOperational checks:");
+    gate.check_abs_delta(
+        "summary_all.rmse",
+        get_f64(baseline, "/summary_all/rmse")?,
+        get_f64(candidate, "/summary_all/rmse")?,
+        t.summary_all_rmse_abs_delta_max,
+    );
+    gate.check_abs_delta(
+        "summary_all.mae",
+        get_f64(baseline, "/summary_all/mae")?,
+        get_f64(candidate, "/summary_all/mae")?,
+        t.summary_all_mae_abs_delta_max,
+    );
+    gate.check_abs_delta(
+        "summary_all.bias",
+        get_f64(baseline, "/summary_all/bias")?,
+        get_f64(candidate, "/summary_all/bias")?,
+        t.summary_all_bias_abs_delta_max,
+    );
+    gate.check_drop_fraction(
+        "records.count",
+        get_array_len(baseline, "/records")?,
+        get_array_len(candidate, "/records")?,
+        t.records_count_drop_max,
     );
 
     for p in [

@@ -59,8 +59,8 @@ eBUS commands (already set):
 ```bash
 echo 'write -c 700 Z1NightTemp 19' | nc -w 2 localhost 8888
 echo 'write -c 700 Z1DayTemp 21' | nc -w 2 localhost 8888
-# Timer: day mode 04:00-00:00, night mode 00:00-04:00
-echo 'write -c 700 Z1Timer_Monday 04:00;00:00;-:-;-:-;-:-;-:-' | nc -w 2 localhost 8888
+# Timer: day mode from 04:00 (use -:- not 00:00 for end — see vrc700-settings-audit.md issue #5)
+echo 'write -c 700 Z1Timer_Monday 04:00;-:-;-:-;-:-;-:-;-:-' | nc -w 2 localhost 8888
 # (same for all days)
 ```
 
@@ -74,7 +74,7 @@ echo 'write -c 700 Z1Timer_Monday 04:00;00:00;-:-;-:-;-:-;-:-' | nc -w 2 localho
 
 eBUS commands (already set):
 ```bash
-echo 'write -c 700 HwcTimer_Monday 05:30;07:00;13:00;15:00;22:00;00:00' | nc -w 2 localhost 8888
+echo 'write -c 700 HwcTimer_Monday 05:30;07:00;13:00;15:00;22:00;-:-' | nc -w 2 localhost 8888
 # (same for all days)
 ```
 

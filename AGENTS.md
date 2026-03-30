@@ -114,7 +114,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - Conservatory excluded from thermal scoring (30m² glass, sub-hour time constant). Landing excluded (chimney model wrong for heating).
 - Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
-- `cosy-scheduler` binary exists on pi5data (`/usr/local/bin/`) but is retired — do not run. Writes to read-only `hmu HwcMode` and conflicts with timer-only operation.
+- `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
 
 ## Boundaries

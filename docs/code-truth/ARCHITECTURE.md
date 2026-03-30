@@ -1,4 +1,4 @@
-<!-- code-truth: f9694e2 -->
+<!-- code-truth: dfdffb4 -->
 
 # Architecture
 
@@ -18,10 +18,22 @@ main.rs
   │     └── config.rs
   ├── overnight.rs   (reads config for thresholds; uses analysis::enrich)
   │     └── analysis.rs, config.rs
-  └── thermal.rs     (independent config: model/thermal-config.toml + thermal_geometry.json)
-        ├── thermal/error.rs
-        ├── thermal/influx.rs (InfluxDB HTTP queries)
-        └── thermal/report.rs
+  └── thermal.rs     (thin facade — re-exports from 14 submodules)
+        └── thermal/
+              ├── config.rs      (ThermalConfig from model/thermal-config.toml)
+              ├── geometry.rs    (rooms/connections/doorways from thermal_geometry.json)
+              ├── physics.rs     (constants, thermal mass, energy balance)
+              ├── solar.rs       (solar position + irradiance)
+              ├── wind.rs        (Open-Meteo wind + ventilation multiplier)
+              ├── calibration.rs (grid search + shared helpers)
+              ├── validation.rs  (metrics, residuals, holdout validation)
+              ├── diagnostics.rs (cooldown detection + fit diagnostics)
+              ├── operational.rs (BCF-based state, operational validation)
+              ├── artifact.rs    (JSON artifact build/write)
+              ├── snapshot.rs    (export/import with human signoff)
+              ├── error.rs       (ThermalError enum)
+              ├── influx.rs      (InfluxDB Flux queries)
+              └── report.rs      (table formatting)
 
 model/house.py       (separate executable — shares data/canonical/thermal_geometry.json with Rust)
   └── InfluxDB on pi5data (reads room temps, outside temp, HP state, eBUS data)
@@ -188,7 +200,7 @@ Hysteresis zone (14.7–15.0 L/min) prevents rapid switching during diverter val
 | gaps.rs DHW classification uses `dhw_enter_flow_rate` from config | gaps.rs | Must stay consistent with analysis.rs thresholds |
 | Radiator T50 values duplicated in `config.toml` and `thermal_geometry.json` | `config.toml` (analysis.rs), `thermal_geometry.json` (thermal.rs + house.py) | Out-of-sync → inconsistent radiator output between analysis and thermal commands |
 | Room geometry shared via `data/canonical/thermal_geometry.json` | `model/house.py`, `src/thermal.rs` | Both consume same file; `model/audit_model_dimensions.py` verifies wiring |
-| `model/house.py` InfluxDB token hardcoded as constant | `INFLUX_TOKEN` | Token rotation requires code change |
+| `model/house.py` InfluxDB token from env var or `ak get influxdb` | `INFLUX_TOKEN` env var | Token rotation requires `ak set influxdb` |
 | Thermal regression baselines must be refreshed after intentional model changes | `artifacts/thermal/baselines/` | Stale baselines → false regression failures |
 | `thermal-operational` assumes specific InfluxDB measurement names | `thermal/influx.rs` | Telegraf config changes on pi5data break queries |
 | `thermal_geometry.json` room names must match InfluxDB sensor names (with `_temp_humid` suffix stripped) | `thermal.rs`, `thermal/influx.rs` | Sensor rename breaks room→data mapping |

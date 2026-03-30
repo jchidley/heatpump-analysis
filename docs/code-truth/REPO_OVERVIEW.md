@@ -1,10 +1,9 @@
 # Repository Overview
 
 ```yaml
-commit: f9694e21351a4e159063082c1faaec487cecef3d
-short_commit: f9694e2
+commit: dfdffb4
 branch: main
-commit_date: 2026-03-29
+commit_date: 2026-03-30
 working_tree: modified
 ```
 
@@ -15,7 +14,7 @@ A Rust CLI tool that syncs heat pump monitoring data from emoncms.org to a local
 The system is built for a specific installation: a **Vaillant Arotherm Plus 5kW** air-source heat pump at a residential property in London (6 Rhodes Avenue, N22), monitored via an emonHP bundle feeding emoncms.org.
 
 Beyond the Rust analysis tool, the project includes:
-- A **Rust thermal model** (`src/thermal.rs` + `src/thermal/`) for room-level calibration, validation, and operational analysis using Zigbee temperature sensors and InfluxDB data
+- A **Rust thermal model** (`src/thermal/` — 14 submodules, 4,155 lines) for room-level calibration, validation, and operational analysis using Zigbee temperature sensors and InfluxDB data
 - A **Python thermal model** (`model/house.py`) for equilibrium solving, moisture analysis, and exploratory analysis — shares canonical geometry with Rust via `data/canonical/thermal_geometry.json`
 - Shell-based **monitoring scripts** deployed to pi5data (`scripts/ebusd-poll.sh`)
 - Extensive **domain documentation** on the hydraulic system, DHW cylinder, monitoring infrastructure, house layout, and room thermal model
@@ -38,33 +37,32 @@ Beyond the Rust analysis tool, the project includes:
 | influxdb-client (Python) | Fetching room sensor data from InfluxDB | `model/house.py` |
 | NumPy / SciPy (Python) | Equilibrium solver (fsolve), thermal parameter fitting | `model/house.py` |
 
-## What Changed Since Last Code-Truth (3af9fd0, 2026-03-26)
+## What Changed Since Last Code-Truth (f9694e2, 2026-03-29)
 
-### Major: Rust thermal model tripled in size
+### Thermal module split (2026-03-29)
 
-`src/thermal.rs` grew from ~1,500 lines to **3,506 lines**. New thermal submodules added. Total Rust: **14 files, ~10,000 lines** (was 6 files, 3,591 lines).
+Monolithic `src/thermal.rs` (3,506 lines) split into 14 focused submodules under `src/thermal/` (4,155 lines total). `src/thermal.rs` is now a 23-line thin facade re-exporting 6 public entry points. DRY cleanup extracted 5 shared helpers.
 
-Key additions:
-- **`thermal-operational`** command — full operational validation with heating/DHW/off state classification using `BuildingCircuitFlow` (eBUS), solar gain model (PV + Open-Meteo), per-room scoring
-- **Solar geometry** — Spencer (1971) solar position, isotropic sky model for oriented surface irradiance (DNI + DHI decomposition)
-- **`thermal-snapshot`** export/import — human-gated reproducibility workflow with manifest and SHA-256 verification
-- **Regression infrastructure** — `thermal-regression-check` binary, baseline artifacts, `thermal-regression-ci.sh` script, thresholds TOML
+### Regression CI expanded (2026-03-30)
 
-### Major: Overnight strategy analysis (`src/overnight.rs`)
+`thermal-operational` added as 4th artifact type in regression CI. Lint gates (fmt + clippy) added to `scripts/thermal-regression-ci.sh`.
 
-New 1,442-line module implementing a Rust backtest model for overnight heating optimisation. Calibrated cooling/heating/DHW models from 512 days of data. Evaluated 30 strategies × 324 nights. Conclusion: battery makes scheduling nearly irrelevant (£15–40/yr total opportunity).
+### Infrastructure cleanup (2026-03-30)
 
-### Documentation overhaul (this session)
-
-15 documentation files updated to fix contradictions (StatuscodeNum 134, EWI area, Zigbee counts, DHW schedule), remove stale references (dhw-auto-trigger, ebusd-poll.py), and add archival headers.
+- `model/calibrate.py` and `model/overnight.py` deleted (fully superseded by Rust)
+- Hardcoded InfluxDB token removed from `model/house.py` — now reads from `INFLUX_TOKEN` env var or `ak get influxdb`
+- `cosy-scheduler` binary removed from pi5data (source kept for reference)
+- `influxdb` and `grafana` credentials added to `ak` GPG keystore
+- Grafana DHW dashboard updated: 3 cylinder sensors (T1 Hot Out, T2 Cold In, Cylinder Temp)
+- z2m-hub dashboard updated with descriptive temperature labels
 
 ## Repository Size
 
 | Category | Count |
 |----------|-------|
-| Rust source files (`src/`) | 14 (~10,000 lines) |
-| Standalone Rust binaries (`src/bin/`) | 2 (cosy-scheduler, thermal-regression-check) |
-| Python model files (`model/`) | 5 (~3,925 lines) |
+| Rust source files (`src/`) | 10 core + 14 thermal submodules (~10,275 lines) |
+| Standalone Rust binaries (`src/bin/`) | 2 (cosy-scheduler [retired], thermal-regression-check) |
+| Python model files (`model/`) | 3 (~2,904 lines) |
 | Shell scripts (`scripts/`) | 3 + 2 services |
 | Domain docs (`docs/`) | 14 |
 | Code-truth docs (`docs/code-truth/`) | 5 |

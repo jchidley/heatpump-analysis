@@ -16,6 +16,14 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 
 **In scope**: `model/house.py`, `model/calibrate.py`
 
+**Deleted** (fully superseded by Rust, removed 2026-03-30):
+- ~~`model/calibrate.py`~~ — replaced by `thermal-calibrate` command
+- ~~`model/overnight.py`~~ — replaced by `overnight` command in `src/overnight.rs`
+
+**Utility scripts** (one-off, not part of migration):
+- `model/audit_model_dimensions.py` (123L) — one-off audit, keep for reference
+- `model/extract_house_inventory.py` (1531L) — one-off extraction, keep for reference
+
 **Out of scope**: Python in git submodules (emonhub, emoncms, EmonScripts, emonPiLCD)
 
 ## Current state
@@ -42,24 +50,36 @@ All produce structured JSON artifacts to `artifacts/thermal/`. Regression baseli
 
 After all ported, mark `model/house.py` as legacy.
 
+### Infrastructure completed
+
+- ✅ **Thermal module split** (2026-03-29): `src/thermal.rs` (3,506 lines) → 15 focused submodules (4,155 lines total). Thin facade re-exports 6 public entry points.
+- ✅ **DRY cleanup** (2026-03-29): Extracted 5 shared helpers (`calibrate_model`, `resolve_influx_token`, `compute_thermal_masses`, `avg_series_in_window`, `avg_room_temps_in_window`). ~90 lines of duplication removed.
+- ✅ **Regression baselines refreshed** against current config.
+
+Module layout:
+  - `config.rs` — TOML config structs
+  - `geometry.rs` — room/connection/doorway types + JSON loading
+  - `physics.rs` — constants + thermal mass + energy balance
+  - `solar.rs` — solar position + irradiance
+  - `wind.rs` — Open-Meteo wind + multiplier
+  - `calibration.rs` — grid search + setup + predict/measured rates + time-series helpers
+  - `validation.rs` — metrics + residuals + validate()
+  - `diagnostics.rs` — cooldown detection + fit_diagnostics()
+  - `operational.rs` — HP state + segmentation + operational_validate()
+  - `artifact.rs` — artifact types + git meta + build/write
+  - `snapshot.rs` — export/import manifests
+  - Existing: `error.rs`, `influx.rs`, `report.rs`
+
 ### Infrastructure remaining
 
-- ~~Complete thermal module split~~ ✅ Done 2026-03-29: `src/thermal.rs` (3,506 lines) → 15 focused submodules (4,192 lines total)
-  - `config.rs` (207L) — TOML config structs
-  - `geometry.rs` (257L) — room/connection/doorway types + JSON loading
-  - `physics.rs` (388L) — constants + thermal mass + energy balance
-  - `solar.rs` (180L) — solar position + irradiance
-  - `wind.rs` (75L) — Open-Meteo wind + multiplier
-  - `calibration.rs` (532L) — grid search + setup + predict/measured rates
-  - `validation.rs` (469L) — metrics + residuals + validate()
-  - `diagnostics.rs` (492L) — cooldown detection + fit_diagnostics()
-  - `operational.rs` (617L) — HP state + segmentation + operational_validate()
-  - `artifact.rs` (224L) — artifact types + git meta + build/write
-  - `snapshot.rs` (233L) — export/import manifests
-  - `thermal.rs` (23L) — thin facade with re-exports
-  - Existing: `error.rs`, `influx.rs`, `report.rs` (unchanged)
-- Add `thermal-operational` baseline to regression CI
-- Enforce lint gates in CI workflow
+- ~~Add `thermal-operational` to regression CI~~ ✔️ Done 2026-03-30: `[operational]` thresholds + comparison logic + baseline
+- ~~Enforce lint gates in CI workflow~~ ✔️ Done 2026-03-30: fmt + clippy gates in `scripts/thermal-regression-ci.sh`
+- ~~Remove hardcoded `INFLUX_TOKEN` from `model/house.py`~~ ✔️ Done 2026-03-30: reads `INFLUX_TOKEN` env var or `ak get influxdb`
+
+### Cleanup remaining
+
+- ~~Remove `cosy-scheduler` binary from pi5data~~ ✔️ Done 2026-03-30: binary deleted, source kept for reference
+- ~~Regenerate `docs/code-truth/`~~ ✔️ Done 2026-03-30: REPOSITORY_MAP, ARCHITECTURE, REPO_OVERVIEW updated for thermal split + deleted files
 
 ## Quality gates
 

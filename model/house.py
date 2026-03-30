@@ -25,6 +25,7 @@ Usage:
     uv run --with influxdb-client --with numpy --with scipy python model/house.py moisture
 """
 
+import os
 import sys
 import json
 import csv
@@ -557,9 +558,19 @@ def room_energy_balance(
 DATA_DIR = Path(__file__).parent / "data"
 
 INFLUX_URL = "http://pi5data:8086"
-INFLUX_TOKEN = "jPTPrwcprKfDzt8IFr7gkn6shpBy15j8hFeyjLaBIaJ0IwcgQeXJ4LtrvVBJ5aIPYuzEfeDw5e-cmtAuvZ-Xmw=="
+INFLUX_TOKEN = os.environ.get("INFLUX_TOKEN", "")
 INFLUX_ORG = "home"
 INFLUX_BUCKET = "energy"
+
+if not INFLUX_TOKEN:
+    import subprocess
+    try:
+        INFLUX_TOKEN = subprocess.check_output(["ak", "get", "influxdb"], text=True).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+if not INFLUX_TOKEN:
+    print("WARNING: INFLUX_TOKEN not set. Run: export INFLUX_TOKEN=$(ak get influxdb)", file=sys.stderr)
 
 
 def fetch_data(hours: int = 24):

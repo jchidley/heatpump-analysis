@@ -304,7 +304,7 @@ echo "read -f -c 700 Z1ActualRoomTempDesired" | nc -w3 pi5data 8888
 | DHW demand | Sniff `SetMode` from VRC 700 (QQ=10) | `HwcDemand=1` | During DHW windows when HwcStorageTemp < 40°C |
 | DHW charge | `read -c hmu RunDataStatuscode` | `Warm_Water_Compressor_active` | During a timer-triggered charge |
 
-**If the fix doesn't work:** The VRC 700 may need timers confirmed via its physical UI. Navigate to the timer menus on the controller, verify values, press OK on each. If that also fails, factory reset and re-enter all settings from the tables above.
+**Resolved 30 March 2026:** Timers confirmed on VRC 700 display and are now working correctly. Both heating (Z1Timer day/night switching) and DHW (timer-triggered charges) operational.
 
 ## Ongoing rules
 

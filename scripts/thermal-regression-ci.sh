@@ -5,6 +5,12 @@ THRESHOLDS_FILE="${1:-artifacts/thermal/regression-thresholds.toml}"
 BASELINE_DIR="artifacts/thermal/baselines"
 ARTIFACT_DIR="artifacts/thermal"
 
+# Lint gates
+echo "[thermal-regression] checking fmt"
+cargo fmt --check || { echo "[thermal-regression] FAIL: cargo fmt"; exit 1; }
+echo "[thermal-regression] checking clippy (regression-check binary)"
+cargo clippy --bin thermal-regression-check -- -D warnings 2>&1 || { echo "[thermal-regression] FAIL: clippy"; exit 1; }
+
 run_check() {
   local command="$1"
   local baseline_path="${BASELINE_DIR}/${command}-baseline.json"
@@ -32,5 +38,6 @@ run_check() {
 run_check "thermal-calibrate"
 run_check "thermal-validate"
 run_check "thermal-fit-diagnostics"
+run_check "thermal-operational"
 
 echo "[thermal-regression] all configured checks passed"

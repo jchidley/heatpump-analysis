@@ -61,6 +61,8 @@ The VR 10 in the dry stat pocket (just above the bottom coil) reads the stratifi
 
 The VRC 700 uses this sensor with `CylinderChargeHyst` = 5K. At 45°C target, DHW charging triggers when HwcStorageTemp drops below 40°C.
 
+**Operational note:** On days with no hot water draws, standing losses alone drop HwcStorageTemp by ~0.3°C/hour. From a full charge at ~43°C, it takes ~10 hours to reach the 40°C trigger. This means the afternoon DHW window (13:00–15:00) may not trigger if the morning charge completed after 03:00 and no water was drawn. This is expected — the cylinder is still warm enough. The evening window (22:00) will catch it if draws happen in the evening.
+
 ---
 
 ## Note: z2m-hub DHW remaining litres
@@ -179,11 +181,11 @@ This is documented correctly in `docs/vrc700-settings-audit.md` now.
 
 | Priority | Action | Status |
 |---|---|---|
-| 🔴 | Fix VRC 700 timers — re-write with `-:-` instead of `00:00` as end time (see `vrc700-settings-audit.md` issue #5) | **Blocking** — `00:00` in TTM encoding = start of day, not end. Windows were backwards/invalid. |
-| 🔴 | Check `HwcSFMode` is `auto` (gets stuck on `load` after boosts) | Reset to auto on 30 Mar |
-| 🟡 | Add `grafana` and `influxdb` to ak keystore | Needed for dashboard fixes |
-| 🟡 | Update Grafana DHW chart — add Cylinder Temp, fix T1/T2 labels | Blocked by Grafana password |
-| 🟡 | Update z2m-hub dashboard labels | In `~/github/z2m-hub/` |
-| 🟢 | Remove hardcoded InfluxDB token from `model/house.py` | After ak is set up |
-| 🟢 | Do not run `cosy-scheduler` — retired | Already not a service |
+| ✅ | ~~Fix VRC 700 timers~~ | Done 30 Mar — confirmed on controller display, timers now working |
+| ✅ | ~~Check `HwcSFMode` is `auto`~~ | Reset to auto 30 Mar. Monitor after future boosts. |
+| ✅ | ~~Add `grafana` and `influxdb` to ak keystore~~ | Done 30 Mar — `ak get grafana`, `ak get influxdb` |
+| ✅ | ~~Update Grafana DHW chart~~ | Done 30 Mar — 3 sensors: T1 Hot Out (red), T2 Cold In (blue), Cylinder Temp (orange dashed) |
+| ✅ | ~~Update z2m-hub dashboard labels~~ | Done 30 Mar — shows "Top 43.9°C · Cyl 39.0°C" |
+| ✅ | ~~Remove hardcoded InfluxDB token from `model/house.py`~~ | Done 30 Mar — reads INFLUX_TOKEN env var or `ak get influxdb` |
+| ✅ | ~~Do not run `cosy-scheduler`~~ | Binary removed from pi5data 30 Mar |
 | ⚪ | z2m-hub remaining litres refinement using temperature data | Enhancement, not a fix |
