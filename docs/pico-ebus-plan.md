@@ -1,260 +1,292 @@
 # Pico W eBUS Adapter — Build Plan
 
-## Overview
+## Goal
 
-Custom Rust/Embassy firmware for a Raspberry Pi Pico W, connected to an
-[xyzroe eBus-TTL adapter](https://github.com/xyzroe/eBus-TTL-adapter)
-(galvanically isolated via LTV357T-B optocouplers). Passive eBUS listener
-with optional active sending. Publishes raw telegrams to MQTT on pi5data.
+Replace ebusd and john30's closed-source ESP32 firmware with our own
+Rust/Embassy firmware on a Pi Pico W. Log all raw eBUS telegrams to
+InfluxDB via MQTT. Send commands via MQTT when needed. No ebusd dependency.
+
+## Why
+
+john30's ESP32 firmware (`ebusd-esp` and `ebusd-esp32` repos) is
+**closed-source** — both repos contain only pre-built binaries, no source
+code, no license file. We can't inspect, audit, or fix the firmware running
+on our heating system's control bus.
+
+The ebusd ecosystem is also over-engineered for our needs. We have one
+Vaillant system with 3 known devices and ~30 values we care about. ebusd
+provides auto-scanning, a config CDN, KNX bridging, multi-client TCP,
+ACL-based access control, and Home Assistant MQTT Discovery — none of which
+we use. The entire stack (closed-source ESP32 firmware → TCP bridge →
+ebusd daemon → MQTT) can be replaced by a Pico W reading bytes off a wire.
+
+The open-source firmware alternatives (danielkucera's `esp-arduino-ebus`)
+struggle with arbitration timing because they run WiFi and eBUS protocol
+on a single-core ESP32. The Pico W solves this with dual cores and PIO.
+
+## What ebusd does that we don't need
+
+| ebusd feature | Our alternative |
+|---|---|
+| Auto-scan 25 master addresses | We know our 4 devices (3 Vaillant + ebusd) |
+| Config CDN (downloads CSVs by scan result) | ~30 commands hardcoded |
+| Message caching + HTTP API | InfluxDB + Grafana |
+| Poll scheduling | Most values broadcast passively; rest via MQTT timer |
+| KNX bridge | Don't have KNX |
+| HA MQTT Discovery | Use Grafana, not HA for this |
+| Multi-client TCP (port 8888) | MQTT handles fan-out |
+| ACL access control | Single-purpose device |
+| Hex dump/replay | `ebus/raw` MQTT topic + InfluxDB |
+
+**One thing to handle**: Some values are not broadcast passively — the VRC 700
+and HMU only exchange them when polled. Phase 3 discovers which values need
+active polling by comparing passive captures against ebusd's polled output.
+
+## Architecture
+
+```
+Vaillant eBUS (2-wire, 20V)
+        │
+┌───────┴────────────┐
+│ xyzroe eBus-TTL    │  Bus-side: powered from eBUS, LM2903 comparator,
+│ adapter (isolated) │  BC817 transistor, LTV357T-B optocouplers
+│                    │  TTL-side: 3.3V from Pico, clean UART signal
+└───────┬────────────┘
+   4 wires (GND, 3V3, RX, TX)
+        │
+┌───────┴────────────┐
+│ Pi Pico W          │  Core 0: PIO UART RX/TX → Framer → telegram queue
+│ (Rust/Embassy)     │  Core 1: CYW43 WiFi → MQTT publish/subscribe
+│                    │  Powered from emonhp USB
+└───────┬────────────┘
+        │ WiFi / MQTT
+        ▼
+┌────────────────────┐
+│ pi5data            │  Mosquitto → decoder service → InfluxDB → Grafana
+│ (10.0.1.230)       │  Sends commands to ebus/send topic
+└────────────────────┘
+```
 
 ## Hardware
 
 ### xyzroe eBus-TTL Adapter
 
-Galvanically isolated eBUS ↔ TTL bridge. Bus-side powered from eBUS (via
-zener clamp), TTL side powered from Pico's 3V3.
+[github.com/xyzroe/eBus-TTL-adapter](https://github.com/xyzroe/eBus-TTL-adapter)
+
+Galvanically isolated eBUS ↔ TTL bridge. Two LTV357T-B optocouplers
+isolate RX and TX paths. Bus-side powered from eBUS via zener clamp
+(no external supply needed). TTL side powered from Pico's 3.3V rail.
+
+**Key components (bus side):**
+- D1 bridge rectifier — polarity independence
+- VD1/VD2 zeners (7.5V) — voltage clamping
+- Q1/Q2 BC817 — TX current sink (pulls bus low)
+- LM2903 comparator — detects bus voltage transitions → RX signal
+- R3/R5 (51kΩ) voltage divider — sets comparator threshold
 
 **Connector X2 (4-pin header):**
 
 | Pin | Signal | Wire to Pico W |
 |-----|--------|----------------|
 | 1   | GND    | GND (pin 38)   |
-| 2   | RX     | GP5 (pin 7) — UART1 RX |
-| 3   | TX     | GP4 (pin 6) — UART1 TX |
-| 4   | +5V    | **3V3_OUT (pin 36)** — NOT VBUS |
+| 2   | RX     | GP5 (pin 7) — PIO input |
+| 3   | TX     | GP4 (pin 6) — PIO output |
+| 4   | +V     | **3V3_OUT (pin 36)** — NOT VBUS |
 
-> **3V3 not 5V**: The Pico's RP2040 GPIOs are 3.3V and NOT 5V tolerant.
-> Powering the TTL side from 3V3 ensures the optocoupler outputs stay
-> within spec. The LTV357T-B works fine at 3.3V. If the RX output swing
-> is insufficient, drop R11 (10kΩ pull-up) to ~4.7kΩ.
+> **3V3 not 5V**: RP2040 GPIOs are 3.3V and not 5V tolerant. The
+> LTV357T-B optocouplers work fine at 3.3V. If RX output swing is
+> insufficient, drop R11 (10kΩ pull-up) to ~4.7kΩ.
 
 ### Power
 
-Pico W powered via USB from emonhp (10.0.1.169). Draws ~150mA typical
-with WiFi active — well within the Pi 4's USB budget alongside existing
-devices (SanDisk boot stick, two serial adapters).
+Pico W powered via USB from emonhp (10.0.1.169, Pi 4).
+Pico W draws ~150mA typical with WiFi, ~250mA peak.
+emonhp USB budget: ~550mA free after existing devices (SanDisk boot
+stick 896mA declared / ~100mA actual, two serial adapters ~50mA each).
+No problem.
+
+### Wiring
+
+- eBUS cable: 2-wire to Vaillant eBUS screw terminals. **Polarity
+  doesn't matter** (bridge rectifier on xyzroe board).
+- Cable spec: eBUS minimum 0.34mm². We use 1mm² — massive overkill.
+- Distance: eBUS spec supports 100m. Ours is <20m. No signal concerns.
+- **Don't run alongside mains** cable unless both rated for higher voltage.
+- **Screw terminals tight** — loose connections cause intermittent issues.
+- Multiple adapters can share the same eBUS terminals (spec supports
+  multiple participants). john30's v5 adapter stays connected during
+  development.
 
 ### Test Equipment
 
-- **Saleae Logic** — digital timing verification on GP4/GP5
-- **PicoScope** — analogue signal quality on eBUS lines and comparator output
-- **john30 Adapter v5** — running ebusd in parallel as known-good reference
+- **Saleae Logic** — digital timing on GP4/GP5, UART decode
+- **PicoScope** — analogue signal quality on eBUS lines and comparator
+- **john30 Adapter v5 + ebusd** — known-good reference running in parallel
 
-## eBUS Protocol Summary
+## eBUS Protocol
 
-Source: [eBUS Spec v1.3.1](https://adapter.ebusd.eu/Spec_Prot_12_V1_3_1.pdf),
-reference implementation: `yuhu-ebus/` submodule (1,741 lines of core protocol).
+Source: [eBUS Spec v1.3.1](https://adapter.ebusd.eu/Spec_Prot_12_V1_3_1.pdf)
 
-### Physical
+### Wire Format
 
-| Parameter | Value |
-|-----------|-------|
-| Baud rate | 2400, 8N1 |
-| Bus idle (logical 1) | 15–24V (typical 20V) |
-| Bus active (logical 0) | 9–12V |
-| Bit time | 416.67μs |
-| Byte time (start + 8 data + stop) | 4,166.7μs |
-| AUTO-SYN interval | 35ms (if no traffic) |
+- **2400 baud, 8N1** — standard UART, 416.67μs per bit, 4166.7μs per byte
+- **Bus idle**: 15–24V (logical 1). **Bus active**: 9–12V (logical 0)
+- **SYN (0xAA)**: delimiter between telegrams. AUTO-SYN every 35ms if idle.
 
-### Framing
+### Telegram Structure
 
 ```
-SYN (0xAA) = telegram delimiter
+Master part:  QQ ZZ PB SB NN [DB₀..DBₙ] CRC
+              │  │  │  │  │              └─ CRC-8 (poly 0x9B)
+              │  │  │  │  └─ data length 0-16
+              │  │  └──┘ command bytes (primary + secondary)
+              │  └─ destination (0xFE = broadcast)
+              └─ source (master address)
 
-Master telegram:
-  QQ ZZ PB SB NN [DB₀..DBₙ] CRC
+Slave response (master-slave only):
+              ACK NN [DB₀..DBₙ] CRC ACK
+              │                     └─ master ACK (0x00=ok, 0xFF=retry)
+              └─ slave ACK (0x00=ok, 0xFF=retry)
 
-  QQ  = source address (master)
-  ZZ  = destination address (0xFE = broadcast)
-  PB  = primary command byte
-  SB  = secondary command byte  
-  NN  = data length (0-16)
-  DB  = data bytes
-  CRC = CRC-8 (polynomial 0x9B)
-
-Slave response (master-slave telegrams only):
-  ACK NN [DB₀..DBₙ] CRC ACK
-
-  ACK = 0x00 (positive) or 0xFF (negative)
-
-Byte stuffing (applied to all bytes except SYN):
-  0xAA → 0xA9 0x01
-  0xA9 → 0xA9 0x00
+Byte stuffing (all bytes except SYN):
+              0xAA → 0xA9 0x01
+              0xA9 → 0xA9 0x00
 ```
 
 ### Addresses
 
-25 valid master addresses. Formed from priority class (lower nibble) and
-sub-address (upper nibble). Valid nibble values: 0x0, 0x1, 0x3, 0x7, 0xF.
-Check: `((nibble + 1) & nibble) == 0`.
+25 valid master addresses. Each nibble must satisfy `((n+1) & n) == 0`
+(valid values: 0x0, 0x1, 0x3, 0x7, 0xF). Slave = master + 5.
 
-Slave address = master address + 5.
+Our bus (from `ebusd info` / `scan result`):
 
-### Telegram Types
+| Master | Slave | ID | Device | Firmware | Role |
+|--------|-------|----|--------|----------|------|
+| 0x10 | 0x15 | 70000 | VRC 700 | SW 06.14, HW 69.03 | System controller — scheduling, weather comp, UI. Sends SetMode to HMU every ~10s. |
+| 0x03 | 0x08 | HMU00 | aroTHERM plus VWL 55/6 | SW 09.02, HW 51.03 | Heat pump outdoor unit — compressor, fan, refrigerant. Executes commands. |
+| 0x71 | 0x76 | VWZIO | VWZ AI | SW 02.02, HW 01.03 | Indoor unit — circulation pump, 3-way diverter, SP1 cylinder sensor. **Active master**: sends extensive `71→08` traffic to HMU (calibration, parameters, real-time control). |
+| 0x31 | 0x36 | — | ebusd | — | Our current adapter. Will be replaced by Pico W. |
 
-| Type | Condition | Flow |
-|------|-----------|------|
-| Broadcast | ZZ = 0xFE | Master → CRC → SYN |
-| Master-Master | ZZ is master | Master → CRC → ACK → SYN |
-| Master-Slave | ZZ is slave | Master → CRC → ACK → Slave response → CRC → ACK → SYN |
+Live bus stats: symbol rate ~40/s, max 209/s. Arbitration: 0–44µs (spec allows 60–104µs). Signal: acquired.
 
-### Arbitration (for writing only)
+We listen as 0xFF (passive). For Phase 5 (active sending), we'll need an unused master address.
 
-1. Observe SYN byte on bus
-2. Write your master address within **4300–4456μs** of SYN start bit
-3. Read back what appeared:
-   - **Your address** → you won, send telegram
-   - **Different address, same priority class** → retry at next SYN (second round)
-   - **Different address, different class** → you lost, wait
-4. Lock counter: after winning, wait N SYNs before next attempt (fairness)
+### Arbitration (writing only)
 
-### CRC-8
+After SYN, write your address within **4300–4456μs** of the SYN start bit.
+Read back: if it matches, you won. If different address with same priority
+class (lower nibble), retry next SYN. Otherwise, lost — back off.
 
-Polynomial: x⁸ + x⁷ + x⁴ + x³ + x + 1 (0x9B). Table-driven, 256-byte lookup.
-Calculated over the **expanded** (byte-stuffed) sequence.
+**This is the only hard part**, and only matters when sending. PIO solves
+it with cycle-accurate start-bit timestamps.
+
+## Why PIO
+
+The fundamental problem every eBUS adapter struggles with: **knowing exactly
+when the SYN byte arrived.** 
+
+- Linux UART FIFO: minimum 4-byte trigger = 16.7ms latency (ttyebus kernel
+  module exists solely to work around this — 991 lines of kernel code)
+- ESP32 UART: FIFO buffering + WiFi interrupts = unpredictable jitter
+  (danielkucera's arbitration issue #22 — 60% write failures)
+- john30's solution: closed-source "enhanced protocol" firmware
+
+PIO on RP2040: custom state machine detects start-bit falling edge with
+**cycle-accurate timing** (~8ns at 125MHz). No FIFO, no interrupts, no
+contention with WiFi (runs on Core 1). The 156μs arbitration window is
+trivially wide compared to PIO's precision.
 
 ## PIO UART Design
 
-Custom PIO program instead of hardware UART. Two state machines:
+Two PIO state machines at 2400 baud. Clock divisor: 125MHz / 2400 = 52,083.
 
-### SM0: eBUS RX (with start-bit timestamping)
+**SM0: RX** — detects start bit, samples 8 data bits mid-bit, pushes byte
+to FIFO. Start-bit timestamp captured via DMA to free-running timer or
+companion SM acting as cycle counter.
 
-```
-; eBUS PIO RX — 2400 baud, 8N1, with start-bit timestamp
-;
-; Pushes 32-bit words to FIFO:
-;   [31:8] = cycle counter at start-bit falling edge
-;   [7:0]  = received byte
-;
-; This gives the main core exact timing of when each byte arrived,
-; which is the critical information for arbitration.
+**SM1: TX** — pulls bytes from FIFO, sends start bit + 8 data bits + stop
+bit. Only enabled when actively sending (Phase 5).
 
-.program ebus_rx
-.wrap_target
-wait_for_start:
-    wait 1 pin 0        ; wait for line idle (high)
-    wait 0 pin 0        ; falling edge = start bit
-    
-    ; Capture cycle counter (from a free-running timer)
-    mov x, ~null         ; placeholder — actual timestamp from DMA or side-set
-    
-    ; Wait half a bit time to sample mid-bit (208μs at 2400 baud)
-    ; At 125MHz system clock: 208μs × 125 = 26,042 cycles
-    set y, 7         [25] ; wait ~208μs (tuned with autopull divisor)
-    
-    ; Sample 8 data bits, LSB first
-bitloop:
-    in pins, 1       [51] ; sample bit, wait full bit time (~417μs)
-    jmp y-- bitloop
-    
-    ; Wait for stop bit (half bit time)
-    nop              [25]
-    
-    ; Push byte to FIFO
-    push noblock
-.wrap
-```
+PIO programs are ~15 instructions each. Saleae verifies timing.
 
-> **Note**: The actual PIO program will be refined during Phase 2. The clock
-> divisor handles the 2400 baud timing. Start-bit timestamp can be captured
-> via DMA to a free-running timer, or by using a second SM as a cycle counter.
-> The Saleae will verify timing accuracy.
+## Rust Crate: `ebus-core` (no_std)
 
-### SM1: eBUS TX
+Ported from `yuhu-ebus/` submodule — only the parts we need.
 
-```
-; eBUS PIO TX — 2400 baud, 8N1
-;
-; Pulls bytes from FIFO and transmits with start + stop bits.
-; Only used when actively sending (Phase 5).
+### What we port (~500 lines of logic)
 
-.program ebus_tx
-.wrap_target
-    pull block            ; wait for data from core
-    set pins, 0      [51] ; start bit (low), wait one bit time
-    set y, 7
-bitloop:
-    out pins, 1      [51] ; shift out data bit, LSB first
-    jmp y-- bitloop
-    set pins, 1      [51] ; stop bit (high)
-.wrap
+| yuhu-ebus source | Rust module | What |
+|-----------------|-------------|------|
+| `Utils/Common.cpp` (155 lines) | `crc.rs`, `address.rs` | CRC-8 table, `is_master()`, `slave_of()` |
+| `Core/Sequence.cpp` (170 lines) | `sequence.rs` | Byte stuffing / unstuffing |
+| `Core/Telegram.cpp` (462 lines) | `telegram.rs` | Parse master + slave parts |
+| `Core/Request.cpp` (219 lines) | `arbitration.rs` | Bus request FSM (Phase 5 only) |
+
+### What we DON'T port
+
+| yuhu-ebus component | Why not |
+|---------------------|---------|
+| `Handler.cpp` (735 lines, 15-state FSM) | Reactive mode — responding when addressed. Nothing addresses us. |
+| `Controller.cpp` | PIMPL lifecycle wrapper. Unnecessary. |
+| `Scheduler.cpp` | Priority queue for outbound messages. We send one at a time via MQTT. |
+| `PollManager.cpp` | Periodic polling. We listen passively — the bus devices poll each other. |
+| `ClientManager.cpp` | TCP bridge to ebusd. We use MQTT. |
+| `DeviceScanner.cpp` | Bus scanning. We know our 3 devices. |
+| `BusPosix.cpp` / `BusFreeRtos.cpp` | Platform UART abstraction. We have PIO. |
+
+### New component: `Framer`
+
+Not in yuhu-ebus. Byte-at-a-time stateful consumer: feeds bytes in, emits
+complete `RawTelegram` structs when a SYN delimiter is seen. This is the
+primary interface for passive listening.
+
+```rust
+pub struct Framer {
+    buf: [u8; 64],
+    len: usize,
+}
+
+impl Framer {
+    /// Feed a byte. Returns Some(telegram) when a complete
+    /// telegram has been delimited by SYN.
+    pub fn feed(&mut self, byte: u8) -> Option<RawTelegram> { ... }
+}
 ```
 
-### Clock Divisor
-
-System clock 125MHz ÷ 2400 baud = 52,083.3 cycles per bit.
-PIO divisor: `125_000_000 / 2400 = 52083.33` → set `div_int = 52083, div_frac = 85`.
-Each PIO instruction then takes exactly one bit time.
-
-## Rust Crate Architecture
-
-### `ebus-core` — no_std protocol library
-
-Ported from yuhu-ebus's Core layer. Testable on desktop, no hardware dependency.
+### Crate structure
 
 ```
 ebus-core/
 ├── src/
-│   ├── lib.rs           — public API
-│   ├── symbols.rs       — protocol constants (SYN, ACK, NAK, etc.)
-│   ├── crc.rs           — CRC-8 table + calc_crc()
-│   ├── sequence.rs      — byte buffer with stuffing/unstuffing
-│   ├── telegram.rs      — telegram parser (master + slave)
+│   ├── lib.rs
+│   ├── symbols.rs       — SYN, ACK, NAK, escape constants
+│   ├── crc.rs           — CRC-8 table (256 bytes) + calc_crc()
 │   ├── address.rs       — is_master(), is_slave(), master_of(), slave_of()
-│   ├── framer.rs        — SYN-delimited byte stream → complete telegrams
-│   └── arbitration.rs   — request bus FSM (observe/first/retry/second)
-├── tests/
-│   ├── test_crc.rs
-│   ├── test_sequence.rs
-│   ├── test_telegram.rs
-│   ├── test_framer.rs
-│   └── test_arbitration.rs
-└── Cargo.toml           — no_std, no dependencies
+│   ├── sequence.rs      — extend() / reduce() byte stuffing
+│   ├── telegram.rs      — RawTelegram, parse master/slave, validate CRC
+│   ├── framer.rs        — SYN-delimited stream → RawTelegram
+│   └── arbitration.rs   — RequestState FSM (observe/first/retry/second)
+├── tests/               — test vectors from yuhu-ebus/tests/
+└── Cargo.toml           — #![no_std], optional defmt
 ```
 
-**Key design decisions:**
-- `Framer` is the new thing — not in yuhu-ebus. Stateful byte-at-a-time
-  consumer that accumulates between SYNs and emits complete `RawTelegram`
-  structs. This is the primary interface for passive listening.
-- `Arbitration` maps to yuhu-ebus's `Request` FSM (4 states, 12 results).
-- `Telegram` parser maps to yuhu-ebus's `Telegram::createMaster/createSlave`.
-- Handler FSM (15 states) is NOT ported initially — it's only needed for
-  reactive mode (responding to messages addressed to us). We're passive.
+## Firmware: `pico-ebus`
 
-### `pico-ebus` — firmware
-
-```
-pico-ebus/
-├── src/
-│   ├── main.rs          — embassy entry, spawns tasks
-│   ├── pio_uart.rs      — PIO program setup (RX + TX state machines)
-│   ├── ebus_task.rs     — core 0: reads PIO FIFO, feeds Framer, queues telegrams
-│   ├── wifi_task.rs     — core 1: WiFi + MQTT connection management
-│   ├── mqtt_task.rs     — publishes queued telegrams, subscribes for commands
-│   └── led.rs           — status LED (onboard)
-├── ebus_rx.pio          — PIO RX program
-├── ebus_tx.pio          — PIO TX program  
-├── Cargo.toml
-├── build.rs             — PIO assembly
-└── memory.x             — linker script
-```
-
-**Task architecture:**
 ```
 Core 0                          Core 1
 ──────                          ──────
 ┌──────────────┐               ┌──────────────┐
 │  ebus_task   │               │  wifi_task   │
-│              │               │              │
-│  PIO RX FIFO │               │  CYW43 WiFi  │
-│      ↓       │               │  connect/    │
-│  Framer      │               │  reconnect   │
-│      ↓       │               └──────────────┘
-│  Channel ────┼──────────────→┌──────────────┐
-│              │  (telegram    │  mqtt_task   │
-│  PIO TX ←────┼───────────────│              │
-│              │  (send cmd)   │  Publish raw │
-└──────────────┘               │  Subscribe   │
+│              │               │  CYW43       │
+│  PIO RX FIFO │               │  connect/    │
+│      ↓       │               │  reconnect   │
+│  Framer      │               └──────────────┘
+│      ↓       │               ┌──────────────┐
+│  Channel ────┼──────────────→│  mqtt_task   │
+│              │  telegram     │  publish to  │
+│  PIO TX ←────┼───────────────│  ebus/*      │
+│              │  send cmd     │  subscribe   │
+└──────────────┘               │  ebus/send   │
                                └──────────────┘
 ```
 
@@ -262,174 +294,182 @@ Core 0                          Core 1
 
 | Topic | Direction | Payload |
 |-------|-----------|---------|
-| `ebus/telegram` | Pico → pi5data | Raw telegram bytes (hex string or binary) |
-| `ebus/telegram/decoded` | Pico → pi5data | JSON: `{"src":"10","dst":"50","cmd":"b509","data":"...","crc_ok":true}` |
-| `ebus/error` | Pico → pi5data | Protocol errors, CRC failures |
-| `ebus/send` | pi5data → Pico | Telegram to send (hex bytes) |
-| `ebus/status` | Pico → pi5data | Heartbeat, uptime, bus stats |
+| `ebus/telegram` | Pico → pi5data | Hex-encoded raw telegram bytes |
+| `ebus/error` | Pico → pi5data | CRC failures, framing errors |
+| `ebus/send` | pi5data → Pico | Hex bytes to transmit |
+| `ebus/result` | Pico → pi5data | Send result (won/lost/error) |
+| `ebus/status` | Pico → pi5data | Heartbeat, uptime, telegram count |
+
+## Decoding (on pi5data, not on Pico)
+
+Small Rust service or Telegraf exec plugin. Subscribes to `ebus/telegram`,
+matches command bytes against a lookup table derived from ebusd-configuration
+CSVs, writes decoded values to InfluxDB.
+
+Example: telegram with PB=0xB5, SB=0x1A, data prefix `05 FF 32 26` →
+this is `hmu/RunDataFlowTemp`, slave response bytes decode as D2C (signed
+16-bit ÷ 256) → flow temperature in °C.
+
+We only need ~30 command definitions for our Vaillant system, hardcoded
+from the CSVs. No runtime CSV parsing.
 
 ## Phases
 
-### Phase 1: `ebus-core` Rust crate (no hardware needed)
+### Phase 1: `ebus-core` crate (no hardware)
 
-**Goal**: Complete, tested eBUS protocol library.
+Port protocol primitives. Test on desktop with `cargo test` using test
+vectors from `yuhu-ebus/tests/Core/test_telegram.cpp`.
 
-1. Port CRC table + `calc_crc()` from `yuhu-ebus/src/Ebus/Utils/Common.cpp`
-2. Port `Sequence` (byte stuffing/unstuffing) from `yuhu-ebus/src/Ebus/Core/Sequence.cpp`
-3. Port address validation from `Common.cpp` (`is_master`, `is_slave`, `master_of`, `slave_of`)
-4. Port `Telegram` parser from `yuhu-ebus/src/Ebus/Core/Telegram.cpp`
-5. Write `Framer` — new component, byte-at-a-time SYN-delimited stream parser
-6. Port `Request` arbitration FSM from `yuhu-ebus/src/Ebus/Core/Request.cpp`
-7. Test against yuhu-ebus's test vectors from `yuhu-ebus/tests/Core/test_telegram.cpp`:
-   ```
-   "ff52b509030d0600430003b0fba901d000"  — passive master-slave
-   "1000b5050427002400d900"              — passive master-master
-   ```
+### Phase 2: PIO UART (Pico W, no eBUS)
 
-**Deliverable**: `cargo test` passes on desktop. Zero hardware dependency.
+PIO RX + TX at 2400/8N1. Test with loopback wire (GP4→GP5).
+Verify timing with Saleae.
 
-### Phase 2: PIO UART (hardware, no eBUS yet)
+### Phase 3: Passive listener (first connection to real bus)
 
-**Goal**: Working PIO UART at 2400 baud with start-bit timestamps.
+PIO RX → Framer → USB serial output. Compare against ebusd running on
+john30's v5 adapter in parallel on the same bus. PicoScope if signal
+quality issues.
 
-1. Set up Embassy Pico W project (`embassy-rp`, `cyw43`)
-2. Write PIO RX program — receive bytes at 2400/8N1
-3. Write PIO TX program — transmit bytes at 2400/8N1
-4. Test with **loopback** — connect GP4 (TX) to GP5 (RX) with a wire
-5. Verify with Saleae:
-   - Bit timing accuracy (expect 416.67μs ± <1μs)
-   - Start-bit timestamp accuracy
-   - Correct byte values
-6. Test at sustained throughput — eBUS peak is ~240 bytes/sec (one SYN +
-   max telegram every ~30ms), verify no FIFO overruns
+**Key discovery task**: Determine which values appear passively (from
+normal VRC 700 ↔ HMU/VWZ AI chatter) vs which need active polling. Run
+both adapters simultaneously — compare Pico's passive captures against
+ebusd's polled output.
 
-**Deliverable**: PIO UART sending and receiving bytes correctly at 2400 baud.
-Saleae captures proving timing.
+Known passive traffic patterns (from `grab result` analysis, 30 Mar 2026):
+- `10→08` (VRC 700 → HMU): SetMode (~10s), Status01, Status02, parameters
+- `10→76` (VRC 700 → VWZ AI): status reads, parameters
+- `10→fe` (VRC 700 → broadcast): date/time, outside temp
+- `71→08` (VWZ AI → HMU): extensive real-time control traffic (command `b51a`,
+  hundreds of sub-addresses — calibration data, compressor parameters)
 
-### Phase 3: Passive eBUS listener (first connection to real bus)
-
-**Goal**: Read all eBUS traffic, decode telegrams, output via USB serial.
-
-1. Connect xyzroe adapter to eBUS (2 wires to Vaillant)
-2. Connect xyzroe X2 header to Pico W (4 wires)
-3. Power Pico from emonhp USB (or any USB supply for bench testing)
-4. Firmware: PIO RX → `Framer` → print decoded telegrams on USB serial
-5. Verify against ebusd running on john30's v5 adapter:
-   - Same telegrams seen?
-   - Same byte sequences?
-   - CRC validation matches?
-6. Use PicoScope to check analogue signal quality if any issues
-7. Use Saleae to verify PIO timing against real eBUS traffic
-
-**Deliverable**: USB serial output showing all eBUS telegrams with correct
-decoding. Matches ebusd output.
+Much of what ebusd-poll.sh actively polls may already be visible passively
+in the VRC 700 and VWZ AI traffic. Phase 3 quantifies this.
 
 ### Phase 4: WiFi + MQTT
 
-**Goal**: Publish raw telegrams to MQTT on pi5data.
-
-1. Add CYW43 WiFi connection (Core 1)
-2. Add MQTT client — connect to pi5data Mosquitto (`emonpi`/`emonpimqtt2016`)
-3. Publish each decoded telegram to `ebus/telegram`
-4. Add reconnection logic (WiFi drops, MQTT disconnects)
-5. Add heartbeat/status topic
-6. Verify: Telegraf/InfluxDB on pi5data receives all telegrams
-7. Compare against ebusd MQTT output for completeness
-
-**Deliverable**: All eBUS traffic flowing into InfluxDB via MQTT. No ebusd
-required.
+Publish telegrams to pi5data. Decoder service writes to InfluxDB.
+Verify completeness against ebusd.
 
 ### Phase 5: Active sending (optional, later)
 
-**Goal**: Send commands to eBUS when requested via MQTT.
+Enable PIO TX. Implement arbitration. Subscribe to `ebus/send`.
+Verify timing with Saleae. Test with safe read commands first.
 
-1. Enable PIO TX
-2. Implement arbitration FSM (from `ebus-core::arbitration`)
-3. Subscribe to `ebus/send` MQTT topic
-4. On command: wait for SYN, arbitrate, send telegram, report result
-5. Verify with Saleae:
-   - Arbitration timing within 4300–4456μs window
-   - Echo check (read back sent byte, compare)
-   - Correct ACK/NAK handling
-6. Test with a safe read command first (e.g., `read -c 700 DisplayedOutsideTemp`)
-7. Test write command (`write -c 700 HwcSFMode load` for DHW boost)
+**Important**: All write commands should target the VRC 700 (address 0x15),
+not the HMU or VWZ AI directly. The VRC 700 relays decisions downstream
+via SetMode every ~10s. Direct HMU writes get overwritten. See
+"Bus hierarchy" section above.
 
-**Deliverable**: Can send arbitrary eBUS commands via MQTT.
+## Reference Code
 
-## Verification Matrix
+| Repo (submodule) | What to study |
+|-----------------|---------------|
+| `yuhu-ebus/` | Protocol FSM, CRC, telegram parsing, arbitration — **our blueprint**. Roland Jax (author) also maintains the protocol engine inside `esp-arduino-ebus/`. Actively maintained (last commit 29 Mar 2026). 8.8k LOC + 3.7k test LOC. |
+| `esp-arduino-ebus/` | danielkucera's firmware. **Uses yuhu-ebus as its protocol engine.** Arbitration impl, bus timing comments, standalone INTERNAL mode (proves ebusd can be eliminated). |
+| `ebusd/` | Timing constants in `protocol.h`, message format in `data.cpp`, **TTM data type encoding** in `datatype.cpp` (critical — see Vaillant timer encoding below). |
+| `ttyebus/` | Why Linux UART latency kills eBUS timing — motivation for PIO |
 
-| What | Tool | Expected |
-|------|------|----------|
-| PIO bit timing | Saleae | 416.67μs ± 1μs per bit |
-| PIO start-bit timestamp | Saleae | < 1μs accuracy |
-| Arbitration window | Saleae | Write occurs at 4300–4456μs after SYN start bit |
-| Bus signal quality | PicoScope | Clean 10V/20V transitions, < 50μs edges |
-| Comparator output | PicoScope | Clean 0V/3.3V, matches bus transitions |
-| Telegram decoding | ebusd comparison | Byte-for-byte match |
-| MQTT completeness | InfluxDB query | No missing telegrams vs ebusd |
-| WiFi stability | Uptime counter | No drops over 24h |
+## Vaillant Command Reference
 
-## Your Vaillant Bus Participants
+From `ebusd find -f -c hmu` / `ebusd find -f -c 700` on running system:
 
-| Device | Master Address | Slave Address | Role |
-|--------|---------------|---------------|------|
-| VRC 700 | 0x10 | 0x15 | Controller |
-| HMU (Arotherm Plus) | 0x03 | 0x08 | Outdoor unit |
-| VWZ AI | 0x05 | 0x0A | Indoor unit |
-| Pico W (us) | 0xFF (passive) | — | Listener only (Phase 1-4) |
+| Name | Circuit | Dst | PB SB | Data prefix | Response type |
+|------|---------|-----|-------|-------------|--------------|
+| RunDataFlowTemp | hmu | 08 | B5 1A | 05FF3226 | D2C (÷256 = °C) |
+| RunDataReturnTemp | hmu | 08 | B5 1A | 05FF3227 | D2C |
+| BuildingCircuitFlow | hmu | 08 | B5 1A | 05FF323C | UIN (l/h) |
+| RunDataStatuscode | hmu | 08 | B5 1A | ... | status enum |
+| DisplayedOutsideTemp | 700 | 15 | B5 09 | ... | D2C |
+| HwcStorageTemp | 700 | 15 | B5 09 | ... | D2C |
+| HwcSFMode (write) | 700 | 15 | B5 23 | ... | "load"/"auto" |
 
-For Phase 5 (active sending), we'd claim master address 0x31 or similar
-(unused priority class, won't conflict).
+> Full command table to be extracted from ebusd-configuration CSVs before
+> Phase 3. Run `echo 'find -f' | nc pi5data 8888` to dump all known
+> commands with their raw byte patterns.
 
-## Dependencies
+## Vaillant-specific knowledge (learned the hard way)
 
-```toml
-# ebus-core/Cargo.toml
-[package]
-name = "ebus-core"
-edition = "2021"
+### Bus hierarchy
 
-[features]
-default = []
-std = []       # enable for desktop testing
-defmt = ["dep:defmt"]  # enable for embedded logging
+The VRC 700 is the **scheduling brain** — it decides when to heat and when
+to charge DHW, then sends `SetMode` to the HMU every ~10 seconds:
 
-[dependencies]
-defmt = { version = "0.3", optional = true }
-
-# pico-ebus/Cargo.toml
-[package]
-name = "pico-ebus"
-edition = "2021"
-
-[dependencies]
-ebus-core = { path = "../ebus-core" }
-embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread"] }
-embassy-rp = { version = "0.4", features = ["time-driver"] }
-embassy-time = "0.4"
-embassy-sync = "0.6"
-embassy-net = { version = "0.6", features = ["tcp", "dns", "dhcpv4"] }
-cyw43 = { version = "0.3", features = ["firmware-logs"] }
-cyw43-pio = "0.3"
-rust-mqtt = "0.3"
-defmt = "0.3"
-defmt-rtt = "0.4"
-cortex-m-rt = "0.7"
-panic-probe = { version = "0.3", features = ["print-defmt"] }
-pio = "0.2"
-pio-proc = "0.2"
+```
+SetMode QQ=10: auto;28.5;-;-;0;1;1;0;0;0
+                     │         │
+                     │         └─ HwcDemand (0=no, 1=yes)
+                     └─ flow temp demand
 ```
 
-## Files to Study
+The VWZ AI (0x71) is an **active real-time controller** — it independently
+sends extensive `71→08` traffic to the HMU (calibration, parameters, valve
+control). It is NOT a passive relay.
 
-| Source | What to port | Lines |
-|--------|-------------|-------|
-| `yuhu-ebus/src/Ebus/Utils/Common.cpp` | CRC, address validation | 155 |
-| `yuhu-ebus/src/Ebus/Core/Sequence.cpp` | Byte stuffing | 170 |
-| `yuhu-ebus/src/Ebus/Core/Telegram.cpp` | Telegram parsing | 462 |
-| `yuhu-ebus/src/Ebus/Core/Request.cpp` | Arbitration FSM | 219 |
-| `yuhu-ebus/src/Ebus/Core/Handler.cpp` | Full protocol FSM (defer) | 735 |
-| `yuhu-ebus/tests/Core/test_telegram.cpp` | Test vectors | — |
-| `esp-arduino-ebus/src/Arbitration.cpp` | Alternative arbitration ref | 161 |
-| `ttyebus/ttyebusm.c` | Why Linux UART is too slow | 991 |
-| `ebusd/src/lib/ebus/protocol.h` | Timing constants | — |
+The HMU (0x08) **executes what it's told** by both masters. Direct writes
+to the HMU from a third party get **overwritten by the VRC 700 within 10
+seconds**.
+
+**Rule: all commands go to the VRC 700 (0x15). Let it relay downstream.**
+
+### TTM timer encoding (critical)
+
+Timer registers use the TTM data type: 8-bit, 10-minute resolution.
+
+| Value | Byte | Meaning |
+|-------|------|---------|
+| `00:00` | `0x00` | Midnight at **start** of day |
+| `04:00` | `0x18` | 04:00 (4×6 = 24) |
+| `22:00` | `0x84` | 22:00 (22×6 = 132) |
+| `23:50` | `0x8F` | Last valid time (143) |
+| `-:-` | `0x90` | Replacement / not set / **"end of day"** |
+
+**`00:00` is NOT "end of day".** It's start of day (byte 0x00). A window
+from `04:00` to `00:00` has end < start and is **silently rejected** by
+the VRC 700. Use `-:-` (0x90) for "until end of day".
+
+The VRC 700 receives all 6 TTM bytes (3 window pairs) atomically in one
+eBUS write. If any window is invalid, the entire timer may be rejected.
+
+Factory default periods from VRC 700 manual: `06:00–08:00`, `16:30–18:00`,
+`20:00–22:30` — all end times well before midnight.
+
+Working CcTimer (unchanged): `06:00;22:00;-:-;-:-;-:-;-:-` — explicit end
+before midnight, unused slots use `-:-`.
+
+Sources:
+- `ebusd/src/lib/ebus/datatype.cpp` line 1337
+- `docs/ebus-specs/vaillant_ebus_v0.5.0.pdf` section 3.1.3
+- Live testing 30 March 2026 (fix confirmed immediately)
+
+### Write responses
+
+Timer writes (`TTM` type) return `empty` — this is **normal**. The VRC 700
+ACKs the eBUS transaction but returns zero data bytes. ebusd reports this
+as "empty". Other writes (e.g. `HwcSFMode`) return `done`.
+
+### ebusd-configuration knowledge chain
+
+The Vaillant register definitions live in:
+1. **TypeSpec source**: `src/vaillant/15.700.tsp` in ebusd-configuration
+2. **Compiled to CSV**: served via CDN at ebus.github.io, or fetched by
+   ebusd `--scanconfig` at startup
+3. **Data types**: defined in ebusd C++ source (`datatype.cpp`), not in
+   the CSVs themselves
+
+Timer fields use type `slot1_3` (defined in `_templates.tsp`) which maps
+to 6× TTM bytes. The TTM encoding is in ebusd's C++ code, independently
+confirmed by the Vaillant eBUS extensions spec.
+
+### VRC 700 firmware
+
+SW 06.14, HW 69.03. Firmware can only be updated via a VR 920/921
+(sensoNET) internet gateway connected to the eBUS — we don't have one.
+No way to update via ebusd or third-party adapters.
+
+### Registers that can't be written
+
+- `hmu HwcMode` (eco/normal) — read-only from external masters. Must be
+  changed on the aroTHERM controller physically. Confirmed by hex write
+  testing and ebusd GitHub issues.
+- `hmu HwcModeW` — ebusd constructs hex writes but the HMU ignores them.
