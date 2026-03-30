@@ -136,6 +136,24 @@ enum Commands {
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
     },
+    /// Solve for equilibrium room temperatures at given conditions
+    ThermalEquilibrium {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+        /// Outside temperature (°C). Defaults to current from InfluxDB.
+        #[arg(long)]
+        outside: Option<f64>,
+        /// Mean water temperature (°C). Defaults to current from InfluxDB.
+        #[arg(long)]
+        mwt: Option<f64>,
+        /// Solar irradiance on SW vertical surfaces (W/m²)
+        #[arg(long, default_value = "0")]
+        solar_sw: f64,
+        /// Solar irradiance on NE vertical surfaces (W/m²)
+        #[arg(long, default_value = "0")]
+        solar_ne: f64,
+    },
     /// Calibrate thermal model parameters from InfluxDB using fixed test windows
     ThermalCalibrate {
         /// Path to thermal calibration config TOML
@@ -520,6 +538,22 @@ fn main() -> Result<()> {
 
         Commands::ThermalAnalyse { ref config } => {
             thermal::print_analyse(std::path::Path::new(config))?;
+        }
+
+        Commands::ThermalEquilibrium {
+            ref config,
+            outside,
+            mwt,
+            solar_sw,
+            solar_ne,
+        } => {
+            thermal::print_equilibrium(
+                std::path::Path::new(config),
+                outside,
+                mwt,
+                solar_sw,
+                solar_ne,
+            )?;
         }
 
         Commands::ThermalCalibrate { ref config } => {

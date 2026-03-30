@@ -300,3 +300,183 @@ fn query_latest_ebusd(
     let rows = influx::query_flux_csv_pub(influx_url, org, token, &flux).ok()?;
     rows.last()?.get("_value")?.parse().ok()
 }
+
+/// Solve for equilibrium room temperatures at given outside temp and MWT.
+///
+/// Uses Gauss-Seidel iteration with bisection per room: for each room in turn,
+/// find the temperature where total energy balance = 0 (holding other rooms
+/// fixed), then sweep repeatedly until all rooms converge.
+pub fn print_equilibrium(
+    config_path: &Path,
+    outside_temp_override: Option<f64>,
+    mwt_override: Option<f64>,
+    irr_sw: f64,
+    irr_ne: f64,
+) -> ThermalResult<()> {
+    let (_, cfg) = load_thermal_config(config_path)?;
+    let token = resolve_influx_token(&cfg)?;
+    let rooms = build_rooms()?;
+    let connections = build_connections()?;
+    let doorways = build_doorways()?;
+
+    // Get current conditions from InfluxDB if not overridden
+    let utc = chrono::FixedOffset::east_opt(0).unwrap();
+    let now = Utc::now().with_timezone(&utc);
+    let start = now - chrono::Duration::minutes(30);
+
+    let outside_temp = if let Some(v) = outside_temp_override {
+        v
+    } else {
+        let rows = influx::query_outside_temp(
+            &cfg.influx.url,
+            &cfg.influx.org,
+            &cfg.influx.bucket,
+            &token,
+            &start,
+            &now,
+        )?;
+        rows.last().map(|(_, v)| *v).unwrap_or(10.0)
+    };
+
+    let mwt = if let Some(v) = mwt_override {
+        v
+    } else {
+        let rows = influx::query_mwt(
+            &cfg.influx.url,
+            &cfg.influx.org,
+            &cfg.influx.bucket,
+            &token,
+            &start,
+            &now,
+        )?;
+        rows.last().map(|(_, v)| *v).unwrap_or(0.0)
+    };
+
+    let doorway_cd = 0.20;
+    let wind_multiplier = 1.0;
+    let sleeping = false;
+    let ne_horiz = 0.0;
+
+    let room_names: Vec<String> = rooms.keys().cloned().collect();
+
+    // Initial guess: all rooms at 19°C
+    let mut temps: HashMap<String, f64> = room_names.iter().map(|n| (n.clone(), 19.0)).collect();
+
+    // Gauss-Seidel iteration with bisection per room
+    let max_iter = 200;
+    let tol = 1e-4; // °C
+    for _iter in 0..max_iter {
+        let mut max_change: f64 = 0.0;
+
+        for name in &room_names {
+            let room = &rooms[name];
+            // Bisection: find T where energy_balance_total(T) = 0
+            // Energy balance is monotonically decreasing with T (hotter = more loss)
+            let mut lo = -10.0_f64;
+            let mut hi = 50.0_f64;
+
+            for _ in 0..100 {
+                let mid = (lo + hi) / 2.0;
+                temps.insert(name.clone(), mid);
+                let bal = full_room_energy_balance_components(
+                    room,
+                    mid,
+                    outside_temp,
+                    &temps,
+                    &connections,
+                    &doorways,
+                    doorway_cd,
+                    wind_multiplier,
+                    mwt,
+                    sleeping,
+                    irr_sw,
+                    irr_ne,
+                    ne_horiz,
+                );
+                if bal.total > 0.0 {
+                    lo = mid; // too cold, room gaining heat → raise temp
+                } else {
+                    hi = mid; // too hot, room losing heat → lower temp
+                }
+                if (hi - lo) < tol * 0.01 {
+                    break;
+                }
+            }
+
+            let new_t = (lo + hi) / 2.0;
+            let old_t = temps.insert(name.clone(), new_t).unwrap_or(new_t);
+            max_change = max_change.max((new_t - old_t).abs());
+        }
+
+        if max_change < tol {
+            break;
+        }
+    }
+
+    // Print results
+    println!("{}", "=".repeat(70));
+    println!(
+        "EQUILIBRIUM TEMPERATURES (T_out={:.1}°C, MWT={:.1}°C)",
+        outside_temp, mwt
+    );
+    println!("{}", "=".repeat(70));
+
+    println!(
+        "\n{:<14} {:>6} {:>7} {:>8} {:>9} {}",
+        "Room", "Temp", "Rad_in", "Ext_out", "Vent_out", "Notes"
+    );
+    println!("{}", "─".repeat(60));
+
+    for name in &room_names {
+        let t = temps[name];
+        let room = &rooms[name];
+        let bal = full_room_energy_balance_components(
+            room,
+            t,
+            outside_temp,
+            &temps,
+            &connections,
+            &doorways,
+            doorway_cd,
+            wind_multiplier,
+            mwt,
+            true, // sleeping=true for display
+            irr_sw,
+            irr_ne,
+            ne_horiz,
+        );
+        let mut notes = String::new();
+        let has_active_rad = room.radiators.iter().any(|r| r.active);
+        if !has_active_rad {
+            notes = "no active rad".to_string();
+        } else if t < 18.0 {
+            notes = "COLD".to_string();
+        }
+        println!(
+            "{:<14} {:>5.1}° {:>6.0}W {:>7.0}W {:>8.0}W  {}",
+            name, t, bal.radiator, -bal.external, -bal.ventilation, notes
+        );
+    }
+
+    // Design summary
+    let heated: Vec<&String> = room_names
+        .iter()
+        .filter(|n| rooms[*n].radiators.iter().any(|r| r.active))
+        .collect();
+    if !heated.is_empty() {
+        let coldest = heated
+            .iter()
+            .min_by(|a, b| temps[a.as_str()].partial_cmp(&temps[b.as_str()]).unwrap())
+            .unwrap();
+        println!(
+            "\nColdest heated room: {} at {:.1}°C",
+            coldest,
+            temps[coldest.as_str()]
+        );
+        if temps[coldest.as_str()] < 18.0 {
+            println!("  → needs higher MWT to reach 18°C");
+        }
+    }
+
+    Ok(())
+}

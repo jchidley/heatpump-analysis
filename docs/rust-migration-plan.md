@@ -14,7 +14,7 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 
 ## Scope
 
-**In scope**: `model/house.py` (2 remaining commands to port)
+**In scope**: `model/house.py` (1 remaining command to port)
 
 **Deleted** (fully superseded by Rust, removed 2026-03-30):
 - `model/calibrate.py` — replaced by `thermal-calibrate`
@@ -40,6 +40,7 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 | `thermal-operational` | Heating/DHW/off, solar gain, BCF-based state |
 | `thermal-snapshot` | Export/import with human signoff |
 | `thermal-analyse` | Live energy balance from InfluxDB (per-room heat flows) |
+| `thermal-equilibrium` | Steady-state room temperature solver (Gauss-Seidel + bisection) |
 
 All calibration/validation/operational commands produce structured JSON artifacts to `artifacts/thermal/`. Regression baselines in `artifacts/thermal/baselines/`. Formula parity with Python verified (audit completed 2026-03-28, 509 checks, 0 mismatches).
 
@@ -47,8 +48,8 @@ All calibration/validation/operational commands produce structured JSON artifact
 
 | # | Command | Complexity | Notes |
 |---|---------|-----------|-------|
-| 1 | ~~`thermal-analyse`~~ | ✅ | Ported 2026-03-30. Live energy balance from InfluxDB. |
-| 2 | `thermal-equilibrium` | High | Steady-state solver (`scipy.fsolve` → Gauss-Seidel iteration or `nalgebra`). Highest-value port — enables "what MWT do I need?" questions from Rust. |
+| 1 | ~~`thermal-analyse`~~ | ✅ | Ported 2026-03-30. |
+| 2 | ~~`thermal-equilibrium`~~ | ✅ | Ported 2026-03-30. Gauss-Seidel + bisection. **Fixes Python fsolve convergence failure** — Python returned initial guess (ier=5). |
 | 3 | `thermal-moisture` | Medium | Humidity analysis. Dew point, condensation risk. Lower priority. |
 
 After all ported, mark `model/house.py` as legacy.
