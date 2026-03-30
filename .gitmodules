@@ -16,3 +16,12 @@
 [submodule "emonPiLCD"]
 	path = emonPiLCD
 	url = https://github.com/openenergymonitor/emonPiLCD.git
+[submodule "yuhu-ebus"]
+	path = yuhu-ebus
+	url = https://github.com/yuhu-/ebus.git
+[submodule "esp-arduino-ebus"]
+	path = esp-arduino-ebus
+	url = https://github.com/danielkucera/esp-arduino-ebus.git
+[submodule "ttyebus"]
+	path = ttyebus
+	url = https://github.com/eBUS/ttyebus.git

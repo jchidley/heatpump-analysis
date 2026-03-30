@@ -56,7 +56,7 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
   - InfluxDB 2 (port 8086)
   - Telegraf (MQTT → InfluxDB bridge)
   - Grafana (port 3000)
-  - ebusd (connects to eBUS adapter at 10.0.1.41:9999 over network)
+  - ebusd v26.1 (Docker, connects to eBUS adapter at 10.0.1.41:9999 over network)
   - ebusd-poll (polls 25+ eBUS values every 30s, publishes to local MQTT)
 - **SSH**: `ssh jack@pi5data` or `ssh jack@10.0.1.230`
 
@@ -91,7 +91,7 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 
 ### eBUS Adapter Shield v1.24 (10.0.1.41)
 - **Hardware**: ESP32-C3, PCB v1.24.4
-- **Firmware**: ebusd-esp32, build 20260317 (updated from 20241027)
+- **Firmware**: ebusd-esp32 v5, build 6311 (updated 2026-03-17, from build 20241027)
 - **MAC**: 80:65:99:9a:04:78
 - **Hostname**: ebus-9a0478
 - **WiFi**: SSID "C2"
@@ -130,8 +130,8 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 **emondhw → pi5data** (bridged):
 | Topic | Source | Data |
 |---|---|---|
-| `emon/multical/dhw_t1` | Multical meter | DHW hot water out temp (°C) |
-| `emon/multical/dhw_t2` | Multical meter | DHW cold in temp post-WWHR (°C) |
+| `emon/multical/dhw_t1` | Multical meter | T1 Cylinder Top — hot water outlet (°C). Kamstrup register 0x0006 "Temp. 1 Inlet" (inlet to meter = hot from cylinder) |
+| `emon/multical/dhw_t2` | Multical meter | T2 Mains Inlet — cold water in, post-WWHR (°C). Kamstrup register 0x0008 "Temp. 2 Outlet" (cold reference) |
 | `emon/multical/dhw_t1-t2` | Multical meter | Delta T (°C) |
 | `emon/multical/dhw_flow` | Multical meter | Flow rate (l/h) |
 | `emon/multical/dhw_power` | Multical meter | Thermal power (kW) |
@@ -204,7 +204,7 @@ DHCP: static reservations for emonpi, emonhp, emondhw, pi5data
 | OutsideTemp | Outside temperature | °C |
 | Hc1FlowTemp | HC1 flow temperature | °C |
 | Hc1FlowTempDesired | HC1 flow setpoint | °C |
-| HwcStorageTemp | DHW cylinder temperature | °C |
+| HwcStorageTemp | Cylinder Temp — VR 10 NTC in dry stat pocket, just above bottom coil. VRC 700 uses this for charging decisions (triggers at target minus CylinderChargeHyst). Reads lower-cylinder stratification zone, NOT cylinder top. | °C |
 | Hc1PumpStatus | Heating pump on/off | 0/1 |
 
 **Every 5 minutes** (slow tier, counter % 10 == 0):
@@ -494,10 +494,17 @@ sudo ./scripts/backup-sdcard.sh /dev/sda /path/to/output-name
 ## Physical Setup Notes
 
 ### DHW Metering (Multical on emondhw)
-- **T1** = hot water output temperature (after cylinder)
-- **T2** = cold water input temperature (after shower WWHR, before cylinder)
-- Measures heat added by heat pump to DHW only (not total from mains cold)
+- **T1** (`dhw_t1`) = hot water outlet, cylinder top (1580mm). Kamstrup register 0x0006 "Temp. 1 Inlet" (inlet to the meter = hot from cylinder). ~42°C when charged.
+- **T2** (`dhw_t2`) = cold water inlet, after shower WWHR (540mm). Kamstrup register 0x0008 "Temp. 2 Outlet" (cold reference). ~24°C.
+- Measures heat drawn from cylinder by DHW usage (not heat added by HP)
 - WWHR pre-heats mains cold from ~10°C to ~29°C before the cylinder
+- **Note:** Kamstrup naming is from the meter's perspective — "Inlet" = hot, "Outlet" = cold. Counterintuitive for a DHW application. See `docs/dhw-fixes.md`.
+
+### DHW Cylinder Temperature (VR 10 on VWZ AI)
+- **HwcStorageTemp** (`ebusd/poll/HwcStorageTemp`) = VR 10 NTC probe in dry stat pocket, just above bottom coil (~600mm)
+- This is what the VRC 700 uses for DHW charging decisions (target 45°C minus CylinderChargeHyst 5K = triggers at 40°C)
+- Reads the stratification zone: ~42°C when fully charged, crashes to ~23°C after large draws (90L+)
+- NOT the same as cylinder top temperature (T1) — can read 10°C lower due to stratification
 
 ### Heat Pump (Vaillant aroTHERM)
 - 3 eBUS masters detected: 0x10, 0x71, 0x03
@@ -583,9 +590,10 @@ Both needed: emonhp alone can't distinguish heating from DHW. eBUS alone can't g
 - Last few days before setup: longer cycles (45-90 min) with lower max flow temps — filter blockage effect
 
 ### DHW Metering (Multical on emondhw)
-- T1 = hot water output temperature (after cylinder)
-- T2 = cold water input temperature (after shower WWHR, before cylinder)
-- Measures heat added by heat pump only (not total from mains cold)
+- T1 (`dhw_t1`) = cylinder top / hot water outlet (1580mm height). ~42°C when charged.
+- T2 (`dhw_t2`) = mains inlet / cold water in, post-WWHR (540mm height). ~24°C.
+- HwcStorageTemp (eBUS) = VR 10 NTC in dry stat pocket, just above bottom coil (~600mm). VRC 700 charging trigger.
+- Measures heat drawn from cylinder by DHW usage (not heat added by HP)
 - WWHR pre-heats mains cold from ~10°C to ~29°C before the cylinder
 - dhw_P1 and dhw_mass_m1 return 4294967296 (0xFFFFFFFF) — register read errors, those Modbus registers not valid for this Multical model
 
