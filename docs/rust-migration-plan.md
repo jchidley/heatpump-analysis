@@ -44,7 +44,20 @@ After all ported, mark `model/house.py` as legacy.
 
 ### Infrastructure remaining
 
-- Complete thermal module split (`src/thermal.rs` is ~3,500 lines → `model.rs`, `calibration.rs`, `validation.rs`, `diagnostics.rs`)
+- ~~Complete thermal module split~~ ✅ Done 2026-03-29: `src/thermal.rs` (3,506 lines) → 15 focused submodules (4,192 lines total)
+  - `config.rs` (207L) — TOML config structs
+  - `geometry.rs` (257L) — room/connection/doorway types + JSON loading
+  - `physics.rs` (388L) — constants + thermal mass + energy balance
+  - `solar.rs` (180L) — solar position + irradiance
+  - `wind.rs` (75L) — Open-Meteo wind + multiplier
+  - `calibration.rs` (532L) — grid search + setup + predict/measured rates
+  - `validation.rs` (469L) — metrics + residuals + validate()
+  - `diagnostics.rs` (492L) — cooldown detection + fit_diagnostics()
+  - `operational.rs` (617L) — HP state + segmentation + operational_validate()
+  - `artifact.rs` (224L) — artifact types + git meta + build/write
+  - `snapshot.rs` (233L) — export/import manifests
+  - `thermal.rs` (23L) — thin facade with re-exports
+  - Existing: `error.rs`, `influx.rs`, `report.rs` (unchanged)
 - Add `thermal-operational` baseline to regression CI
 - Enforce lint gates in CI workflow
 

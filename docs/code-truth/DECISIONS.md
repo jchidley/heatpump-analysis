@@ -220,4 +220,4 @@
 - **Kitchen equilibrium undershoot**: Model predicts kitchen 2.2°C colder than measured — likely needs more doorway exchange from hall/conservatory. [UNCERTAIN]
 - **P3 CT scaling**: Reads 6.7kW for 3.08kWp array. Wrong CT ratio or Powerwall discharge contributing. Worked around by calibrated scaling factor. [UNCERTAIN]
 - **Landing chimney model**: ACH-to-outside works for cooldown but structurally wrong for operational use. Needs bidirectional inter-floor air exchange model. [UNCERTAIN]
-- **`thermal.rs` is 3,500 lines**: Module split planned (`model.rs`, `calibration.rs`, `validation.rs`, `diagnostics.rs`) but not yet executed.
+- ~~**`thermal.rs` is 3,500 lines**~~: Module split completed 2026-03-29 → 15 focused submodules (config, geometry, physics, solar, wind, calibration, validation, diagnostics, operational, artifact, snapshot + existing error/influx/report). Facade is 23 lines.

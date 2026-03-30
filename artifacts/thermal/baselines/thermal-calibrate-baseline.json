@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-03-28T07:07:35.063497481+00:00",
+  "generated_at_utc": "2026-03-29T22:20:19.032769636+00:00",
   "command": "thermal-calibrate",
   "config_path": "model/thermal-config.toml",
-  "config_sha256": "ec9477eba620a77a58ea655f239c6b917bdad8547a419a290e6dd3ad654589de",
+  "config_sha256": "d5dbbfb126a263079d374757f88e9b10c9305e862245b254003bf8b9132bb950",
   "git": {
-    "sha": "14b295647a39d3fd5269ed2d876797d54df4da12",
+    "sha": "61c758cae7204e057e8e52cdafc017d19b194a25",
     "dirty": true
   },
   "calibration_windows": [
@@ -23,13 +23,13 @@
   "calibration": {
     "leather_ach": 0.6,
     "landing_ach": 1.3,
-    "conservatory_ach": 4.5,
+    "conservatory_ach": 1.0,
     "office_ach": 3.6,
     "doorway_cd": 0.2,
-    "rmse_night1": 0.09634722931274996,
-    "rmse_night2": 0.050821008650213786,
-    "base_score": 0.07358411898148187,
-    "final_score": 0.07358411898148187,
+    "rmse_night1": 0.07582548482738398,
+    "rmse_night2": 0.03555310510412648,
+    "base_score": 0.055689294965755226,
+    "final_score": 0.055689294965755226,
     "night1": [
       {
         "room": "aldora",
@@ -50,9 +50,9 @@
       {
         "room": "conservatory",
         "measured": 0.5538461538461532,
-        "predicted": 0.7732747698298879,
-        "residual": 0.21942861598373464,
-        "abs_residual": 0.21942861598373464,
+        "predicted": 0.4542051108778876,
+        "residual": -0.09964104296826559,
+        "abs_residual": 0.09964104296826559,
         "thermal_mass_kj_per_k": 7101.233924050633
       },
       {
@@ -156,9 +156,9 @@
       {
         "room": "conservatory",
         "measured": 0.8687500000000002,
-        "predicted": 0.7380249337934554,
-        "residual": -0.1307250662065449,
-        "abs_residual": 0.1307250662065449,
+        "predicted": 0.42116431954834227,
+        "residual": -0.447585680451658,
+        "abs_residual": 0.447585680451658,
         "thermal_mass_kj_per_k": 7101.233924050633
       },
       {

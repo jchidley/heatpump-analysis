@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-03-28T07:07:07.577593854+00:00",
+  "generated_at_utc": "2026-03-29T22:21:10.871609312+00:00",
   "command": "thermal-validate",
   "config_path": "model/thermal-config.toml",
-  "config_sha256": "ec9477eba620a77a58ea655f239c6b917bdad8547a419a290e6dd3ad654589de",
+  "config_sha256": "d5dbbfb126a263079d374757f88e9b10c9305e862245b254003bf8b9132bb950",
   "git": {
-    "sha": "14b295647a39d3fd5269ed2d876797d54df4da12",
+    "sha": "61c758cae7204e057e8e52cdafc017d19b194a25",
     "dirty": true
   },
   "calibration_windows": [
@@ -23,13 +23,13 @@
   "calibration": {
     "leather_ach": 0.6,
     "landing_ach": 1.3,
-    "conservatory_ach": 4.5,
+    "conservatory_ach": 1.0,
     "office_ach": 3.6,
     "doorway_cd": 0.2,
-    "rmse_night1": 0.09634722931274996,
-    "rmse_night2": 0.050821008650213786,
-    "base_score": 0.07358411898148187,
-    "final_score": 0.07358411898148187,
+    "rmse_night1": 0.07582548482738398,
+    "rmse_night2": 0.03555310510412648,
+    "base_score": 0.055689294965755226,
+    "final_score": 0.055689294965755226,
     "night1": [
       {
         "room": "aldora",
@@ -50,9 +50,9 @@
       {
         "room": "conservatory",
         "measured": 0.5538461538461532,
-        "predicted": 0.7732747698298879,
-        "residual": 0.21942861598373464,
-        "abs_residual": 0.21942861598373464,
+        "predicted": 0.4542051108778876,
+        "residual": -0.09964104296826559,
+        "abs_residual": 0.09964104296826559,
         "thermal_mass_kj_per_k": 7101.233924050633
       },
       {
@@ -156,9 +156,9 @@
       {
         "room": "conservatory",
         "measured": 0.8687500000000002,
-        "predicted": 0.7380249337934554,
-        "residual": -0.1307250662065449,
-        "abs_residual": 0.1307250662065449,
+        "predicted": 0.42116431954834227,
+        "residual": -0.447585680451658,
+        "abs_residual": 0.447585680451658,
         "thermal_mass_kj_per_k": 7101.233924050633
       },
       {
@@ -250,26 +250,20 @@
       "within_1c_min": 0.8
     },
     "aggregate_metrics": {
-      "rooms_count": 24,
-      "rmse": 0.30386409953251836,
-      "mae": 0.24977393854551053,
-      "bias": 0.23136001293757888,
-      "max_abs_error": 0.7026167300868963,
-      "within_0_5c": 0.9166666666666666,
+      "rooms_count": 22,
+      "rmse": 0.24636377076643243,
+      "mae": 0.2122651550804032,
+      "bias": 0.19217723623538677,
+      "max_abs_error": 0.4980844915068004,
+      "within_0_5c": 1.0,
       "within_1_0c": 1.0
     },
     "aggregate_whole_house": {
-      "measured_w": 1913.1734742922768,
-      "predicted_w": 8931.226786838291,
-      "error_w": 7018.053312546015,
-      "pred_over_meas": 4.668278599326776,
+      "measured_w": 1345.5737491375928,
+      "predicted_w": 5750.489135428995,
+      "error_w": 4404.915386291402,
+      "pred_over_meas": 4.2736335627197,
       "top_contributors": [
-        {
-          "room": "conservatory",
-          "measured_w": 567.5997251546844,
-          "predicted_w": 3180.737651409298,
-          "error_w": 2613.1379262546134
-        },
         {
           "room": "leather",
           "measured_w": 45.0911012743132,
@@ -293,6 +287,12 @@
           "measured_w": 137.74360303030255,
           "predicted_w": 735.1528097790663,
           "error_w": 597.4092067487637
+        },
+        {
+          "room": "jackcarol",
+          "measured_w": 0.32785590230665207,
+          "predicted_w": 417.5910396265738,
+          "error_w": 417.26318372426715
         }
       ]
     },
@@ -307,26 +307,20 @@
         "wind_avg_ms": 0.0,
         "wind_multiplier": 1.0,
         "metrics": {
-          "rooms_count": 12,
-          "rmse": 0.3058188328718869,
-          "mae": 0.2449337789044043,
-          "bias": 0.2081059276885409,
-          "max_abs_error": 0.7026167300868963,
-          "within_0_5c": 0.9166666666666666,
+          "rooms_count": 11,
+          "rmse": 0.2390571694788194,
+          "mae": 0.20332623788781412,
+          "bias": 0.16315040019778124,
+          "max_abs_error": 0.4679082689123025,
+          "within_0_5c": 1.0,
           "within_1_0c": 1.0
         },
         "whole_house": {
-          "measured_w": 1112.719298230695,
-          "predicted_w": 4370.86156374247,
-          "error_w": 3258.142265511775,
-          "pred_over_meas": 3.92809001397968,
+          "measured_w": 975.4973866548368,
+          "predicted_w": 2847.6824968058904,
+          "error_w": 1872.1851101510538,
+          "pred_over_meas": 2.919210790067954,
           "top_contributors": [
-            {
-              "room": "conservatory",
-              "measured_w": 137.22191157585837,
-              "predicted_w": 1523.1790669365791,
-              "error_w": 1385.9571553607207
-            },
             {
               "room": "leather",
               "measured_w": -70.10514285714218,
@@ -350,6 +344,12 @@
               "measured_w": 92.76609999999968,
               "predicted_w": 382.13960176497,
               "error_w": 289.37350176497034
+            },
+            {
+              "room": "elvina",
+              "measured_w": 431.7810829817157,
+              "predicted_w": 193.25754075359055,
+              "error_w": -238.52354222812517
             }
           ]
         },
@@ -370,14 +370,6 @@
             "residual": 0.05969146293411358,
             "abs_residual": 0.05969146293411358,
             "thermal_mass_kj_per_k": 3920.1600000000003
-          },
-          {
-            "room": "conservatory",
-            "measured": 0.06956521739130472,
-            "predicted": 0.772181947478201,
-            "residual": 0.7026167300868963,
-            "abs_residual": 0.7026167300868963,
-            "thermal_mass_kj_per_k": 7101.233924050633
           },
           {
             "room": "elvina",
@@ -462,26 +454,20 @@
         "wind_avg_ms": 0.0,
         "wind_multiplier": 1.0,
         "metrics": {
-          "rooms_count": 12,
-          "rmse": 0.30189670986993766,
-          "mae": 0.2546140981866168,
-          "bias": 0.2546140981866168,
-          "max_abs_error": 0.6221243832364866,
-          "within_0_5c": 0.9166666666666666,
+          "rooms_count": 11,
+          "rmse": 0.2534598287959762,
+          "mae": 0.22120407227299224,
+          "bias": 0.22120407227299224,
+          "max_abs_error": 0.4980844915068004,
+          "within_0_5c": 1.0,
           "within_1_0c": 1.0
         },
         "whole_house": {
-          "measured_w": 800.454176061582,
-          "predicted_w": 4560.365223095822,
-          "error_w": 3759.9110470342403,
-          "pred_over_meas": 5.697222101499757,
+          "measured_w": 370.076362482756,
+          "predicted_w": 2902.8066386231044,
+          "error_w": 2532.7302761403485,
+          "pred_over_meas": 7.843804503343179,
           "top_contributors": [
-            {
-              "room": "conservatory",
-              "measured_w": 430.37781357882596,
-              "predicted_w": 1657.5585844727188,
-              "error_w": 1227.180770893893
-            },
             {
               "room": "front",
               "measured_w": 99.19762786069616,
@@ -505,6 +491,12 @@
               "measured_w": -157.01130290244228,
               "predicted_w": 177.82339036117952,
               "error_w": 334.83469326362183
+            },
+            {
+              "room": "office",
+              "measured_w": 44.97750303030288,
+              "predicted_w": 353.0132080140963,
+              "error_w": 308.0357049837934
             }
           ]
         },
@@ -525,14 +517,6 @@
             "residual": 0.25891920954816056,
             "abs_residual": 0.25891920954816056,
             "thermal_mass_kj_per_k": 3920.1600000000003
-          },
-          {
-            "room": "conservatory",
-            "measured": 0.21818181818181806,
-            "predicted": 0.8403062014183046,
-            "residual": 0.6221243832364866,
-            "abs_residual": 0.6221243832364866,
-            "thermal_mass_kj_per_k": 7101.233924050633
           },
           {
             "room": "elvina",
