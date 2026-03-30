@@ -592,5 +592,69 @@ heat-pump-only, but the passive traffic decoding covers everything.
 
 The VWZ AI indoor hydraulic station (0x76) exists only in heat pump systems.
 Gas boiler systems don't have a separate indoor unit — the boiler handles
-everything at address 0x08. The VWZ AI's extensive `71→08` traffic
-(real-time compressor/valve control) is specific to the aroTHERM system.
+everything at address 0x08.
+
+### Corrected control flow (from bus traffic analysis, 30 March 2026)
+
+The VRC 700 does **NOT** send SetMode to the HMU. It sends SetMode to
+the **VWZ AI**, which translates it into real-time control of the HMU:
+
+```
+VRC 700 (10) ──B510 SetMode──→ VWZ AI (76)
+  "auto; 31°C flow; no DHW"       │
+                                  │ translates into
+                                  │
+                          VWZ AI (71) ──B51A──→ HMU (08)
+                            256 registers × 5 blocks
+                            = 1280 real-time parameter msgs
+                            (compressor, valves, defrost...)
+
+VRC 700 (10) ──B507/B511──→ HMU (08)
+  Read-only: energy counters, status, temperatures
+```
+
+The VRC 700 **reads** from the HMU but never **controls** it directly.
+The VWZ AI is the real controller. The VRC 700 is just a scheduler.
+
+### Full VRC 700 → VWZ AI command set
+
+| Command | Data | Count | Decoded? | Purpose |
+|---------|------|-------|----------|---------|
+| B5 10 (SetMode) | `auto;31.0;-;-;0;1;1;0;0;0` | ~13k (every ~10s) | **Yes** | Flow temp demand, heating/DHW mode, disable bits |
+| B5 11 01 (Status01) | `31.0;27.0;-;-;-;on` | ~13k (every ~10s) | **Yes** | Flow, return, outside, DHW, storage temps, pump status |
+| B5 12 (parameters) | 2 sub-addresses (0f0001, 0f0002) | ~13k | **No** | Likely real-time status readback from VWZ AI |
+| B5 13 (parameters) | sub-address 040d00 | ~2.2k | **No** | Unknown |
+| B5 04 01 (operational data) | block 01 | ~2.2k | **No** | Unknown |
+| B5 09 (config set) | 2 one-time writes | 2 | **No** | Startup configuration |
+| B5 16 (identification) | version data | ~31 | Partial | Device identification |
+
+The undecoded B512/B513 traffic is the **return channel** — the VRC 700
+reading VWZ AI state to inform its next SetMode decision. The community
+hasn't reverse-engineered these because most ebusd users have gas boilers
+(no VWZ AI). This is a prime target for Phase 3 passive capture analysis.
+
+### Replacing the VRC 700
+
+To replace the VRC 700, the Pico W would need to:
+1. Send **B5 10 SetMode** to the VWZ AI (address 0x76) every ~10s
+2. Read **B5 11 Status01** from the VWZ AI for feedback
+3. Optionally read **B5 07/B5 11** from the HMU for energy/status data
+
+The SetMode fields are simple:
+
+| Field | Type | What to send |
+|-------|------|-------------|
+| `hcmode` | UCH | 0=auto, 1=off, 2=heat, 3=water |
+| `flowtempdesired` | D1C (°C) | Weather-compensated flow temp |
+| `hwctempdesired` | D1C (°C) | DHW target (45°C) or `-` |
+| `hwcflowtempdesired` | UCH (°C) | DHW flow temp or `-` |
+| `disablehc` | bit | 0=allow heating |
+| `disablehwctapping` | bit | 1=no DHW tapping |
+| `disablehwcload` | bit | 1=no DHW loading |
+| `remotecontrolhcpump` | bit | 0=normal |
+| `releasebackup` | bit | 0=no backup heater |
+| `releasecooling` | bit | 0=no cooling |
+
+The VWZ AI handles all the complexity — compressor modulation, defrost,
+valve control, refrigerant management. You just tell it the temperature
+you want and the mode. It's a clean abstraction.
