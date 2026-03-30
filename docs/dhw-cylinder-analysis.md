@@ -134,8 +134,9 @@ curl -s "http://10.0.1.230:8086/api/v2/query?org=home" \
 | `emon/heatpump/heatmeter_FlowRate` | emonhp MBUS | Primary flow rate (m³/h) |
 | `emon/heatpump/heatmeter_Power` | emonhp MBUS | Primary thermal power (W) |
 | `emon/heatpump/electric_Power` | emonhp SDM120 | HP electrical consumption (W) |
-| `emon/multical/dhw_t1` | emondhw Multical | Hot out / upper cylinder (°C) |
-| `emon/multical/dhw_t2` | emondhw Multical | Cold in / mid cylinder (°C) |
+| `emon/multical/dhw_t1` | emondhw Multical | T1 Cylinder Top — hot water outlet, 1580mm (°C) |
+| `emon/multical/dhw_t2` | emondhw Multical | T2 Mains Inlet — cold water in post-WWHR, 540mm (°C) |
+| `ebusd/poll/HwcStorageTemp` | VR 10 NTC via VWZ AI SP1 | Cylinder Temp — dry stat pocket, just above bottom coil, ~600mm. VRC 700 charging trigger (°C) |
 | `emon/multical/dhw_flow` | emondhw Multical | DHW draw flow rate (L/h) |
 | `emon/multical/dhw_power` | emondhw Multical | DHW thermal power (kW) |
 | `emon/multical/dhw_volume_V1` | emondhw Multical | Cumulative DHW volume (L) |

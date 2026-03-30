@@ -22,11 +22,8 @@ const READ_TIMEOUT: Duration = Duration::from_secs(3);
 const COLD_THRESHOLD: f64 = 4.0;
 
 fn ebus_command(cmd: &str) -> Result<String, String> {
-    let stream = TcpStream::connect_timeout(
-        &EBUSD_HOST.parse().unwrap(),
-        CONNECT_TIMEOUT,
-    )
-    .map_err(|e| format!("connect failed: {e}"))?;
+    let stream = TcpStream::connect_timeout(&EBUSD_HOST.parse().unwrap(), CONNECT_TIMEOUT)
+        .map_err(|e| format!("connect failed: {e}"))?;
 
     stream
         .set_read_timeout(Some(READ_TIMEOUT))
@@ -140,7 +137,9 @@ fn run_period(period: &str) -> Result<(), String> {
         }
 
         _ => {
-            return Err(format!("unknown period: {period}. Use: midnight, morning, afternoon, evening"));
+            return Err(format!(
+                "unknown period: {period}. Use: midnight, morning, afternoon, evening"
+            ));
         }
     }
 

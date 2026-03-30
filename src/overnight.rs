@@ -157,19 +157,19 @@ struct SimResult {
 /// Tariff band for a given clock hour.
 #[derive(Clone, Copy, PartialEq)]
 enum TariffBand {
-    Cosy,    // 14.05p — 04:00-07:00, 13:00-16:00, 22:00-00:00
-    Mid,     // 28.65p — 00:00-04:00, 07:00-13:00, 19:00-22:00
-    Peak,    // 42.97p — 16:00-19:00
+    Cosy, // 14.05p — 04:00-07:00, 13:00-16:00, 22:00-00:00
+    Mid,  // 28.65p — 00:00-04:00, 07:00-13:00, 19:00-22:00
+    Peak, // 42.97p — 16:00-19:00
 }
 
 fn tariff_band(offset_min: u32) -> TariffBand {
     let hour = (NIGHT_START_HOUR + offset_min / 60) % 24;
     match hour {
-        4..=6 => TariffBand::Cosy,     // 04:00-07:00
-        13..=15 => TariffBand::Cosy,   // 13:00-16:00
-        22..=23 => TariffBand::Cosy,   // 22:00-00:00
-        16..=18 => TariffBand::Peak,   // 16:00-19:00
-        _ => TariffBand::Mid,          // everything else
+        4..=6 => TariffBand::Cosy,   // 04:00-07:00
+        13..=15 => TariffBand::Cosy, // 13:00-16:00
+        22..=23 => TariffBand::Cosy, // 22:00-00:00
+        16..=18 => TariffBand::Peak, // 16:00-19:00
+        _ => TariffBand::Mid,        // everything else
     }
 }
 
@@ -224,7 +224,9 @@ fn extract_nights(df: &DataFrame) -> Result<Vec<Night>> {
 
     for i in 0..n {
         let Some(ts_ms) = ts_col.get(i) else { continue };
-        let Some(dt) = DateTime::from_timestamp_millis(ts_ms) else { continue };
+        let Some(dt) = DateTime::from_timestamp_millis(ts_ms) else {
+            continue;
+        };
         let hour = dt.hour();
         let date = dt.date_naive();
 
@@ -252,9 +254,15 @@ fn extract_nights(df: &DataFrame) -> Result<Vec<Night>> {
 
         for &i in indices {
             let Some(ts_ms) = ts_col.get(i) else { continue };
-            let Some(dt) = DateTime::from_timestamp_millis(ts_ms) else { continue };
-            let Some(outside) = outside_col.get(i) else { continue };
-            let Some(indoor) = indoor_col.get(i) else { continue };
+            let Some(dt) = DateTime::from_timestamp_millis(ts_ms) else {
+                continue;
+            };
+            let Some(outside) = outside_col.get(i) else {
+                continue;
+            };
+            let Some(indoor) = indoor_col.get(i) else {
+                continue;
+            };
 
             let elec = elec_col.get(i).unwrap_or(0.0);
             let heat = heat_col.get(i).unwrap_or(0.0);
@@ -300,8 +308,9 @@ fn extract_nights(df: &DataFrame) -> Result<Vec<Night>> {
         let target_offset = offset_for_hour(TARGET_HOUR);
         let indoor_target = minutes
             .iter()
-            .filter(|m| m.offset_min >= target_offset.saturating_sub(2)
-                     && m.offset_min <= target_offset + 2)
+            .filter(|m| {
+                m.offset_min >= target_offset.saturating_sub(2) && m.offset_min <= target_offset + 2
+            })
             .map(|m| m.indoor_t)
             .next()
             .unwrap_or(indoor_start);
@@ -601,7 +610,7 @@ fn actual_cost(night: &Night) -> SimResult {
 fn generate_schedules(_dhw_stats: &DhwStats) -> Vec<Schedule> {
     let mut schedules = Vec::new();
     let cosy_start = offset_for_hour(4); // 04:00 = offset 480
-    let cosy_end = offset_for_hour(7);   // 07:00 = offset 660
+    let cosy_end = offset_for_hour(7); // 07:00 = offset 660
 
     // DHW modes to try
     struct DhwMode {
@@ -788,7 +797,7 @@ fn simulate_schedule(
 
             let q_loss = htc * (t_indoor - t_out); // W
             let net_q = heat_w - q_loss; // W
-            // dT = net_q × dt_seconds / (capacity × 3600)
+                                         // dT = net_q × dt_seconds / (capacity × 3600)
             let dt_deg = net_q * 60.0 / (cooling.capacity_wh * 3600.0);
             t_indoor += dt_deg;
 
@@ -839,12 +848,16 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
         "Tariff:   Cosy {:.2}p (04–07, 13–16, 22–00), Mid {:.2}p, Peak {:.2}p (16–19)",
         COSY_RATE, MID_RATE, PEAK_RATE
     );
-    println!("Battery:  covers {:.0}% of non-Cosy → effective mid {:.1}p, peak {:.1}p",
+    println!(
+        "Battery:  covers {:.0}% of non-Cosy → effective mid {:.1}p, peak {:.1}p",
         BATTERY_COVERAGE * 100.0,
-        effective_rate(offset_for_hour(1)),  // sample mid-peak hour
+        effective_rate(offset_for_hour(1)), // sample mid-peak hour
         effective_rate(offset_for_hour(17)), // sample peak hour (mapped via offset)
     );
-    println!("Target:   ≥{:.1}°C indoor at {:02}:00", TARGET_TEMP, TARGET_HOUR);
+    println!(
+        "Target:   ≥{:.1}°C indoor at {:02}:00",
+        TARGET_TEMP, TARGET_HOUR
+    );
     println!("{}", "=".repeat(78));
 
     // 1. Extract nights
@@ -876,7 +889,10 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
         "\nCooling (from {} DHW + {} long-idle minutes):",
         cooling.n_dhw_samples, cooling.n_idle_samples
     );
-    println!("  k = {:.4}/hr → {:.2}°C/hr per °C of ΔT", cooling.k, cooling.k);
+    println!(
+        "  k = {:.4}/hr → {:.2}°C/hr per °C of ΔT",
+        cooling.k, cooling.k
+    );
     println!(
         "  Thermal capacity: {:.0} Wh/°C (τ = {:.1} hours)",
         cooling.capacity_wh,
@@ -897,8 +913,13 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     for bin in &recovery_bins {
         println!(
             "  {:>3.0}–{:<3.0}°C {:>6.0}  {:>6.0}  {:>5.2} {:>5.1} {:>7}",
-            bin.t_out_low, bin.t_out_high, bin.avg_heat_w, bin.avg_elec_w,
-            bin.avg_cop, bin.avg_mwt, bin.n_samples
+            bin.t_out_low,
+            bin.t_out_high,
+            bin.avg_heat_w,
+            bin.avg_elec_w,
+            bin.avg_cop,
+            bin.avg_mwt,
+            bin.n_samples
         );
     }
     println!("\n  MAINTENANCE (indoor_t flat — setback cycling at ~17°C):");
@@ -909,8 +930,13 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     for bin in &maint_bins {
         println!(
             "  {:>3.0}–{:<3.0}°C {:>6.0}  {:>6.0}  {:>5.2} {:>5.1} {:>7}",
-            bin.t_out_low, bin.t_out_high, bin.avg_heat_w, bin.avg_elec_w,
-            bin.avg_cop, bin.avg_mwt, bin.n_samples
+            bin.t_out_low,
+            bin.t_out_high,
+            bin.avg_heat_w,
+            bin.avg_elec_w,
+            bin.avg_cop,
+            bin.avg_mwt,
+            bin.n_samples
         );
     }
 
@@ -982,18 +1008,25 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
                 .filter(|r| r.indoor_t_07 >= target)
                 .min_by(|a, b| a.cost_pence.partial_cmp(&b.cost_pence).unwrap());
 
-            let (night_cost, night_kwh, night_cosy, night_ok) =
-                if let Some(bf) = best_feasible {
-                    if bf.cost_pence <= nr.actual.cost_pence {
-                        (bf.cost_pence, bf.total_kwh, bf.cosy_kwh, true)
-                    } else {
-                        (nr.actual.cost_pence, nr.actual.total_kwh, nr.actual.cosy_kwh,
-                         nr.actual.indoor_t_07 >= target)
-                    }
+            let (night_cost, night_kwh, night_cosy, night_ok) = if let Some(bf) = best_feasible {
+                if bf.cost_pence <= nr.actual.cost_pence {
+                    (bf.cost_pence, bf.total_kwh, bf.cosy_kwh, true)
                 } else {
-                    (nr.actual.cost_pence, nr.actual.total_kwh, nr.actual.cosy_kwh,
-                     nr.actual.indoor_t_07 >= target)
-                };
+                    (
+                        nr.actual.cost_pence,
+                        nr.actual.total_kwh,
+                        nr.actual.cosy_kwh,
+                        nr.actual.indoor_t_07 >= target,
+                    )
+                }
+            } else {
+                (
+                    nr.actual.cost_pence,
+                    nr.actual.total_kwh,
+                    nr.actual.cosy_kwh,
+                    nr.actual.indoor_t_07 >= target,
+                )
+            };
 
             cost += night_cost;
             kwh += night_kwh;
@@ -1094,11 +1127,16 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
             }
         } else {
             // No feasible — pick warmest
-            let warmest = nr.sim_results.iter()
+            let warmest = nr
+                .sim_results
+                .iter()
                 .max_by(|a, b| a.indoor_t_07.partial_cmp(&b.indoor_t_07).unwrap())
                 .unwrap();
             if warmest.cost_pence <= nr.actual.cost_pence {
-                (warmest.clone(), schedules[warmest.schedule_idx].label.clone())
+                (
+                    warmest.clone(),
+                    schedules[warmest.schedule_idx].label.clone(),
+                )
             } else {
                 (nr.actual.clone(), "actual (cheapest)".into())
             }
@@ -1239,7 +1277,11 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     let mut grand_optimal = 0.0;
     for ((year, month), (n, act, opt)) in &monthly {
         let saving = act - opt;
-        let pct = if *act > 0.0 { saving / act * 100.0 } else { 0.0 };
+        let pct = if *act > 0.0 {
+            saving / act * 100.0
+        } else {
+            0.0
+        };
         println!(
             "{}-{:02}    {:>5}  {:>7.2}  {:>7.2}  {:>7.2}  {:>5.1}%",
             year,
@@ -1413,23 +1455,18 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     let mut pick_list: Vec<_> = picks.into_iter().collect();
     pick_list.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
 
-    println!(
-        "\n{:<50} {:>6} {:>8}",
-        "Strategy", "Nights", "Saved"
-    );
+    println!("\n{:<50} {:>6} {:>8}", "Strategy", "Nights", "Saved");
     println!("{}", "─".repeat(66));
     for (label, (count, saving)) in &pick_list {
-        println!(
-            "{:<50} {:>5}  {:>7.2}",
-            label,
-            count,
-            saving / 100.0,
-        );
+        println!("{:<50} {:>5}  {:>7.2}", label, count, saving / 100.0,);
     }
 
     println!("\n--- DHW Summary ---");
     println!("  Heating OFF + Cosy recovery: {} nights", off_count);
-    println!("  Continuous (no OFF):          {} nights", continuous_count);
+    println!(
+        "  Continuous (no OFF):          {} nights",
+        continuous_count
+    );
     println!("  Actual (no change):           {} nights", actual_count);
     println!();
     println!("  DHW normal (~1h):  {} nights", dhw_norm_count);
