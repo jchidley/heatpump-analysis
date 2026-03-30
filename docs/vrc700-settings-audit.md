@@ -223,15 +223,13 @@ eBUS is an open, documented standard (2-wire serial bus, 2400 baud, 9–24V) wit
 
 See `docs/ebus-specs/SOURCES.md` for download URLs, full provenance, and a comparison of all known eBUS implementations.
 
-### Potential stack simplification: danielkucera adapter
+### Planned stack simplification: Pico W + xyzroe eBus-TTL adapter
 
 The current eBUS chain is: **ESP32 adapter (closed firmware, separate PSU)** → TCP → **ebusd (Docker on pi5data)** → MQTT.
 
-This could be simplified to: **danielkucera adapter v6.3 ($19, bus-powered, open firmware)** → MQTT directly.
+This will be replaced by: **xyzroe eBus-TTL adapter (galvanically isolated, bus-powered)** → **Pico W (Rust/Embassy firmware)** → MQTT directly.
 
-His ESP32-C3 firmware supports standalone "INTERNAL" mode — MQTT publishing, command store, bus scanning, HA autodiscovery — without ebusd. This would eliminate the ebusd Docker container, the separate power supply, and the closed-source firmware dependency. Two wires to the eBUS, WiFi to Mosquitto on pi5data, done.
-
-Alternatively, his open hardware could run a Rust Embassy firmware (ESP32-C3 is RISC-V, supported by esp-hal) for full control of the Vaillant command logic on-device. See `docs/ebus-specs/SOURCES.md` for details.
+See `docs/pico-ebus-plan.md` for the full build plan. Protocol reference code in submodules `yuhu-ebus/` (protocol engine) and `esp-arduino-ebus/` (danielkucera's firmware, uses yuhu-ebus). See `docs/ebus-specs/SOURCES.md` for all eBUS specs and implementations.
 
 Download links:
 - VRC 700 Installation: https://professional.vaillant.co.uk/downloads/product-manuals/vrc-700/vrc-700-installation-instructions-1968307.pdf

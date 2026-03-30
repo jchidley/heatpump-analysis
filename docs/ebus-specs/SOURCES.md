@@ -40,11 +40,9 @@ Daniel Kucera maintains a fully open-source eBUS adapter — hardware, firmware,
 | **Hardware** (KiCad) | https://github.com/danielkucera/ebus-adapter | Open source | Bus-powered (no external PSU), no opto-isolation needed. ESP32-C3 based. |
 | **Firmware** (ESP-Arduino) | https://github.com/danielkucera/esp-arduino-ebus | Open source | TCP socket (ebusd compatible), MQTT, HTTP, Home Assistant autodiscovery. Standalone mode can operate without ebusd. |
 
-Buy assembled: [Elecrow $19 (v6.3)](https://www.elecrow.com/ebus-to-wifi-adapter-module-v5-2.html) or [Lectronz (Slovakia)](https://www.lectronz.com/stores/danman-eu).
+Buy assembled: [Elecrow (v6.3)](https://www.elecrow.com/ebus-to-wifi-adapter-module-v5-2.html) or [Lectronz (Slovakia)](https://www.lectronz.com/stores/danman-eu).
 
-This is the natural starting point for a custom Pico 2 W eBUS adapter — the KiCad schematics provide the analog front-end design and the firmware source shows the eBUS protocol timing on a RISC-V ESP32-C3 (same core family as the RP2350 in the Pico 2 W).
-
-The ESP32-C3 is RISC-V and has first-class Rust support via Embassy + esp-hal. The danielkucera Arduino C++ firmware could be replaced with a Rust implementation. His firmware already supports a standalone "INTERNAL" mode that operates as an autonomous eBUS participant without ebusd — the same approach would work in Rust, eliminating the ebusd daemon entirely.
+This firmware and protocol library are the primary reference for our Pico W eBUS build (see `docs/pico-ebus-plan.md`). The firmware source shows eBUS protocol timing on ESP32-C3 and its standalone "INTERNAL" mode demonstrates that ebusd can be eliminated entirely.
 
 ## All known eBUS implementations
 
@@ -101,23 +99,16 @@ The TypeSpec source for our VRC 700 is `src/vaillant/15.700.tsp` in ebusd-config
 
 **Reverse engineering capability:** With two devices on the eBUS (our ebusd adapter + the VRC 700), we can sniff all traffic between the VRC 700 and the HMU/VWZ. The VRC 700 sends SetMode every ~10 seconds. By comparing raw bytes when timers work (e.g. CcTimer: `24 84 90 90 90 90` = `06:00;22:00;-:-;-:-;-:-;-:-`) vs when they don't (Z1Timer: `18 00 90 90 90 90` = `04:00;00:00;-:-;-:-;-:-;-:-`), we can validate encoding assumptions directly from live bus traffic.
 
-### Path to a Rust embedded eBUS implementation
+### Planned: Pico W + xyzroe eBus-TTL adapter
 
-A Rust Embassy implementation on ESP32-C3 or Pico 2 W would:
-1. Use **danielkucera's open KiCad hardware** for the analog front-end
-2. Port **yuhu-/ebus** protocol engine design (FSM, arbitration, scheduling) to Rust
-3. Reference **yvesf/ebus** for Rust eBUS data type parsing patterns
-4. Use **Embassy + esp-hal** (ESP32-C3, RISC-V) or **Embassy + embassy-rp** (Pico 2 W, also RISC-V)
-5. Eliminate the ebusd daemon entirely — the device would be a standalone eBUS participant with WiFi/MQTT
+Our build uses:
+1. **xyzroe eBus-TTL adapter** for the galvanically isolated analog front-end (purchased)
+2. **Pico W** with Rust/Embassy firmware (embassy-rp)
+3. Port **yuhu-/ebus** protocol engine design (FSM, arbitration, scheduling) to Rust `ebus-core` crate
+4. Reference **yvesf/ebus** for Rust eBUS data type parsing patterns
+5. Eliminate the ebusd daemon entirely — the Pico W is a standalone eBUS participant with WiFi/MQTT
 
-### Hardware: buy vs build
-
-| Option | Price | Effort | Notes |
-|---|---|---|---|
-| danielkucera adapter v6.3 (Elecrow) | $19 | Plug and play | Bus-powered, 2 wires, ESP32-C3, fully open source. Hard to beat. |
-| john30 Shield v5/C6 (Elecrow/BerryBase) | €25-30 | Plug and play | What we have. Closed-source firmware. |
-| Custom Pico 2 W + analog front-end | ~$10 parts | PCB or dead-bug | Use danielkucera's KiCad schematic for the eBUS interface circuit. |
-| eBUS Adapter v2 base board + Pico 2 W | ~$15 | Order PCB + assemble | Open-source PCB on OSHWLab. 3.3V UART breakout. |
+See `docs/pico-ebus-plan.md` for the full build plan, hardware wiring, PIO UART design, and phased implementation.
 
 ## Protocol layer summary
 
