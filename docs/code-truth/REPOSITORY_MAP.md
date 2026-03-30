@@ -17,9 +17,9 @@
 
 ## Source Modules
 
-### `src/main.rs` — CLI entry point (599 lines)
+### `src/main.rs` — CLI entry point (611 lines)
 
-Defines 25 CLI subcommands via clap derive. Loads `config.toml` at startup. Routes to analysis functions, DB operations, thermal commands.
+Defines 28 CLI subcommands via clap derive. Loads `config.toml` at startup. Routes to analysis functions, DB operations, thermal commands.
 
 ### `src/config.rs` — Configuration (213 lines)
 
@@ -53,14 +53,14 @@ Backtest model for overnight heating strategies. Calibrated cooling model (k=0.0
 
 Re-exports 8 public entry points from 15 submodules. All implementation is in `src/thermal/`.
 
-### `src/thermal/` — Thermal model submodules (4,247 lines total)
+### `src/thermal/` — Thermal model submodules (4,222 lines total)
 
 Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorway exchange, solar gain. Split from monolithic `thermal.rs` (3,506 lines) on 2026-03-29.
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
 | `config.rs` | 213 | TOML config structs for thermal model |
-| `geometry.rs` | 257 | Room/connection/doorway types + JSON loading from `thermal_geometry.json` |
+| `geometry.rs` | 269 | Room/connection/doorway types + JSON loading from `thermal_geometry.json` |
 | `physics.rs` | 399 | Constants, thermal mass computation, energy balance equations |
 | `solar.rs` | 180 | Solar position + irradiance (PV + Open-Meteo DNI/DHI) |
 | `wind.rs` | 75 | Open-Meteo wind speed + ventilation multiplier |

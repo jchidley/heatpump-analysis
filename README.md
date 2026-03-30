@@ -49,6 +49,8 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `baseload` | Whole-house electricity minus heat pump electricity |
 | `overnight` | Overnight heating strategy optimizer — backtest optimal schedules |
 | `all` | Run summary + cop-by-temp + hourly + daily + degree-days |
+| `thermal-rooms` | Room summary table (geometry, thermal mass, radiators, pipes) |
+| `thermal-connections` | Inter-room connections and doorway exchanges |
 | `thermal-calibrate` | Calibrate thermal model from InfluxDB cooldown data |
 | `thermal-validate` | Validate thermal model on holdout windows |
 | `thermal-fit-diagnostics` | Period-by-period cooldown fit diagnostics |

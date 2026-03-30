@@ -22,6 +22,7 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 | Thermal connections | `cargo run --bin heatpump-analysis -- thermal-connections` |
 | Thermal calibrate | `cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml` |
 | Thermal validate | `cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml` |
+| Thermal fit diagnostics | `cargo run --bin heatpump-analysis -- thermal-fit-diagnostics --config model/thermal-config.toml` |
 | Thermal operational | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
 | Thermal snapshot | `cargo run --bin heatpump-analysis -- thermal-snapshot export --config model/thermal-config.toml --signoff-reason "reason" --approved-by-human` |
 | Regression check | `bash scripts/thermal-regression-ci.sh` |

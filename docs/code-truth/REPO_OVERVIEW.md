@@ -14,7 +14,7 @@ A Rust CLI tool that syncs heat pump monitoring data from emoncms.org to a local
 The system is built for a specific installation: a **Vaillant Arotherm Plus 5kW** air-source heat pump at a residential property in London (6 Rhodes Avenue, N22), monitored via an emonHP bundle feeding emoncms.org.
 
 Beyond the Rust analysis tool, the project includes:
-- A **Rust thermal model** (`src/thermal/` — 15 submodules, 4,247 lines) for room-level calibration, validation, and operational analysis using Zigbee temperature sensors and InfluxDB data
+- A **Rust thermal model** (`src/thermal/` — 15 submodules, 4,222 lines) for room-level calibration, validation, and operational analysis using Zigbee temperature sensors and InfluxDB data
 - A **Python thermal model** (`model/house.py`) for equilibrium solving, moisture analysis, and exploratory analysis — shares canonical geometry with Rust via `data/canonical/thermal_geometry.json`
 - Shell-based **monitoring scripts** deployed to pi5data (`scripts/ebusd-poll.sh`)
 - Extensive **domain documentation** on the hydraulic system, DHW cylinder, monitoring infrastructure, house layout, and room thermal model
@@ -41,7 +41,7 @@ Beyond the Rust analysis tool, the project includes:
 
 ### Thermal module split (2026-03-29)
 
-Monolithic `src/thermal.rs` (3,506 lines) split into 15 submodules under `src/thermal/` (4,247 lines total). `src/thermal.rs` is now a thin facade re-exporting 8 public entry points. DRY cleanup extracted 5 shared helpers.
+Monolithic `src/thermal.rs` (3,506 lines) split into 15 submodules under `src/thermal/` (4,222 lines total). `src/thermal.rs` is now a thin facade re-exporting 8 public entry points. DRY cleanup extracted 5 shared helpers.
 
 ### Regression CI expanded (2026-03-30)
 
@@ -60,7 +60,7 @@ Monolithic `src/thermal.rs` (3,506 lines) split into 15 submodules under `src/th
 
 | Category | Count |
 |----------|-------|
-| Rust source files (`src/`) | 10 core + 15 thermal submodules (~10,367 lines) |
+| Rust source files (`src/`) | 10 core + 15 thermal submodules (~10,356 lines) |
 | Standalone Rust binaries (`src/bin/`) | 2 (cosy-scheduler [retired], thermal-regression-check) |
 | Python model files (`model/`) | 3 (~2,904 lines) |
 | Shell scripts (`scripts/`) | 3 + 2 services |
