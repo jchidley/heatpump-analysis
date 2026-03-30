@@ -14,6 +14,7 @@ use super::error::{ThermalError, ThermalResult};
 pub(crate) struct RadiatorDef {
     pub t50: f64,
     pub active: bool,
+    pub pipe: &'static str,
 }
 
 #[derive(Clone)]
@@ -55,6 +56,7 @@ pub(crate) struct InternalConnection {
     pub room_a: &'static str,
     pub room_b: &'static str,
     pub ua: f64,
+    pub description: &'static str,
 }
 
 #[derive(Clone)]
@@ -121,6 +123,12 @@ struct GeometryRadiator {
     t50: f64,
     #[serde(default = "default_true")]
     active: bool,
+    #[serde(default = "default_pipe")]
+    pipe: String,
+}
+
+fn default_pipe() -> String {
+    "none".to_string()
 }
 
 fn default_true() -> bool {
@@ -141,6 +149,8 @@ pub(crate) struct GeometryConnection {
     pub room_a: String,
     pub room_b: String,
     pub ua: f64,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +204,7 @@ pub(crate) fn build_rooms() -> ThermalResult<BTreeMap<String, RoomDef>> {
                 .map(|rad| RadiatorDef {
                     t50: rad.t50,
                     active: rad.active,
+                    pipe: leak(rad.pipe),
                 })
                 .collect(),
             external_fabric: r
@@ -237,6 +248,7 @@ pub(crate) fn build_connections() -> ThermalResult<Vec<InternalConnection>> {
             room_a: leak(c.room_a),
             room_b: leak(c.room_b),
             ua: c.ua,
+            description: leak(c.description),
         })
         .collect())
 }

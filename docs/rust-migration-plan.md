@@ -37,13 +37,15 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 | `thermal-fit-diagnostics` | ✅ | Period-by-period cooldown QA |
 | `thermal-operational` | ✅ | Heating/DHW/off, solar gain, BCF-based state |
 | `thermal-snapshot` | ✅ | Export/import with human signoff |
+| `thermal-rooms` | ✅ | Room summary table (geometry, thermal mass, radiators, pipes) |
+| `thermal-connections` | ✅ | Internal connections + doorway exchanges |
 
 All produce structured JSON artifacts to `artifacts/thermal/`. Regression baselines in `artifacts/thermal/baselines/`. Formula parity with Python verified (audit completed 2026-03-28, 509 checks, 0 mismatches).
 
 ### Remaining Python-only commands
 
-1. **`thermal-rooms`** — room summary table. Pure geometry, low complexity.
-2. **`thermal-connections`** — internal wall/doorway table. Pure geometry.
+1. ~~**`thermal-rooms`**~~ — ✅ Ported 2026-03-30. Pure geometry table.
+2. ~~**`thermal-connections`**~~ — ✅ Ported 2026-03-30. Internal wall/doorway table.
 3. **`thermal-analyse`** — live energy balance from InfluxDB. Medium complexity.
 4. **`thermal-equilibrium`** — steady-state solver (`scipy.fsolve` → Gauss-Seidel or `nalgebra`). High complexity.
 5. **`thermal-moisture`** — humidity analysis. Medium complexity, lower priority.

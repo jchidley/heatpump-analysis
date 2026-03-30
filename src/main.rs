@@ -126,6 +126,10 @@ enum Commands {
     Overnight,
     /// Run all analyses
     All,
+    /// Print room summary table (geometry, thermal mass, radiators)
+    ThermalRooms,
+    /// Print inter-room connections and doorway exchanges
+    ThermalConnections,
     /// Calibrate thermal model parameters from InfluxDB using fixed test windows
     ThermalCalibrate {
         /// Path to thermal calibration config TOML
@@ -498,6 +502,14 @@ fn main() -> Result<()> {
 
             let temps = db::load_daily_outside_temp(&conn, start, end)?;
             analysis::degree_days(&temps, &elec, &heat)?;
+        }
+
+        Commands::ThermalRooms => {
+            thermal::print_rooms()?;
+        }
+
+        Commands::ThermalConnections => {
+            thermal::print_connections()?;
         }
 
         Commands::ThermalCalibrate { ref config } => {
