@@ -565,3 +565,32 @@ So the firmware is portable across the entire Vaillant range (thousands
 of installations with ebusd adapters), and the protocol core works with
 any eBUS device. This matters if the project is ever open-sourced —
 the potential user base is large.
+
+### Address 0x08: gas boilers and heat pumps share the same interface
+
+The heat source always sits at address 0x08. Gas boilers (`08.bai.tsp`)
+and heat pumps (`08.hmu.tsp`) both import `hcmode_inc.tsp` which defines
+the core operational registers:
+
+- **SetMode** (PB=B5, SB=10) — the command the VRC 700 sends every ~10s:
+  `hcmode`, `flowtempdesired`, `hwctempdesired`, `disablehc`, `disablehwcload`
+- **Status01** (PB=B5, SB=11) — the heat source's response:
+  flow temp, return temp, outside temp, DHW temp, storage temp, pump status
+- **Status02** (PB=B5, SB=11, block 2) — hot water mode, max/current temps
+
+This is why you can swap a gas boiler for a heat pump and keep the same
+VRC 700 controller — the eBUS control interface is identical at the
+SetMode/Status level. Our HMU adds heat-pump-specific registers on top
+(compressor hours, COP, EEV steps, BuildingCircuitFlow, etc.) but the
+core control loop is shared.
+
+This means our firmware's SetMode decoder works for **any Vaillant system**,
+not just heat pumps. The ~30 device-specific registers we poll are
+heat-pump-only, but the passive traffic decoding covers everything.
+
+### Address 0x76: VWZ AI is heat-pump-specific
+
+The VWZ AI indoor hydraulic station (0x76) exists only in heat pump systems.
+Gas boiler systems don't have a separate indoor unit — the boiler handles
+everything at address 0x08. The VWZ AI's extensive `71→08` traffic
+(real-time compressor/valve control) is specific to the aroTHERM system.
