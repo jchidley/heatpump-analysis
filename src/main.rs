@@ -130,6 +130,12 @@ enum Commands {
     ThermalRooms,
     /// Print inter-room connections and doorway exchanges
     ThermalConnections,
+    /// Live energy balance from InfluxDB (per-room heat flows)
+    ThermalAnalyse {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+    },
     /// Calibrate thermal model parameters from InfluxDB using fixed test windows
     ThermalCalibrate {
         /// Path to thermal calibration config TOML
@@ -510,6 +516,10 @@ fn main() -> Result<()> {
 
         Commands::ThermalConnections => {
             thermal::print_connections()?;
+        }
+
+        Commands::ThermalAnalyse { ref config } => {
+            thermal::print_analyse(std::path::Path::new(config))?;
         }
 
         Commands::ThermalCalibrate { ref config } => {

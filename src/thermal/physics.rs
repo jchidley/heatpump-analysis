@@ -2,6 +2,21 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::geometry::{Doorway, ExternalElement, InternalConnection, RoomDef, SolarGlazingDef};
 
+/// Per-room energy balance broken down by component (all values in Watts).
+/// Positive = heat into room, negative = heat out.
+#[derive(Clone, Debug)]
+pub(crate) struct EnergyBalanceComponents {
+    pub external: f64,
+    pub ventilation: f64,
+    pub radiator: f64,
+    pub body: f64,
+    pub solar: f64,
+    pub dhw: f64,
+    pub walls: f64,
+    pub doorways: f64,
+    pub total: f64,
+}
+
 // ---------------------------------------------------------------------------
 // Physical constants
 // ---------------------------------------------------------------------------
@@ -396,4 +411,99 @@ pub(crate) fn full_room_energy_balance(
     }
 
     q_ext + q_vent + q_rad + q_body + q_solar + q_dhw + q_walls + q_doors
+}
+
+/// Like `full_room_energy_balance` but returns individual components.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn full_room_energy_balance_components(
+    room: &RoomDef,
+    room_temp: f64,
+    outside_temp: f64,
+    all_temps: &HashMap<String, f64>,
+    connections: &[InternalConnection],
+    doorways: &[Doorway],
+    doorway_cd: f64,
+    wind_multiplier: f64,
+    mwt: f64,
+    sleeping: bool,
+    sw_vert: f64,
+    ne_vert: f64,
+    ne_horiz: f64,
+) -> EnergyBalanceComponents {
+    let name = room.name;
+    let vol = room.floor_area * room.ceiling_height;
+
+    let q_ext = -external_loss(&room.external_fabric, room_temp, outside_temp);
+    let q_vent = -ventilation_loss(
+        room.ventilation_ach,
+        vol,
+        room_temp,
+        outside_temp,
+        room.heat_recovery,
+        wind_multiplier,
+    );
+
+    let q_rad = if mwt > 0.0 {
+        room.radiators
+            .iter()
+            .filter(|r| r.active)
+            .map(|r| radiator_output(r.t50, mwt, room_temp))
+            .sum::<f64>()
+    } else {
+        0.0
+    };
+
+    let body_rate = if sleeping {
+        BODY_HEAT_SLEEPING_W
+    } else {
+        100.0
+    };
+    let q_body = room.overnight_occupants as f64 * body_rate;
+    let q_solar = solar_gain_full(&room.solar, sw_vert, ne_vert, ne_horiz);
+
+    let mut q_dhw = 0.0;
+    if name == "bathroom" {
+        q_dhw = DHW_CYLINDER_UA * (DHW_CYLINDER_TEMP - room_temp).max(0.0)
+            + DHW_PIPE_LOSS_W
+            + DHW_SHOWER_W;
+    }
+
+    let mut q_walls = 0.0;
+    for conn in connections {
+        if conn.room_a == name {
+            if let Some(other_t) = virtual_room_temp(conn.room_b, all_temps) {
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t);
+            }
+        } else if conn.room_b == name {
+            if let Some(other_t) = virtual_room_temp(conn.room_a, all_temps) {
+                q_walls -= wall_conduction(conn.ua, room_temp, other_t);
+            }
+        }
+    }
+
+    let mut q_doors = 0.0;
+    for door in doorways {
+        if door.room_a == name {
+            if let Some(other_t) = virtual_room_temp(door.room_b, all_temps) {
+                q_doors -= doorway_exchange(door, room_temp, other_t, doorway_cd);
+            }
+        } else if door.room_b == name {
+            if let Some(other_t) = virtual_room_temp(door.room_a, all_temps) {
+                q_doors -= doorway_exchange(door, room_temp, other_t, doorway_cd);
+            }
+        }
+    }
+
+    let total = q_ext + q_vent + q_rad + q_body + q_solar + q_dhw + q_walls + q_doors;
+    EnergyBalanceComponents {
+        external: q_ext,
+        ventilation: q_vent,
+        radiator: q_rad,
+        body: q_body,
+        solar: q_solar,
+        dhw: q_dhw,
+        walls: q_walls,
+        doorways: q_doors,
+        total,
+    }
 }

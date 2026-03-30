@@ -270,6 +270,16 @@ pub fn query_mwt(
     Ok(out)
 }
 
+/// Public wrapper for display module to query arbitrary Flux.
+pub fn query_flux_csv_pub(
+    influx_url: &str,
+    org: &str,
+    token: &str,
+    flux: &str,
+) -> ThermalResult<Vec<HashMap<String, String>>> {
+    query_flux_csv(influx_url, org, token, flux)
+}
+
 fn query_flux_csv(
     influx_url: &str,
     org: &str,

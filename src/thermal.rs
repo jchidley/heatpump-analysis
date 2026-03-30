@@ -19,7 +19,7 @@ mod wind;
 // Re-export the public entry points consumed by main.rs
 pub use calibration::calibrate;
 pub use diagnostics::fit_diagnostics;
-pub use display::{print_connections, print_rooms};
+pub use display::{print_analyse, print_connections, print_rooms};
 pub use operational::operational_validate;
 pub use snapshot::{snapshot_export, snapshot_import};
 pub use validation::validate;

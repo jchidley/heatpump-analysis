@@ -51,6 +51,7 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `all` | Run summary + cop-by-temp + hourly + daily + degree-days |
 | `thermal-rooms` | Room summary table (geometry, thermal mass, radiators, pipes) |
 | `thermal-connections` | Inter-room connections and doorway exchanges |
+| `thermal-analyse` | Live energy balance from InfluxDB (per-room heat flows) |
 | `thermal-calibrate` | Calibrate thermal model from InfluxDB cooldown data |
 | `thermal-validate` | Validate thermal model on holdout windows |
 | `thermal-fit-diagnostics` | Period-by-period cooldown fit diagnostics |

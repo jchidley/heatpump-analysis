@@ -14,7 +14,7 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 
 ## Scope
 
-**In scope**: `model/house.py` (3 remaining commands to port)
+**In scope**: `model/house.py` (2 remaining commands to port)
 
 **Deleted** (fully superseded by Rust, removed 2026-03-30):
 - `model/calibrate.py` — replaced by `thermal-calibrate`
@@ -39,6 +39,7 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 | `thermal-fit-diagnostics` | Period-by-period cooldown QA |
 | `thermal-operational` | Heating/DHW/off, solar gain, BCF-based state |
 | `thermal-snapshot` | Export/import with human signoff |
+| `thermal-analyse` | Live energy balance from InfluxDB (per-room heat flows) |
 
 All calibration/validation/operational commands produce structured JSON artifacts to `artifacts/thermal/`. Regression baselines in `artifacts/thermal/baselines/`. Formula parity with Python verified (audit completed 2026-03-28, 509 checks, 0 mismatches).
 
@@ -46,7 +47,7 @@ All calibration/validation/operational commands produce structured JSON artifact
 
 | # | Command | Complexity | Notes |
 |---|---------|-----------|-------|
-| 1 | `thermal-analyse` | Medium | Live energy balance from InfluxDB. Uses `full_room_energy_balance()` which already exists in `physics.rs`. |
+| 1 | ~~`thermal-analyse`~~ | ✅ | Ported 2026-03-30. Live energy balance from InfluxDB. |
 | 2 | `thermal-equilibrium` | High | Steady-state solver (`scipy.fsolve` → Gauss-Seidel iteration or `nalgebra`). Highest-value port — enables "what MWT do I need?" questions from Rust. |
 | 3 | `thermal-moisture` | Medium | Humidity analysis. Dew point, condensation risk. Lower priority. |
 
