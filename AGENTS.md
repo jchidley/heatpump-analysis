@@ -18,6 +18,8 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 | Octopus summary | `cargo run -- octopus` |
 | Gas vs HP | `cargo run -- --all-data gas-vs-hp` |
 | Overnight optimizer | `cargo run -- --all-data overnight` |
+| Thermal rooms | `cargo run --bin heatpump-analysis -- thermal-rooms` |
+| Thermal connections | `cargo run --bin heatpump-analysis -- thermal-connections` |
 | Thermal calibrate | `cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml` |
 | Thermal validate | `cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml` |
 | Thermal operational | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
@@ -38,7 +40,7 @@ src/analysis.rs      → State machine + Polars queries
 src/thermal.rs       → Thin facade (re-exports public entry points)
 src/thermal/         → 15 submodules: config, geometry, physics, solar, wind, calibration,
                        validation, diagnostics, operational, artifact, snapshot,
-                       error, influx, report
+                       display, error, influx, report
 src/overnight.rs     → Overnight strategy backtest
 model/house.py       → Python thermal model (equilibrium, moisture — shares thermal_geometry.json with Rust)
 data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust + Python)

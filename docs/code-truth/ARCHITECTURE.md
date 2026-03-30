@@ -1,4 +1,4 @@
-<!-- code-truth: dfdffb4 -->
+<!-- code-truth: e67fc92 -->
 
 # Architecture
 
@@ -18,7 +18,7 @@ main.rs
   │     └── config.rs
   ├── overnight.rs   (reads config for thresholds; uses analysis::enrich)
   │     └── analysis.rs, config.rs
-  └── thermal.rs     (thin facade — re-exports from 14 submodules)
+  └── thermal.rs     (thin facade — re-exports from 15 submodules)
         └── thermal/
               ├── config.rs      (ThermalConfig from model/thermal-config.toml)
               ├── geometry.rs    (rooms/connections/doorways from thermal_geometry.json)

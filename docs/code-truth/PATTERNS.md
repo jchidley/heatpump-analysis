@@ -1,4 +1,4 @@
-<!-- code-truth: dfdffb4 -->
+<!-- code-truth: e67fc92 -->
 
 # Patterns
 

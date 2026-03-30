@@ -1,4 +1,4 @@
-<!-- code-truth: dfdffb4 -->
+<!-- code-truth: e67fc92 -->
 
 # Repository Map
 
@@ -51,9 +51,9 @@ Backtest model for overnight heating strategies. Calibrated cooling model (k=0.0
 
 ### `src/thermal.rs` — Thin facade (23 lines)
 
-Re-exports 6 public entry points from 14 submodules. All implementation is in `src/thermal/`.
+Re-exports 8 public entry points from 15 submodules. All implementation is in `src/thermal/`.
 
-### `src/thermal/` — Thermal model submodules (4,155 lines total)
+### `src/thermal/` — Thermal model submodules (4,247 lines total)
 
 Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorway exchange, solar gain. Split from monolithic `thermal.rs` (3,506 lines) on 2026-03-29.
 
@@ -72,6 +72,7 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 | `snapshot.rs` | 233 | Export/import manifests with human signoff |
 | `error.rs` | 99 | `ThermalError` enum with `thiserror` derive (20+ variants) |
 | `influx.rs` | 352 | Flux query builders for room temps, outside temp, HP status, PV, BCF, MWT |
+| `display.rs` | 78 | `print_rooms()` and `print_connections()` CLI output |
 | `report.rs` | 44 | Table printer and RMSE calculator |
 
 Public entry points (re-exported via `src/thermal.rs`):
@@ -82,6 +83,8 @@ Public entry points (re-exported via `src/thermal.rs`):
 | `validate()` | `thermal-validate` | Run calibrated model on holdout windows, check pass/fail thresholds |
 | `fit_diagnostics()` | `thermal-fit-diagnostics` | Period-by-period cooldown diagnostics from HP status codes |
 | `operational_validate()` | `thermal-operational` | Full operational validation with heating/DHW/off, solar gain, BCF-based state |
+| `print_rooms()` | `thermal-rooms` | Room summary table (geometry, thermal mass, radiators, pipes) |
+| `print_connections()` | `thermal-connections` | Internal wall/floor connections + doorway exchanges |
 | `snapshot_export()` / `snapshot_import()` | `thermal-snapshot` | Human-gated reproducibility workflow |
 
 ## Standalone Binaries
