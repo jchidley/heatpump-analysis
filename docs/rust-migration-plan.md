@@ -14,7 +14,7 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 
 ## Scope
 
-**In scope**: `model/house.py`, `model/calibrate.py`
+**In scope**: `model/house.py` (5 remaining commands)
 
 **Deleted** (fully superseded by Rust, removed 2026-03-30):
 - ~~`model/calibrate.py`~~ — replaced by `thermal-calibrate` command
@@ -50,13 +50,8 @@ All produce structured JSON artifacts to `artifacts/thermal/`. Regression baseli
 
 After all ported, mark `model/house.py` as legacy.
 
-### Infrastructure completed
+### Module layout (`src/thermal/`)
 
-- ✅ **Thermal module split** (2026-03-29): `src/thermal.rs` (3,506 lines) → 15 focused submodules (4,155 lines total). Thin facade re-exports 6 public entry points.
-- ✅ **DRY cleanup** (2026-03-29): Extracted 5 shared helpers (`calibrate_model`, `resolve_influx_token`, `compute_thermal_masses`, `avg_series_in_window`, `avg_room_temps_in_window`). ~90 lines of duplication removed.
-- ✅ **Regression baselines refreshed** against current config.
-
-Module layout:
   - `config.rs` — TOML config structs
   - `geometry.rs` — room/connection/doorway types + JSON loading
   - `physics.rs` — constants + thermal mass + energy balance
@@ -68,18 +63,21 @@ Module layout:
   - `operational.rs` — HP state + segmentation + operational_validate()
   - `artifact.rs` — artifact types + git meta + build/write
   - `snapshot.rs` — export/import manifests
-  - Existing: `error.rs`, `influx.rs`, `report.rs`
+  - `error.rs`, `influx.rs`, `report.rs`
 
-### Infrastructure remaining
+### Infrastructure — all complete ✅
 
-- ~~Add `thermal-operational` to regression CI~~ ✔️ Done 2026-03-30: `[operational]` thresholds + comparison logic + baseline
-- ~~Enforce lint gates in CI workflow~~ ✔️ Done 2026-03-30: fmt + clippy gates in `scripts/thermal-regression-ci.sh`
-- ~~Remove hardcoded `INFLUX_TOKEN` from `model/house.py`~~ ✔️ Done 2026-03-30: reads `INFLUX_TOKEN` env var or `ak get influxdb`
-
-### Cleanup remaining
-
-- ~~Remove `cosy-scheduler` binary from pi5data~~ ✔️ Done 2026-03-30: binary deleted, source kept for reference
-- ~~Regenerate `docs/code-truth/`~~ ✔️ Done 2026-03-30: REPOSITORY_MAP, ARCHITECTURE, REPO_OVERVIEW updated for thermal split + deleted files
+- ✅ Thermal module split (2026-03-29): 14 submodules, 4,155 lines
+- ✅ DRY cleanup (2026-03-29): 5 shared helpers, ~90 lines dedup
+- ✅ Regression baselines refreshed
+- ✅ `thermal-operational` in regression CI with thresholds + baseline (2026-03-30)
+- ✅ Lint gates (fmt + clippy) in `scripts/thermal-regression-ci.sh` (2026-03-30)
+- ✅ Hardcoded `INFLUX_TOKEN` removed from `model/house.py` — env var + `ak` fallback (2026-03-30)
+- ✅ `influxdb` and `grafana` credentials in `ak` GPG keystore (2026-03-30)
+- ✅ `cosy-scheduler` binary removed from pi5data (2026-03-30)
+- ✅ `docs/code-truth/` regenerated for thermal split + deleted files (2026-03-30)
+- ✅ Grafana DHW chart: 3 sensors with correct labels (2026-03-30)
+- ✅ z2m-hub dashboard: descriptive temperature labels (2026-03-30)
 
 ## Quality gates
 

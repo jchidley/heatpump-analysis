@@ -195,7 +195,7 @@ The VRC 700 uses HwcStorageTemp for its charging decisions. With 5K hysteresis a
 |---|---|---|---|
 | ebusd-poll.service | Running | No (read-only) | ✅ Monitoring |
 | z2m-hub.service | Running | Yes — `/api/dhw/boost` sends `HwcSFMode load` | ⚠️ Manual boost only |
-| cosy-scheduler (binary) | Not a service | Yes — writes `hmu HwcMode` and `700 Z1OpMode` | ❌ Retired — do not run |
+| cosy-scheduler (binary) | Removed from pi5data 30 Mar | Yes — writes `hmu HwcMode` and `700 Z1OpMode` | ❌ Retired — binary deleted |
 | dhw-auto-trigger.sh | Not running | Yes — sends `HwcSFMode load` on sustained draw | ❌ Retired |
 
 ## Manuals and specifications
@@ -308,7 +308,7 @@ echo "read -f -c 700 Z1ActualRoomTempDesired" | nc -w3 pi5data 8888
 
 ## Ongoing rules
 
-1. **Do not use cosy-scheduler.** It writes `hmu HwcMode` (read-only, rejected by HMU) and `Z1OpMode` (conflicts with timer-only operation).
+1. **Do not use cosy-scheduler.** Binary removed from pi5data 30 Mar 2026. Source in `src/bin/cosy-scheduler.rs` kept for reference only. Do not redeploy.
 
 2. **Monitor HwcSFMode** after any manual boost — if it gets stuck on `load`, reset with `write -c 700 HwcSFMode auto`.
 
