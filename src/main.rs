@@ -136,6 +136,12 @@ enum Commands {
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
     },
+    /// Analyse moisture: current condensation risk + overnight humidity balance
+    ThermalMoisture {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+    },
     /// Solve for equilibrium room temperatures at given conditions
     ThermalEquilibrium {
         /// Path to thermal calibration config TOML
@@ -538,6 +544,10 @@ fn main() -> Result<()> {
 
         Commands::ThermalAnalyse { ref config } => {
             thermal::print_analyse(std::path::Path::new(config))?;
+        }
+
+        Commands::ThermalMoisture { ref config } => {
+            thermal::print_moisture(std::path::Path::new(config))?;
         }
 
         Commands::ThermalEquilibrium {

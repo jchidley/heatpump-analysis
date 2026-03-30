@@ -53,13 +53,15 @@ See [rust-migration-plan.md](rust-migration-plan.md) for the full plan.
 - ~~`model/calibrate.py`~~ — superseded by Rust `thermal-calibrate`
 - ~~`model/overnight.py`~~ — superseded by Rust `overnight`
 
-**One Python command remains** (in `model/house.py`):
+**All Python thermal commands ported to Rust** (2026-03-30):
 
-1. ~~`thermal-rooms`~~ — ✅ Ported 2026-03-30
-2. ~~`thermal-connections`~~ — ✅ Ported 2026-03-30
-3. ~~`thermal-analyse`~~ — ✅ Ported 2026-03-30
-4. ~~`thermal-equilibrium`~~ — ✅ Ported 2026-03-30 (fixes Python fsolve convergence failure)
-5. `thermal-moisture` — humidity analysis (medium complexity, lower priority)
+1. ~~`thermal-rooms`~~ — ✅
+2. ~~`thermal-connections`~~ — ✅
+3. ~~`thermal-analyse`~~ — ✅
+4. ~~`thermal-equilibrium`~~ — ✅ (fixes Python fsolve convergence failure)
+5. ~~`thermal-moisture`~~ — ✅
+
+`model/house.py` is now legacy — kept for reference only.
 
 After all ported, mark `model/house.py` as legacy.
 

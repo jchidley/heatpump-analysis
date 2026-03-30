@@ -480,3 +480,367 @@ pub fn print_equilibrium(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Moisture analysis
+// ---------------------------------------------------------------------------
+
+const MOISTURE_PERSON_SLEEPING: f64 = 40.0; // g/h per person
+const RSI: f64 = 0.13; // Internal surface resistance m²K/W
+
+/// Absolute humidity in g/m³ from T (°C) and RH (%) using Magnus formula.
+fn absolute_humidity(temp_c: f64, rh_pct: f64) -> f64 {
+    let es = 6.112 * (17.67 * temp_c / (temp_c + 243.5)).exp();
+    217.0 * (rh_pct / 100.0) * es / (temp_c + 273.15)
+}
+
+/// RH at a surface colder than room air.
+fn surface_rh(air_temp: f64, air_rh: f64, surface_temp: f64) -> f64 {
+    let es_air = 6.112 * (17.67 * air_temp / (air_temp + 243.5)).exp();
+    let e = (air_rh / 100.0) * es_air;
+    let es_surface = 6.112 * (17.67 * surface_temp / (surface_temp + 243.5)).exp();
+    (e / es_surface * 100.0).min(100.0)
+}
+
+/// Fetch outside humidity from Open-Meteo (overnight hours). Falls back to 75% RH.
+fn fetch_outside_humidity(avg_outside: f64) -> (f64, f64) {
+    let date = Utc::now().format("%Y-%m-%d");
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast?\
+         latitude=51.59&longitude=-0.14\
+         &hourly=relative_humidity_2m,temperature_2m\
+         &timezone=Europe/London\
+         &start_date={date}&end_date={date}"
+    );
+    if let Ok(resp) = reqwest::blocking::get(&url) {
+        if let Ok(body) = resp.text() {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
+                let times = val["hourly"]["time"].as_array();
+                let temps = val["hourly"]["temperature_2m"].as_array();
+                let rhs = val["hourly"]["relative_humidity_2m"].as_array();
+                if let (Some(ts), Some(tvs), Some(rvs)) = (times, temps, rhs) {
+                    let mut ah_vals = Vec::new();
+                    let mut rh_vals = Vec::new();
+                    for i in 0..ts.len() {
+                        let h_str = ts[i].as_str().unwrap_or("");
+                        let h: u32 = h_str.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(12);
+                        if h >= 22 || h <= 7 {
+                            let t = tvs[i].as_f64().unwrap_or(avg_outside);
+                            let rh = rvs[i].as_f64().unwrap_or(75.0);
+                            ah_vals.push(absolute_humidity(t, rh));
+                            rh_vals.push(rh);
+                        }
+                    }
+                    if !ah_vals.is_empty() {
+                        let avg_ah = ah_vals.iter().sum::<f64>() / ah_vals.len() as f64;
+                        let avg_rh = rh_vals.iter().sum::<f64>() / rh_vals.len() as f64;
+                        return (avg_ah, avg_rh);
+                    }
+                }
+            }
+        }
+    }
+    (absolute_humidity(avg_outside, 75.0), 75.0)
+}
+
+/// Moisture analysis: current snapshot + overnight moisture balance.
+pub fn print_moisture(config_path: &Path) -> ThermalResult<()> {
+    let (_, cfg) = load_thermal_config(config_path)?;
+    let token = resolve_influx_token(&cfg)?;
+    let rooms = build_rooms()?;
+
+    // Query last 24h of data for overnight analysis
+    let utc = chrono::FixedOffset::east_opt(0).unwrap();
+    let now = Utc::now().with_timezone(&utc);
+    let start_24h = now - chrono::Duration::hours(24);
+
+    let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
+
+    // Query room temps (includes humidity for _temp_humid sensors)
+    let room_rows = influx::query_room_temps(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &sensor_topics,
+        &start_24h,
+        &now,
+    )?;
+
+    // Also query humidity — need to build humidity queries
+    let humidity_rows = query_room_humidity(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &sensor_topics,
+        &start_24h,
+        &now,
+    )?;
+
+    let outside_rows = influx::query_outside_temp(
+        &cfg.influx.url,
+        &cfg.influx.org,
+        &cfg.influx.bucket,
+        &token,
+        &start_24h,
+        &now,
+    )?;
+
+    let avg_outside = if outside_rows.is_empty() {
+        10.0
+    } else {
+        outside_rows.iter().map(|(_, v)| v).sum::<f64>() / outside_rows.len() as f64
+    };
+
+    // Build topic → room name map
+    let topic_to_room: HashMap<&str, &str> =
+        rooms.values().map(|r| (r.sensor_topic, r.name)).collect();
+
+    // Build per-room time series: {room -> [(time_minute_key, temp, rh)]}
+    let mut room_temps_map: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+    let mut room_humid_map: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+
+    for (t, topic, value) in &room_rows {
+        if let Some(&room_name) = topic_to_room.get(topic.as_str()) {
+            let key = t.format("%Y-%m-%dT%H:%M").to_string();
+            room_temps_map
+                .entry(room_name.to_string())
+                .or_default()
+                .push((key, *value));
+        }
+    }
+    for (t, topic, value) in &humidity_rows {
+        if let Some(&room_name) = topic_to_room.get(topic.as_str()) {
+            let key = t.format("%Y-%m-%dT%H:%M").to_string();
+            room_humid_map
+                .entry(room_name.to_string())
+                .or_default()
+                .push((key, *value));
+        }
+    }
+
+    // Get outside humidity from Open-Meteo
+    let (outside_ah, outside_rh) = fetch_outside_humidity(avg_outside);
+
+    println!("{}", "=".repeat(100));
+    println!("MOISTURE ANALYSIS");
+    println!(
+        "Outside: {:.1}°C, ~{:.0}% RH → AH {:.1} g/m³",
+        avg_outside, outside_rh, outside_ah
+    );
+    println!("{}", "=".repeat(100));
+
+    // Current snapshot
+    println!(
+        "\n{:<14} {:>5} {:>5} {:>8} {:>6} {:>6} {:>7} {:>6}",
+        "Room", "T°C", "RH%", "AH g/m³", "U_max", "T_surf", "SurfRH", "Risk"
+    );
+    println!("{}", "─".repeat(65));
+
+    for (name, room) in &rooms {
+        // Get latest temp and humidity
+        let latest_temp = room_temps_map
+            .get(name.as_str())
+            .and_then(|v| v.last().map(|(_, t)| *t));
+        let latest_rh = room_humid_map
+            .get(name.as_str())
+            .and_then(|v| v.last().map(|(_, h)| *h));
+
+        let (temp, rh) = match (latest_temp, latest_rh) {
+            (Some(t), Some(h)) => (t, h),
+            _ => continue,
+        };
+
+        let ah = absolute_humidity(temp, rh);
+        let u_max = room
+            .external_fabric
+            .iter()
+            .filter(|e| !e.to_ground)
+            .map(|e| e.u_value)
+            .fold(0.0_f64, f64::max);
+        let t_surface = if u_max > 0.0 {
+            temp - u_max * RSI * (temp - avg_outside)
+        } else {
+            temp - 1.0
+        };
+        let s_rh = surface_rh(temp, rh, t_surface);
+        let risk = if s_rh > 80.0 {
+            "HIGH"
+        } else if s_rh > 70.0 {
+            "WARN"
+        } else if rh > 60.0 {
+            "watch"
+        } else {
+            "OK"
+        };
+        println!(
+            "{:<14} {:>5.1} {:>5.1} {:>8.1} {:>6.2} {:>6.1} {:>7.1} {:>6}",
+            name, temp, rh, ah, u_max, t_surface, s_rh, risk
+        );
+    }
+
+    // Overnight moisture balance
+    println!("\n{}", "─".repeat(100));
+    println!("OVERNIGHT MOISTURE BALANCE");
+    println!("{}", "─".repeat(100));
+    println!(
+        "\n{:<14} {:>3} {:>7} {:>7} {:>6} {:>10} {:>10} {:>6}",
+        "Room", "Occ", "AH_23", "AH_06", "ΔAH", "ACH_moist", "ACH_therm", "Match"
+    );
+    println!(
+        "{:<14} {:>3} {:>7} {:>7} {:>6} {:>10} {:>10}",
+        "", "", "g/m³", "g/m³", "g/m³", "(total)", "(to out)"
+    );
+    println!("{}", "─".repeat(75));
+
+    for (name, room) in &rooms {
+        let vol = room.floor_area * room.ceiling_height;
+        let occ = room.overnight_occupants;
+
+        // Find AH at ~23:00 and ~06:00
+        let temps_series = room_temps_map.get(name.as_str());
+        let humid_series = room_humid_map.get(name.as_str());
+        let (temps_s, humid_s) = match (temps_series, humid_series) {
+            (Some(t), Some(h)) => (t, h),
+            _ => continue,
+        };
+
+        // Build minute-keyed map for matching
+        let temp_by_key: HashMap<&str, f64> =
+            temps_s.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        let humid_by_key: HashMap<&str, f64> =
+            humid_s.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+
+        let mut ah_23: Option<f64> = None;
+        let mut ah_06: Option<f64> = None;
+
+        let mut all_keys: Vec<&str> = temp_by_key.keys().copied().collect();
+        all_keys.sort();
+        for key in &all_keys {
+            let h: u32 = key.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(99);
+            if let (Some(&t), Some(&rh)) = (temp_by_key.get(key), humid_by_key.get(key)) {
+                let ah = absolute_humidity(t, rh);
+                if h == 23 && ah_23.is_none() {
+                    ah_23 = Some(ah);
+                }
+                if h == 6 {
+                    ah_06 = Some(ah);
+                }
+            }
+        }
+
+        let (a23, a06) = match (ah_23, ah_06) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
+        };
+
+        let delta_ah = a06 - a23;
+        let hours = 7.0;
+        let moisture_rate = occ as f64 * MOISTURE_PERSON_SLEEPING / vol;
+        let observed_rate = delta_ah / hours;
+        let vent_removal = moisture_rate - observed_rate;
+        let ah_avg = (a23 + a06) / 2.0;
+        let ah_diff = ah_avg - outside_ah;
+        let ach_moisture = if ah_diff > 0.5 {
+            vent_removal / ah_diff
+        } else {
+            0.0
+        };
+
+        let ach_thermal = room.ventilation_ach * (1.0 - room.heat_recovery);
+        let m = if occ > 0 && ach_moisture > 0.0 {
+            if (ach_moisture - ach_thermal).abs() < 0.3 {
+                "✓"
+            } else {
+                "≠"
+            }
+        } else {
+            "-"
+        };
+
+        println!(
+            "{:<14} {:>3} {:>7.2} {:>7.2} {:>+6.2} {:>10.2} {:>10.2} {:>6}",
+            name, occ, a23, a06, delta_ah, ach_moisture, ach_thermal, m
+        );
+    }
+
+    println!("\n  ACH_moist = total air exchange (to outside + inter-room), from humidity change");
+    println!("  ACH_therm = to outside only, from thermal model");
+    println!(
+        "  ACH_moist ≥ ACH_therm expected (doorway exchange adds to moisture but not thermal)"
+    );
+    println!(
+        "  Moisture rate: {} g/h/person (±25% → ±50% ACH uncertainty)",
+        MOISTURE_PERSON_SLEEPING
+    );
+
+    Ok(())
+}
+
+/// Query room humidity from InfluxDB (parallel to query_room_temps but for humidity field).
+fn query_room_humidity(
+    influx_url: &str,
+    org: &str,
+    bucket: &str,
+    token: &str,
+    sensor_topics: &[&str],
+    start: &chrono::DateTime<chrono::FixedOffset>,
+    stop: &chrono::DateTime<chrono::FixedOffset>,
+) -> ThermalResult<Vec<(chrono::DateTime<chrono::FixedOffset>, String, f64)>> {
+    let mut conditions = Vec::new();
+    for t in sensor_topics {
+        if *t == "emon/emonth2_23/temperature" {
+            // emonth2 doesn't have humidity via this topic — skip
+            continue;
+        }
+        conditions.push(format!(
+            "(r.topic == \"{}\" and r._field == \"humidity\")",
+            t
+        ));
+    }
+    if conditions.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let flux = format!(
+        "from(bucket: \"{bucket}\")\n  |> range(start: {start}, stop: {stop})\n  |> filter(fn: (r) => {cond})\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"topic\", \"_value\"])",
+        bucket = bucket,
+        start = start.to_rfc3339(),
+        stop = stop.to_rfc3339(),
+        cond = conditions.join(" or ")
+    );
+
+    let rows = influx::query_flux_csv_pub(influx_url, org, token, &flux)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let time_str = row
+            .get("_time")
+            .ok_or(super::error::ThermalError::MissingColumn {
+                column: "_time",
+                context: "humidity row",
+            })?;
+        let t = influx::parse_dt(time_str)?;
+        let topic = row
+            .get("topic")
+            .ok_or(super::error::ThermalError::MissingColumn {
+                column: "topic",
+                context: "humidity row",
+            })?
+            .to_string();
+        let value: f64 = row
+            .get("_value")
+            .ok_or(super::error::ThermalError::MissingColumn {
+                column: "_value",
+                context: "humidity row",
+            })?
+            .parse()
+            .map_err(|_| super::error::ThermalError::FloatParse {
+                context: "humidity _value",
+                value: row.get("_value").unwrap().clone(),
+            })?;
+        out.push((t, topic, value));
+    }
+    out.sort_by_key(|(t, _, _)| *t);
+    Ok(out)
+}

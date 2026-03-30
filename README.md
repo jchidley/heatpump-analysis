@@ -53,6 +53,7 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `thermal-connections` | Inter-room connections and doorway exchanges |
 | `thermal-analyse` | Live energy balance from InfluxDB (per-room heat flows) |
 | `thermal-equilibrium` | Solve for equilibrium room temperatures at given conditions |
+| `thermal-moisture` | Condensation risk + overnight humidity balance |
 | `thermal-calibrate` | Calibrate thermal model from InfluxDB cooldown data |
 | `thermal-validate` | Validate thermal model on holdout windows |
 | `thermal-fit-diagnostics` | Period-by-period cooldown fit diagnostics |
