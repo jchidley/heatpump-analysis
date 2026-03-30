@@ -633,9 +633,67 @@ reading VWZ AI state to inform its next SetMode decision. The community
 hasn't reverse-engineered these because most ebusd users have gas boilers
 (no VWZ AI). This is a prime target for Phase 3 passive capture analysis.
 
-### Replacing the VRC 700
+### Control strategy: steer the VRC 700, don't replace it
 
-To replace the VRC 700, the Pico W would need to:
+The VRC 700 handles the hard parts — 10-second heartbeat, SetMode
+translation, VWZ AI communication, safety fallbacks. We keep all of that.
+Our system provides the intelligence the VRC 700 lacks.
+
+**The VRC 700 as a steerable state machine:**
+
+The VRC 700 reads the outdoor temperature, applies the heat curve, checks
+its timers, and produces a flow temp demand. We adjust its inputs to get
+the output we want:
+
+| Register we adjust | What it changes | When |
+|---|---|---|
+| `Hc1HeatCurve` | Flow temp for a given outdoor temp | Wind, solar, tariff window |
+| `Z1DayTemp` / `Z1NightTemp` | Room temp target | Occupancy, tariff, thermal model |
+| `HwcSFMode` | Force DHW charge | Tariff optimisation |
+| `Z1Timer` / `HwcTimer` | Day/night/DHW windows | Seasonal, Cosy schedule |
+| `HwcTempDesired` | DHW target temp | Seasonal (45°C summer, higher winter) |
+
+**What our system knows that the VRC 700 doesn't:**
+
+| Data source | What it tells us | How we use it |
+|---|---|---|
+| 13 room sensors (Zigbee) | Per-room temperatures and humidity | Detect rooms not meeting target, adjust setpoint |
+| PV generation | Solar gain on south-facing rooms | Reduce flow temp demand when sun is heating the house |
+| Wind speed (Met Office / forecast) | Effective HTC increase on solid brick walls | Bump heat curve gradient in windy conditions |
+| Weather forecast | Tomorrow's conditions | Pre-heat before a cold night, back off before a warm day |
+| Cosy tariff windows | Electricity price right now | Overdrive flow temp during cheap periods, coast during peak |
+| Battery state (Powerwall) | Can we afford to run at peak rates? | Avoid compressor during battery-depleted peak |
+| Thermal model (calibrated HTC 261 W/K) | How fast is the house cooling? | Predict recovery time, adjust setback depth |
+| emonhp heat meter | Actual COP and heat output | Verify the VRC 700's demand is producing expected results |
+| HwcStorageTemp + Multical T1/T2 | Real cylinder state | Time DHW charges optimally, not just when VRC 700 decides |
+
+**Example scenarios:**
+
+| Condition | Same outdoor temp | VRC 700 does | We do instead |
+|---|---|---|---|
+| Calm sunny day, 8°C | 8°C | Fixed curve → 33°C flow | Drop curve to 0.45 — solar gain is heating south rooms |
+| Windy overcast, 8°C | 8°C | Same 33°C flow | Bump curve to 0.65 — wind is doubling the effective heat loss |
+| 4am Cosy window, 5°C | 5°C | Normal curve → 37°C flow | Bump to 0.70 — cheap electricity, pre-heat before peak |
+| Peak period, battery low | Any | Normal curve | Drop day temp by 1°C — avoid expensive compressor use |
+| Leather room 2°C below target | Any | Doesn't know | Bump setpoint temporarily — conservatory door was opened |
+
+**The feedback loop:**
+
+Our Pico W (or Rust program on pi5data) monitors:
+- SetMode from VRC 700 → VWZ AI (the flow temp it's actually demanding)
+- Status01 from VWZ AI (actual flow/return temps achieved)
+- Room temperatures (13 Zigbee sensors)
+- HMU status (compressor on/off, COP)
+
+If the house isn't responding as the model predicts, we adjust. The VRC 700
+remains the reliable real-time executor — it handles the 10-second loop,
+the safety systems, and the VWZ AI communication. We provide the strategy.
+
+### Future option: replace the VRC 700 entirely
+
+If the VRC 700 ever becomes a bottleneck (e.g. can't adjust heat curve
+fast enough, or its firmware has bugs we can't work around), we can send
+SetMode directly to the VWZ AI. To do this, the Pico W would need to:
 1. Send **B5 10 SetMode** to the VWZ AI (address 0x76) every ~10s
 2. Read **B5 11 Status01** from the VWZ AI for feedback
 3. Optionally read **B5 07/B5 11** from the HMU for energy/status data
