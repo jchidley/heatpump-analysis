@@ -103,13 +103,20 @@ cargo run -- --all-data design-comparison
 - **[docs/house-layout.md](docs/house-layout.md)** — Room connectivity, door states, radiators, pipe topology, sensors
 - **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — Room thermal model: methodology, calibration, equilibrium, moisture
 
+### Adaptive heating control
+- **[docs/adaptive-heating-control.md](docs/adaptive-heating-control.md)** — Strategy: outcomes-first control, room targeting, the house as a laboratory
+- **[docs/adaptive-heating-mvp.md](docs/adaptive-heating-mvp.md)** — MVP spec: modes, levers, safety, logging, deployment
+- **[docs/vrc700-settings-audit.md](docs/vrc700-settings-audit.md)** — VRC 700 settings, timer encoding, eBUS commands
+- **[docs/dhw-fixes.md](docs/dhw-fixes.md)** — DHW sensor mapping, cylinder analysis follow-ups
+
 ### Operations
 - **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Monitoring infrastructure (devices, MQTT, eBUS, InfluxDB, Grafana)
 - **[docs/emon-installation-runbook.md](docs/emon-installation-runbook.md)** — How to rebuild/provision emon devices
 
 ### Reference
 - **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit
-- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements
+- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements (adaptive heating, Pico eBUS, physical improvements)
+- **[docs/pico-ebus-plan.md](docs/pico-ebus-plan.md)** — Pico W eBUS adapter build plan
 - **[docs/rust-migration-plan.md](docs/rust-migration-plan.md)** — Python→Rust migration policy
 - **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
 

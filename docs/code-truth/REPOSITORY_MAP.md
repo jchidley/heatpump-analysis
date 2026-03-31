@@ -1,4 +1,4 @@
-<!-- code-truth: e67fc92 -->
+<!-- code-truth: 7b6bfed -->
 
 # Repository Map
 
@@ -7,19 +7,18 @@
 | File | Concern |
 |------|---------|
 | `config.toml` | All domain constants, thresholds, feed IDs, house data, radiator inventory, Arotherm specs, gas-era history |
-| `Cargo.toml` | Dependencies and build configuration (two binaries: `heatpump-analysis`, `thermal-regression-check`) |
+| `Cargo.toml` | Dependencies and build configuration (three binaries: `heatpump-analysis`, `thermal-regression-check`, `adaptive-heating-mvp`) |
 | `AGENTS.md` | LLM agent context (canonical project documentation) |
-| `CLAUDE.md` | Points to AGENTS.md |
 | `README.md` | Human-facing quick start, command reference, project philosophy |
 | `heatpump.db` | SQLite database (gitignored, created by `sync`) |
-| `heating-monitoring-setup.md` | Full monitoring infrastructure documentation (devices, MQTT topics, eBUS data, credentials) |
+| `heating-monitoring-setup.md` | Full monitoring infrastructure documentation |
 | `.gitmodules` | Six submodules: ebusd, avrdb_firmware, EmonScripts, emonhub, emoncms, emonPiLCD |
 
 ## Source Modules
 
-### `src/main.rs` — CLI entry point (611 lines)
+### `src/main.rs` — CLI entry point (~611 lines)
 
-Defines 28 CLI subcommands via clap derive. Loads `config.toml` at startup. Routes to analysis functions, DB operations, thermal commands.
+Defines 28+ CLI subcommands via clap derive. Loads `config.toml` at startup. Routes to analysis functions, DB operations, thermal commands.
 
 ### `src/config.rs` — Configuration (213 lines)
 
@@ -31,23 +30,23 @@ Minimal HTTP client for emoncms.org REST API. Used only by `sync` command. Block
 
 ### `src/db.rs` — SQLite storage (507 lines)
 
-Three tables: `feeds`, `samples` (WITHOUT ROWID), `sync_state`. WAL mode. `load_dataframe()` and `load_dataframe_with_simulated()` are the two DataFrame loading paths. Also provides `load_daily_outside_temp()` and `load_daily_energy()` for degree-day analysis.
+Three tables: `feeds`, `samples` (WITHOUT ROWID), `sync_state`. WAL mode. `load_dataframe()` and `load_dataframe_with_simulated()` are the two DataFrame loading paths.
 
 ### `src/analysis.rs` — State machine + Polars queries (986 lines)
 
-Core HP analysis. `classify_states()` implements the hysteresis state machine (flow rate → heating/DHW/defrost/idle). `enrich()` adds `cop`, `delta_t`, `state` columns. All analysis functions take enriched DataFrames and print to stdout.
+Core HP analysis. `classify_states()` implements the hysteresis state machine. All analysis functions take enriched DataFrames and print to stdout.
 
 ### `src/gaps.rs` — Gap detection + synthetic data (648 lines)
 
-`TempBinModel` builds temperature-bin power profiles from real data. `fill_gap()` generates synthetic samples scaled to match cumulative meter readings. Writes to separate `simulated_samples` table. Bypasses `db.rs` — manages own schema.
+`TempBinModel` builds temperature-bin power profiles. Bypasses `db.rs` — manages own schema.
 
 ### `src/octopus.rs` — Octopus Energy integration (814 lines)
 
-Reads from `~/github/octopus/data/` (CSV + JSON). Gas-vs-HP comparison, baseload analysis, monthly breakdown with HDD. ERA5 bias correction (+1.0°C) as Rust constant.
+Reads from `~/github/octopus/data/`. Gas-vs-HP comparison, baseload analysis.
 
 ### `src/overnight.rs` — Overnight strategy optimizer (1,479 lines)
 
-Backtest model for overnight heating strategies. Calibrated cooling model (k=0.039/hr from DHW events), three-rate Cosy tariff, battery coverage. Evaluates 30 strategies × 324 winter nights.
+Backtest model for overnight heating strategies.
 
 ### `src/thermal.rs` — Thin facade (23 lines)
 
@@ -55,107 +54,82 @@ Re-exports 8 public entry points from 15 submodules. All implementation is in `s
 
 ### `src/thermal/` — Thermal model submodules (4,222 lines total)
 
-Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorway exchange, solar gain. Split from monolithic `thermal.rs` (3,506 lines) on 2026-03-29.
+Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorway exchange, solar gain.
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
 | `config.rs` | 213 | TOML config structs for thermal model |
-| `geometry.rs` | 269 | Room/connection/doorway types + JSON loading from `thermal_geometry.json` |
-| `physics.rs` | 399 | Constants, thermal mass computation, energy balance equations |
-| `solar.rs` | 180 | Solar position + irradiance (PV + Open-Meteo DNI/DHI) |
-| `wind.rs` | 75 | Open-Meteo wind speed + ventilation multiplier |
-| `calibration.rs` | 626 | Grid search calibration, shared helpers (`calibrate_model`, `avg_series_in_window`, `avg_room_temps_in_window`) |
-| `validation.rs` | 435 | Metrics, residuals, holdout window validation |
-| `diagnostics.rs` | 444 | Cooldown detection + period-by-period fit diagnostics |
-| `operational.rs` | 551 | HP state classification (BCF-based), segmentation, operational validation with solar/radiators |
-| `artifact.rs` | 224 | Artifact types, git metadata, build/write JSON artifacts |
+| `geometry.rs` | 269 | Room/connection/doorway types + JSON loading |
+| `physics.rs` | 399 | Constants, thermal mass, energy balance |
+| `solar.rs` | 180 | Solar position + irradiance |
+| `wind.rs` | 75 | Open-Meteo wind + ventilation multiplier |
+| `calibration.rs` | 626 | Grid search calibration, shared helpers |
+| `validation.rs` | 435 | Metrics, residuals, holdout validation |
+| `diagnostics.rs` | 444 | Cooldown detection + fit diagnostics |
+| `operational.rs` | 551 | HP state classification, operational validation |
+| `artifact.rs` | 224 | Artifact types, git metadata, build/write |
 | `snapshot.rs` | 233 | Export/import manifests with human signoff |
-| `error.rs` | 99 | `ThermalError` enum with `thiserror` derive (20+ variants) |
-| `influx.rs` | 352 | Flux query builders for room temps, outside temp, HP status, PV, BCF, MWT |
-| `display.rs` | 78 | `print_rooms()` and `print_connections()` CLI output |
-| `report.rs` | 44 | Table printer and RMSE calculator |
-
-Public entry points (re-exported via `src/thermal.rs`):
-
-| Function | Command | What it does |
-|----------|---------|-------------|
-| `calibrate()` | `thermal-calibrate` | Grid search over Cd + landing ACH against Night 1/Night 2 cooldown rates |
-| `validate()` | `thermal-validate` | Run calibrated model on holdout windows, check pass/fail thresholds |
-| `fit_diagnostics()` | `thermal-fit-diagnostics` | Period-by-period cooldown diagnostics from HP status codes |
-| `operational_validate()` | `thermal-operational` | Full operational validation with heating/DHW/off, solar gain, BCF-based state |
-| `print_rooms()` | `thermal-rooms` | Room summary table (geometry, thermal mass, radiators, pipes) |
-| `print_connections()` | `thermal-connections` | Internal wall/floor connections + doorway exchanges |
-| `snapshot_export()` / `snapshot_import()` | `thermal-snapshot` | Human-gated reproducibility workflow |
+| `error.rs` | 99 | `ThermalError` enum |
+| `influx.rs` | 352 | Flux query builders |
+| `display.rs` | 78 | CLI output for rooms/connections |
+| `report.rs` | 44 | Table printer and RMSE |
 
 ## Standalone Binaries
 
+### `src/bin/adaptive-heating-mvp.rs` (900 lines)
+
+**NEW.** Live adaptive heating controller. Axum HTTP API + background control loop. Reads eBUS via TCP, InfluxDB for room temps. Writes VRC 700 registers. Logs to InfluxDB + JSONL. Deployed as systemd service on `pi5data` (port 3031). Config: `model/adaptive-heating-mvp.toml`. Service: `deploy/adaptive-heating-mvp.service`.
+
+Key components:
+- `run_control_cycle()` — 15-minute decision loop: read state, evaluate mode-specific rules, write levers, log
+- `restore_baseline()` — write known-good values to VRC 700 (called on kill/stop)
+- `classify_tariff_period()` — Cosy/peak/standard from clock
+- HTTP API: `/status`, `/mode/{mode}`, `/kill`
+- Modes: `Occupied`, `ShortAbsence`, `AwayUntil`, `Disabled`, `MonitorOnly`
+
 ### `src/bin/thermal-regression-check.rs` (607 lines)
 
-Compares fresh thermal artifacts against baseline JSON files. Supports 4 artifact types: `thermal-calibrate`, `thermal-validate`, `thermal-fit-diagnostics`, `thermal-operational`. Checks per-metric drift against thresholds in `artifacts/thermal/regression-thresholds.toml`.
+Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 
 ### `src/bin/cosy-scheduler.rs` (162 lines)
 
-**Retired.** Source kept for reference. Binary removed from pi5data. Was deployed to read outside temp from eBUS and log DHW recommendations. Conflicts with timer-only VRC 700 operation.
-
-## Python Model
-
-**Deleted** (fully superseded by Rust):
-- ~~`model/house.py`~~ (1,250 lines) — all 5 commands ported to Rust 2026-03-30
-- ~~`model/calibrate.py`~~ — replaced by `thermal-calibrate`
-- ~~`model/overnight.py`~~ — replaced by `overnight` command
-
-### `model/extract_house_inventory.py` (1,531 lines)
-
-One-off extraction script. Produces `model/data/inventory/` artifacts and `data/canonical/thermal_geometry.json`.
-
-### `model/audit_model_dimensions.py` (123 lines)
-
-One-off audit. Verifies Python and Rust wiring to canonical geometry (509 checks).
+**Retired.** Source kept for reference. Binary removed from pi5data.
 
 ## Configuration
 
-### `config.toml` — Domain constants
+| File | Used by | Concern |
+|------|---------|---------|
+| `config.toml` | `src/main.rs`, `src/config.rs`, most modules | Domain constants, thresholds, feed IDs |
+| `model/thermal-config.toml` | `src/thermal/config.rs` | InfluxDB, test nights, calibration bounds |
+| `model/adaptive-heating-mvp.toml` | `src/bin/adaptive-heating-mvp.rs` | eBUS host, InfluxDB, Cosy windows, baseline values, room topics |
+| `artifacts/thermal/regression-thresholds.toml` | `src/bin/thermal-regression-check.rs` | Regression gates |
+| `data/canonical/thermal_geometry.json` | `src/thermal/geometry.rs` | Room geometry single source of truth |
 
-Six sections: `emoncms` (feeds, sync), `thresholds` (state machine, HDD), `house` (HTC, floor area), `arotherm` (spec curves), `radiators` (15 entries), `gas_era` (monthly gas data).
+## Deploy
 
-### `model/thermal-config.toml` — Thermal model config
+| File | Target | Purpose |
+|------|--------|---------|
+| `deploy/adaptive-heating-mvp.service` | pi5data `/etc/systemd/system/` | systemd unit for adaptive heating MVP |
 
-InfluxDB connection, test night windows, objective function config (excluded rooms, prior weight), calibration bounds/steps, validation windows, fit diagnostics config, wind model (disabled).
+## Domain Docs
 
-### `artifacts/thermal/regression-thresholds.toml` — Regression gates
-
-Thresholds for 4 artifact types: calibrate, validate, fit-diagnostics, operational. Used by `thermal-regression-check` binary and `scripts/thermal-regression-ci.sh`.
-
-### `data/canonical/thermal_geometry.json` — Room geometry
-
-Single source of truth for room dimensions, external fabric, internal connections, doorways, solar glazing. Consumed by Rust (`src/thermal/geometry.rs`). Provenance tracked.
-
-## Scripts
-
-| Script | Location | Deployment | Purpose |
-|--------|----------|-----------|---------|
-| `scripts/ebusd-poll.sh` | `ebusd-poll` systemd on pi5data | `scp` + `systemctl restart` | Reads 25+ eBUS values every 30s via `nc`, publishes to MQTT |
-| `scripts/ebusd-poll.service` | `/etc/systemd/system/` on pi5data | Part of ebusd-poll deploy | Systemd unit |
-| `scripts/backup-sdcard.sh` | Run on imaging host (pi5nvme) | Manual | dd → PiShrink → xz backup pipeline |
-| `scripts/thermal-regression-ci.sh` | Local/CI | `bash scripts/thermal-regression-ci.sh` | Lint gates (fmt + clippy) then runs 4 regression checks against baselines |
-| `scripts/refresh-thermal-baselines.sh` | Local | After intentional model changes | Generates fresh baseline artifacts |
-
-## Artifacts
-
-```
-artifacts/thermal/
-  regression-thresholds.toml           # Thresholds for 4 artifact types
-  baselines/
-    thermal-calibrate-baseline.json    # Reference calibration output
-    thermal-validate-baseline.json     # Reference validation output
-    thermal-fit-diagnostics-baseline.json
-    thermal-operational-baseline.json  # Reference operational output
-    README.md
-  snapshots/                           # Human-signed reproducibility snapshots
-    thermal-snapshot-*/
-      manifest.json
-      files/                           # Config + thresholds at snapshot time
-```
+| Document | Concern |
+|----------|---------|
+| `docs/adaptive-heating-control.md` | Strategy, philosophy, room targeting, control theory |
+| `docs/adaptive-heating-mvp.md` | Frozen MVP spec, implementation status, outstanding work |
+| `docs/roadmap.md` | Planned enhancements with status |
+| `docs/pico-ebus-plan.md` | Pico W eBUS adapter build plan |
+| `docs/vrc700-settings-audit.md` | VRC 700 settings, timer encoding, eBUS commands |
+| `docs/dhw-fixes.md` | DHW sensor labelling, Grafana, cylinder analysis follow-ups |
+| `docs/dhw-cylinder-analysis.md` | 300L Kingspan Albion cylinder analysis |
+| `docs/house-layout.md` | 13 rooms, radiators, ventilation, sensor locations |
+| `docs/room-thermal-model.md` | Thermal model methodology |
+| `docs/hydraulic-analysis.md` | Flow rate thresholds, sludge filter |
+| `docs/overnight-strategy-analysis.md` | Overnight heating strategy backtest |
+| `docs/rust-migration-plan.md` | Python→Rust migration (complete) |
+| `docs/explanation.md` | Domain background (HTC, COP, degree days) |
+| `docs/emon-installation-runbook.md` | emonPi2/emonhp rebuild procedures |
+| `docs/octopus-data-inventory.md` | Octopus consumption data fields |
 
 ## Concern Mapping
 
@@ -164,27 +138,19 @@ artifacts/thermal/
 | Operating state thresholds | `config.toml` `[thresholds]`, then `analysis.rs::classify_states()` |
 | Feed IDs or column names | `config.toml` `[emoncms.feeds]`, then `db.rs` and `analysis.rs` |
 | Radiator data | `config.toml` `[radiators]` AND `data/canonical/thermal_geometry.json` (keep in sync) |
-| Room geometry / fabric | `data/canonical/thermal_geometry.json` (consumed by Rust `geometry.rs`) |
+| Room geometry / fabric | `data/canonical/thermal_geometry.json` → `src/thermal/geometry.rs` |
 | Thermal calibration bounds | `model/thermal-config.toml` `[bounds]` |
-| Thermal physics / energy balance | `src/thermal/physics.rs` (cooldown) and `src/thermal/operational.rs` (full) |
+| Thermal physics / energy balance | `src/thermal/physics.rs` and `src/thermal/operational.rs` |
 | Solar gain model | `src/thermal/solar.rs` |
 | InfluxDB queries (thermal) | `src/thermal/influx.rs` |
 | Artifact schema / output | `src/thermal/artifact.rs` |
 | Regression CI gates | `src/bin/thermal-regression-check.rs` + `artifacts/thermal/regression-thresholds.toml` |
+| **Adaptive heating control logic** | `src/bin/adaptive-heating-mvp.rs::run_control_cycle()` |
+| **Adaptive heating config** | `model/adaptive-heating-mvp.toml` |
+| **Adaptive heating modes/API** | `src/bin/adaptive-heating-mvp.rs` (HTTP handlers + Mode enum) |
+| **Adaptive heating baseline** | `model/adaptive-heating-mvp.toml` `[baseline]` + `restore_baseline()` |
+| **Mobile dashboard** | `~/github/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
 | eBUS polling | `scripts/ebusd-poll.sh` on pi5data |
-| Octopus data refresh | `~/github/octopus/` project — `npm run cli -- refresh` |
-| DHW tracking/boost | `~/github/z2m-hub/` project |
-| Zigbee automations | `~/github/z2m-hub/` project |
-| VRC 700 settings | `docs/vrc700-settings-audit.md` (reference only, no code) |
+| Octopus data refresh | `~/github/octopus/` — `npm run cli -- refresh` |
+| VRC 700 settings | `docs/vrc700-settings-audit.md` |
 | Monitoring infrastructure | `heating-monitoring-setup.md`, `docs/emon-installation-runbook.md` |
-
-## Git Submodules (upstream reference only)
-
-| Submodule | Purpose |
-|-----------|---------|
-| `avrdb_firmware/` | AVR-DB firmware hex files for flashing EmonPi2/EmonTx |
-| `EmonScripts/` | emonSD install/update scripts |
-| `emonhub/` | Data multiplexer (serial/MBUS/MQTT interfacers) |
-| `ebusd/` | eBUS daemon CSV config files |
-| `emoncms/` | Web framework (reference, not deployed on most devices) |
-| `emonPiLCD/` | OLED/LCD display + button handler for emonpi |

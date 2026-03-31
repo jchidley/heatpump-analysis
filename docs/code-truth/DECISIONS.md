@@ -1,4 +1,4 @@
-<!-- code-truth: e67fc92 -->
+<!-- code-truth: 7b6bfed -->
 
 # Decisions
 
@@ -10,14 +10,9 @@
 
 **What**: Classify operating states using flow rate thresholds with hysteresis.
 
-**Why**: The Arotherm 5kW has a fixed-speed pump. Diverter valve position gives a clean bimodal signal: 14.3–14.5 L/min heating, 16.5+ L/min DHW.
-
 **Where**: `analysis.rs::classify_states()`, `config.toml` `[thresholds]`
 
-**Alternatives rejected**:
-- *Flow temperature > 38°C for DHW*: Missed ramp-up, late-stage DHW, and mild-weather DHW.
-- *DHW_flag feed (512889)*: Dead since December 2024.
-- *eBUS StatuscodeNum*: **Unreliable for DHW detection** — code 134 appears during both off/frost standby AND active DHW. The Rust `thermal-operational` command uses `BuildingCircuitFlow` (L/h) instead: > 900 = DHW, 780–900 = heating, < 100 = off. The emoncms flow-rate state machine remains primary for the main analysis tool.
+**Alternatives rejected**: Flow temperature, DHW_flag feed (dead), eBUS StatuscodeNum (unreliable — code 134 appears during both standby and DHW).
 
 **Consequences**: Any new classification approach must be validated against 448k+ running samples.
 
@@ -25,199 +20,120 @@
 
 **Status:** active
 
-**What**: All domain constants in `config.toml`, loaded at runtime via `once_cell`.
+**What**: All domain constants in `config.toml`, thermal config in `model/thermal-config.toml`, adaptive heating in `model/adaptive-heating-mvp.toml`. Three independent config files for three independent concerns.
 
-**Where**: `config.toml`, `config.rs`
+**Where**: `config.rs`, `src/thermal/config.rs`, `src/bin/adaptive-heating-mvp.rs`
 
-**Consequences**: Runtime dependency on config file being present.
-
-### D4: Cumulative meters as gap-fill constraint
+### D3: Thermal geometry in JSON, not TOML
 
 **Status:** active
 
-**What**: Scale synthetic power estimates so their time-integral matches cumulative energy meters.
+**What**: Room dimensions, fabric, connections in `data/canonical/thermal_geometry.json`. Single source of truth for both Rust thermal model and (formerly) Python.
 
-**Where**: `gaps.rs::fill_gap()`
+**Where**: `data/canonical/thermal_geometry.json`, `src/thermal/geometry.rs`
 
-**Consequences**: Total energy during gaps is exact (from meters). Minute-by-minute profile is approximate.
-
-### D5: Separate simulated_samples table
+### D4: Typed errors in thermal module, anyhow at CLI boundary
 
 **Status:** active
 
-**What**: Gap-filled data in `simulated_samples`, included only with `--include-simulated`.
+**What**: `ThermalError` enum with `thiserror`. `anyhow` only in `main.rs`.
 
-**Where**: `gaps.rs`, `db.rs`
-
-### D11: DHW threshold tightening (March 2026)
+### D5: Adaptive heating MVP is a separate binary, not a subcommand
 
 **Status:** active
 
-**What**: DHW entry 16.0→15.0 L/min, exit 15.0→14.7 L/min.
+**What**: `src/bin/adaptive-heating-mvp.rs` is a standalone binary with its own config, own dependencies (Axum, Tokio), and own deployment path. Not integrated into the main `heatpump-analysis` CLI.
 
-**Why**: Y-filter sludge reduced DHW flow to 16.8 L/min. Tighter thresholds safe because heating is software-clamped at 14.3 L/min. Flow recovered after filter clean (21.3 L/min) but tighter thresholds retained.
+**Why**: The MVP runs as a long-lived service on `pi5data`. The main CLI is a short-lived analysis tool run from a development machine. Different runtime models, different deployment, different dependency profiles (async vs blocking).
 
-**Where**: `config.toml` `[thresholds]`
+**Consequences**: No shared code between the analysis CLI and the adaptive controller. InfluxDB query patterns are duplicated (thermal/influx.rs vs adaptive-heating-mvp). This is intentional — the controller should be independently deployable.
 
-### D20: Symmetric internal connections in thermal model
-
-**Status:** active
-
-**What**: Wall/floor/doorway connections defined **once** per pair, applied to both rooms.
-
-**Where**: `data/canonical/thermal_geometry.json`, consumed by `thermal/geometry.rs::build_connections/doorways()`
-
-**Consequences**: Prevents double-counting. Adding a new room requires defining all its connections.
-
-### D21: Chimney effect as landing ACH, not pairwise doorway exchange
+### D6: VRC 700 as steerable state machine, not replaced
 
 **Status:** active
 
-**What**: Stairwell chimney modelled as increased ventilation ACH (1.30) for landing, not buoyancy doorways.
+**What**: The adaptive controller writes strategic inputs to the VRC 700 and observes its downstream behaviour. It does not bypass the VRC 700 or send commands directly to the VWZ AI / HMU.
 
-**Why**: Multi-storey stack flow doesn't fit pairwise exchange. Calibrated from Night 1 vs Night 2 (RMSE=0.057°C/h). Valid for cooldown calibration but **structurally wrong for operational mode** — predicts wrong sign 9/14 heating periods. Landing excluded from operational scoring.
+**Why**: The VRC 700 handles the 10-second heartbeat, safety fallbacks, valve control, and VWZ AI communication. Replacing it requires sending SetMode every 10s — much higher complexity and risk. Steering its inputs is safer and sufficient for the current objectives.
 
-**Where**: `data/canonical/thermal_geometry.json` (landing ACH), stairwell doorways marked `state="chimney"` in doorway list
+**Where**: `docs/adaptive-heating-control.md`, `docs/pico-ebus-plan.md` (future option to replace documented but not planned)
 
-### D25: Two separate state classifiers for emoncms vs eBUS data
-
-**Status:** active
-
-**What**: `analysis.rs::classify_states()` uses emoncms flow rate (L/min). `thermal.rs::classify_hp_state_from_flow()` uses eBUS `BuildingCircuitFlow` (L/h). They serve different data sources and are not connected.
-
-**Why**: The emoncms classifier works on `heatpump.db` data (flow rate from MBUS heat meter). The thermal classifier works on InfluxDB data (eBUS `BuildingCircuitFlow`). Different units, different systems, different availability.
-
-**Consequences**: Threshold changes in one don't automatically propagate to the other.
-
-### D26: Canonical geometry shared between Rust and Python
+### D7: Baseline restore on stop/kill
 
 **Status:** active
 
-**What**: `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by Rust (`thermal/geometry.rs`).
+**What**: When the MVP stops, crashes, or is manually killed, it restores known-good VRC 700 register values. The VRC 700 then operates on its own timer/curve schedule as before.
 
-**Why**: Eliminates drift between the two implementations. Geometry extracted from building plans and XLSX via `extract_house_inventory.py`, audited by `audit_model_dimensions.py` (509 checks, 0 mismatches).
+**Why**: The manually-tuned baseline works. The MVP is a pilot on top of a known-good foundation. If the pilot misbehaves, reverting to the baseline is always safe.
 
-**Where**: `data/canonical/thermal_geometry.json`, provenance in `model/data/inventory/canonical_geometry_provenance.csv`
+**Where**: `src/bin/adaptive-heating-mvp.rs::restore_baseline()`, `model/adaptive-heating-mvp.toml` `[baseline]`
 
 ## Pragmatic Decisions
 
-### D3: No tests
+### D8: Leather room as primary comfort target
 
 **Status:** active
 
-**What**: No unit or integration tests. Validation via real data + regression baselines for thermal model.
+**What**: Leather room (emonth2 sensor) is the primary reference for control decisions. Comfort band 20–21°C. Aldora is fallback but must not drive control until its proxy band is derived from historical data.
 
-**Risk**: Regressions caught only by running commands and comparing output. Thermal regression baselines provide partial CI guard.
+**Why**: Leather is the room where "good" is known most clearly from lived experience.
 
-### D6: Global config singleton (once_cell)
+**Where**: `src/bin/adaptive-heating-mvp.rs::run_control_cycle()` (Occupied branch), `docs/adaptive-heating-mvp.md`
 
-**Status:** active
-
-**What**: Load config once in `main()`, access via `config::config()` anywhere.
-
-**Consequences**: Implicit global state. Unit testing would need singleton initialisation.
-
-### D7: Polars 0.46 (pinned)
-
-**Status:** active — 0.53+ available but untested.
-
-### D8: Blocking HTTP client
-
-**Status:** active — async would add complexity for no benefit in a sequential CLI.
-
-### D9: Two HDD base temperatures
+### D9: Conservatory excluded from optimisation
 
 **Status:** active
 
-**What**: 15.5°C (UK standard, in `config.toml`) vs 17.0°C (gas-era regression, in `config.toml` under `house`).
+**What**: Conservatory is treated as a heat sink / boundary room, not a comfort target.
 
-**Risk**: Wrong base temp for a comparison → misleading efficiency ratios.
+**Why**: 30m² glass, sub-hour time constant, massive solar/wind sensitivity. Including it would distort whole-house optimisation.
 
-### D10: ERA5 bias correction as constant
-
-**Status:** active
-
-**What**: +1.0°C added to ERA5-Land temperatures. In `octopus.rs` as Rust constant, not in config.toml.
-
-### D12: gaps.rs bypasses db.rs
+### D10: Trust the VRC 700's accepted range
 
 **Status:** active
 
-**What**: Gap-fill writes directly to SQLite, managing its own schema.
+**What**: If the VRC 700 accepts a written value, the MVP treats it as safe. No additional software bounds in V1.
 
-**Risk**: Feed ID conventions must stay consistent between modules.
+**Why**: The VRC 700 has its own internal validation, anti-cycling, and safety logic. Adding extra conservative bounds on top would be second-guessing an algorithm we can't inspect.
 
-### D13: Monitoring scripts as shell on pi5data
-
-**Status:** active
-
-**What**: `ebusd-poll.sh` runs as systemd service on pi5data host. Complex automation (Z2M, DHW tracking) moved to z2m-hub Rust server.
-
-### D14: DHW auto-trigger removed (March 2026)
-
-**Status:** removed
-
-**What**: Was `scripts/dhw-auto-trigger.sh` on pi5data. Replaced by manual boost via z2m-hub mobile dashboard.
-
-### D16: DHW target temperature 45°C is optimal
+### D11: DHW must remain socially reliable
 
 **Status:** active
 
-**What**: Cost per shower nearly constant (±5%) across 40–51°C range. 45°C is ~1°C above practical minimum.
+**What**: DHW availability is a hard practical constraint. Cosy windows are preferred charging opportunities, but charging only happens when the cylinder actually needs it (HwcStorageTemp below trigger). No pointless reheats.
 
-**Where**: Analysis in `docs/dhw-cylinder-analysis.md`
+**Why**: If DHW breaks, the pilot fails regardless of heating efficiency improvements.
 
-### D18: Python and Rust thermal models coexist
+### D12: Legionella as monitored risk, not constant high setpoint
 
-**Status:** active (Rust primary for calibration/validation/operational; Python for equilibrium/moisture)
+**Status:** active (monitoring not yet implemented)
 
-**What**: Core physics parity-matched between Rust and Python (formula audit completed, doc archived to git history). Remaining Python-only: `thermal-rooms`, `thermal-analyse`, `thermal-equilibrium`, `thermal-moisture`. Migration plan in `docs/rust-migration-plan.md`.
+**What**: Legionella control should not mean permanent high cylinder temperature. Instead, monitor turnover and stagnation, trigger targeted hygiene cycles only when risk rises.
 
-### D22: Doorway Cd=0.20 and landing ACH=1.30 jointly calibrated
+**Where**: `docs/adaptive-heating-control.md`, `docs/dhw-fixes.md`
 
-**Status:** active
-
-**What**: Calibrated together against Night 1 (doors normal, T_out 8.5°C) vs Night 2 (all doors closed, T_out 5.0°C). RMSE=0.057°C/h.
-
-**Consequences**: Don't tune independently — re-run joint calibration.
-
-### D23: Overnight strategy — 19°C setback (29 March 2026)
+### D13: Every control action is data
 
 **Status:** active
 
-**What**: `Z1NightTemp`=19°C, `Z1DayTemp`=21°C. Night mode 00:00–04:00. DHW windows: 05:30–07:00, 13:00–15:00, 22:00–00:00.
+**What**: The house is a physical system. Every write to the VRC 700 is an observation about how the system responds. The pilot generates data whether or not the control logic is optimal.
 
-**History**: 17°C setback (house never dropped that far) → OFF trial (rejected, £6/yr) → 19°C (costs ~£20/yr, fires only on coldest nights).
-
-**Key finding**: HP at capacity on cold days. Battery captures most tariff arbitrage (£15–40/yr total scheduling opportunity).
-
-**Where**: VRC 700 via eBUS on pi5data. Full analysis: `docs/overnight-strategy-analysis.md`
-
-### D24: Solar gain calibrated from PV P3 channel
-
-**Status:** active
-
-**What**: SW irradiance from EmonPi2 P3 CT (PV + Powerwall). Calibration: 0.087 W/m² per W on sloping plane, ÷1.4 for vertical reference. NE irradiance from Open-Meteo DNI/DHI decomposition via solar geometry.
-
-**Where**: `thermal.rs::solar_gain_full()`, `pv_to_sw_vertical_irradiance()`
-
-**Consequences**: ⚠ P3 CT reads 6.7kW for 3.08kWp array (includes Powerwall). Used as relative proxy only.
-
-### D27: Conservatory and Landing excluded from operational scoring
-
-**Status:** active
-
-**What**: `thermal-operational` scores 11 of 13 rooms. Conservatory excluded (30m² glass, sub-hour time constant, massive solar/wind sensitivity). Landing excluded (chimney model structurally wrong for heated operation — wrong sign 9/14 periods).
-
-**Where**: `model/thermal-config.toml` `exclude_rooms`
+**Why**: The realistic savings from smarter control are modest (£50–100/year). The primary value is better comfort, less cycling, and understanding the system. The data enables iterative improvement.
 
 ## Open Questions
 
-- **`fill_gap_interpolate()` hardcoded IDs**: Linear interpolation path in gaps.rs uses hardcoded feed ID strings. Should use `config().emoncms.feed_id()`.
-- **Octopus data path**: `~/github/octopus/data/` hardcoded in `default_data_dir()`. Should it move to config.toml?
-- **`--all-data` start timestamp**: `resolve_time_range()` in main.rs hardcodes `1_729_555_200`, duplicating `config.toml` value.
-- **ERA5 bias correction location**: Rust constant in octopus.rs vs config.toml. Should it be externalised?
-- **Kitchen equilibrium undershoot**: Model predicts kitchen 2.2°C colder than measured — likely needs more doorway exchange from hall/conservatory. [UNCERTAIN]
-- **P3 CT scaling**: Reads 6.7kW for 3.08kWp array. Wrong CT ratio or Powerwall discharge contributing. Worked around by calibrated scaling factor. [UNCERTAIN]
-- **Landing chimney model**: ACH-to-outside works for cooldown but structurally wrong for operational use. Needs bidirectional inter-floor air exchange model. [UNCERTAIN]
-- ~~**`thermal.rs` is 3,500 lines**~~: Module split completed 2026-03-29 → 15 focused submodules (config, geometry, physics, solar, wind, calibration, validation, diagnostics, operational, artifact, snapshot + existing error/influx/report). Facade is 23 lines.
+### OQ1: What is Aldora's proxy comfort band?
+
+Need to query historical data for Aldora temperature when Leather is in the 20–21°C band. Until this is derived, Aldora must not drive control.
+
+### OQ2: Does the VRC 700 behave differently after many rapid writes?
+
+The MVP writes at most once per 15 minutes per register. But we don't know if the VRC 700 accumulates state or changes behaviour after extended periods of external writes. This is part of what the pilot observes.
+
+### OQ3: What does `CurrentCompressorUtil = -121` mean?
+
+The register appears to use signed encoding that wraps negative. The raw value is not meaningful as a utilisation percentage. For cycling detection, `RunDataStatuscode` transitions are more reliable.
+
+### OQ4: Can `Hc1HeatCurve` effect be verified when HP is in Standby?
+
+During the control-surface testing session, `Hc1ActualFlowTempDesired` showed 0.0 during Standby. The curve effect was only confirmed when the HP was actively heating. This is expected but means the controller can't verify its curve writes took effect until the next heating cycle.
