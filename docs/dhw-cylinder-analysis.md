@@ -4,6 +4,12 @@
 
 With the emondhw Multical meter (secondary/DHW side) and emonhp MBUS heat meter (primary/HP side) both feeding into InfluxDB on pi5data, we can see both sides of the cylinder heat exchanger simultaneously. This document captures analyses from 19–21 March 2026, including a validated 1D stratification model.
 
+**⚠ Corrections (31 March 2026):** Several findings in this document have been revised based on 12 days of additional sensor data. See `docs/dhw-improved-model.md` for the current model. Key corrections:
+- **Cold inlet is a dip pipe to the bottom (~0mm)**, not insertion at T2 height. WWHR preheats the same cold feed; the 3-min delay is pipe transit (6m of 15mm pipe) + WWHR warm-up, not buoyancy insertion.
+- **The 161L usable figure was an underestimate.** Re-analysis at 2-second resolution gives 177–183L from a full charge. The 165L geometric T2→T1 volume was a coincidence; the real geometric maximum (bottom to draw-off) is 243L.
+- **The "dead zone" below the bottom coil is heated during charges.** The U-shaped coil loops down into it. HwcStorageTemp crash data confirms the entire 0→600mm zone is uniformly heated.
+- **The crossover (HwcStorage ≥ T1_pre) is the definitive "full" signal**, confirmed across 28 charge cycles.
+
 ## Cylinder specification
 
 **Kingspan Albion Ultrasteel Plus Solar Indirect 300L (AUXSN300ERP)**
