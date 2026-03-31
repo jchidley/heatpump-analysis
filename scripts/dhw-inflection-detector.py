@@ -5,18 +5,21 @@ DHW T1 inflection detector.
 Processes every large draw event at 2-second Multical resolution to find
 the exact volume at which T1 begins dropping — the empirical usable capacity.
 
-Classifies each measurement by charge context:
-  - CAPACITY: after a crossover charge with T1≥43° — true capacity measurement
-  - PARTIAL:  after a no-crossover charge or low T1 — partial state
-  - LOWER BOUND: draw ended before T1 dropped — usable is at least this much
+Outputs:
+  - Always writes results to InfluxDB (dhw_inflection measurement)
+  - Default: JSON to stdout (for piping to other tools / z2m-hub)
+  - --human: human-readable summary instead of JSON
+  - --verbose: full per-draw detail table (implies --human)
 
 Usage:
-  uv run --with requests python scripts/dhw-inflection-detector.py --days 12
-  uv run --with requests python scripts/dhw-inflection-detector.py --days 7 --write
-  uv run --with requests python scripts/dhw-inflection-detector.py --days 7 --verbose
+  uv run --with requests python scripts/dhw-inflection-detector.py --days 7
+  uv run --with requests python scripts/dhw-inflection-detector.py --days 7 --human
+  uv run --with requests python scripts/dhw-inflection-detector.py --days 12 --verbose
+  uv run --with requests python scripts/dhw-inflection-detector.py --days 7 --no-write
 """
 import bisect
 import csv
+import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -27,14 +30,14 @@ INFLUX_TOKEN = "jPTPrwcprKfDzt8IFr7gkn6shpBy15j8hFeyjLaBIaJ0IwcgQeXJ4LtrvVBJ5aIP
 INFLUX_ORG = "home"
 BUCKET = "energy"
 
-# Thresholds
-DRAW_FLOW_MIN = 100        # L/h — minimum to count as a draw
-DRAW_MIN_VOLUME = 40       # L — minimum draw size to analyse
-CHARGE_BC_FLOW = 900       # L/h — BuildingCircuitFlow for DHW charging
-CHARGE_MIN_DURATION = 300  # seconds — ignore charges < 5 min
-HINT_RATE = -0.003         # °C/L — dT1/dV for "first hint"
-SIGNAL_RATE = -0.01        # °C/L — dT1/dV for "definitive"
-ROLLING_WINDOW = 10.0      # L — window for dT1/dV computation
+DRAW_FLOW_MIN = 100
+DRAW_MIN_VOLUME = 40
+CHARGE_BC_FLOW = 900
+CHARGE_MIN_DURATION = 300
+HINT_RATE = -0.003
+SIGNAL_RATE = -0.01
+ROLLING_WINDOW = 10.0
+GEOMETRIC_MAX = 243.0
 
 
 def query_influx(flux: str) -> list[dict]:
@@ -63,7 +66,7 @@ def write_influx(line_protocol: str):
         data=line_protocol,
     )
     if not resp.ok:
-        print(f"  InfluxDB write failed: {resp.status_code} {resp.text}", file=sys.stderr)
+        print(f"InfluxDB write failed: {resp.status_code} {resp.text}", file=sys.stderr)
 
 
 def parse_ts_val(rows):
@@ -122,13 +125,13 @@ class InflectionResult:
         charge = self.draw.preceding_charge
         if self.definitive_cumulative is not None:
             if charge and charge.crossover and charge.t1_end >= 43.0:
-                return "CAPACITY"
+                return "capacity"
             else:
-                return "PARTIAL"
+                return "partial"
         elif self.hint_cumulative is not None:
-            return "LOWER BOUND (hint)"
+            return "lower_bound"
         else:
-            return "LOWER BOUND (stable)"
+            return "lower_bound"
 
     @property
     def best_volume(self) -> float | None:
@@ -137,6 +140,25 @@ class InflectionResult:
         if self.hint_cumulative is not None:
             return self.hint_cumulative
         return self.draw.cumulative_since_charge
+
+    def to_dict(self) -> dict:
+        d = self.draw
+        c = d.preceding_charge
+        return {
+            "time": d.start.isoformat(),
+            "category": self.category,
+            "volume_drawn": round(d.volume_drawn),
+            "cumulative_since_charge": round(d.cumulative_since_charge),
+            "inflection_volume": round(self.definitive_cumulative) if self.definitive_cumulative else None,
+            "hint_volume": round(self.hint_cumulative) if self.hint_cumulative else None,
+            "best_volume": round(self.best_volume) if self.best_volume else None,
+            "t1_start": round(self.t1_start, 1),
+            "mains_temp": round(self.mains_temp, 1),
+            "flow_rate": round(self.avg_flow_rate),
+            "gap_hours": round(d.gap_hours, 1),
+            "charge_crossover": c.crossover if c else None,
+            "charge_t1_end": round(c.t1_end, 1) if c else None,
+        }
 
 
 def find_events(days: int = 12) -> tuple[list[ChargeEvent], list[DrawEvent]]:
@@ -182,7 +204,6 @@ def find_events(days: int = 12) -> tuple[list[ChargeEvent], list[DrawEvent]]:
 
     all_times = sorted(set(flow.keys()) & set(vol.keys()))
 
-    # --- Detect charges with crossover ---
     charges: list[ChargeEvent] = []
     in_charge = False
     charge_start = None
@@ -218,10 +239,9 @@ def find_events(days: int = 12) -> tuple[list[ChargeEvent], list[DrawEvent]]:
                     volume_at_end=vol.get(t, 0),
                 ))
 
-    print(f"  Charges: {len(charges)} ({sum(1 for c in charges if c.crossover)} crossover, "
+    print(f"  {len(charges)} charges ({sum(1 for c in charges if c.crossover)} crossover, "
           f"{sum(1 for c in charges if not c.crossover)} partial)", file=sys.stderr)
 
-    # --- Detect draws ---
     draws: list[DrawEvent] = []
     in_draw = False
     draw_start = None
@@ -263,7 +283,7 @@ def find_events(days: int = 12) -> tuple[list[ChargeEvent], list[DrawEvent]]:
 
             prev_draw_end = t
 
-    print(f"  Draws: {len(draws)} ≥{DRAW_MIN_VOLUME}L", file=sys.stderr)
+    print(f"  {len(draws)} draws ≥{DRAW_MIN_VOLUME}L", file=sys.stderr)
     return charges, draws
 
 
@@ -287,7 +307,6 @@ def analyse_draw(draw: DrawEvent) -> InflectionResult | None:
     if len(t1_raw) < 10 or len(flow_raw) < 10:
         return None
 
-    # Flow integration (trapezoidal)
     cumul = 0.0
     fi = []
     for i in range(1, len(flow_raw)):
@@ -357,24 +376,65 @@ def analyse_draw(draw: DrawEvent) -> InflectionResult | None:
     )
 
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="DHW T1 inflection detector")
-    parser.add_argument("--days", type=int, default=12, help="Days of history to analyse")
-    parser.add_argument("--write", action="store_true", help="Write results to InfluxDB")
-    parser.add_argument("--verbose", action="store_true", help="Show per-draw detail table")
-    args = parser.parse_args()
+def write_to_influxdb(results: list[InflectionResult]):
+    """Write capacity and partial measurements to InfluxDB."""
+    to_write = [r for r in results if r.definitive_cumulative is not None]
+    if not to_write:
+        print("No inflection measurements to write.", file=sys.stderr)
+        return
 
-    charges, draws = find_events(args.days)
+    print(f"Writing {len(to_write)} measurements to InfluxDB...", file=sys.stderr)
+    for r in to_write:
+        ts = int(r.draw.start.timestamp())
+        cat = r.category
+        crossover = "true" if (r.draw.preceding_charge and r.draw.preceding_charge.crossover) else "false"
+        line = (
+            f'dhw_inflection,category={cat},crossover={crossover} '
+            f'cumulative_volume={r.definitive_cumulative:.1f},'
+            f'draw_volume={r.definitive_draw_vol:.1f},'
+            f'gap_hours={r.draw.gap_hours:.2f},'
+            f't1_start={r.t1_start:.2f},'
+            f't1_at_inflection={r.t1_at_definitive:.2f},'
+            f'mains_temp={r.mains_temp:.1f},'
+            f'flow_rate={r.avg_flow_rate:.0f},'
+            f'rate={r.definitive_rate:.5f} '
+            f'{ts}'
+        )
+        write_influx(line)
+    print(f"  Done.", file=sys.stderr)
 
-    results: list[InflectionResult] = []
-    for draw in draws:
-        result = analyse_draw(draw)
-        if result is not None:
-            results.append(result)
 
-    # --- Per-draw detail (only with --verbose) ---
-    if args.verbose:
+def output_json(results: list[InflectionResult]):
+    """JSON output to stdout — for piping to other tools."""
+    capacity = [r for r in results if r.category == "capacity"]
+    partial = [r for r in results if r.category == "partial"]
+    lower_bounds = [r for r in results if r.category == "lower_bound"]
+
+    lb_crossover = [r for r in lower_bounds
+                    if r.draw.preceding_charge and r.draw.preceding_charge.crossover]
+
+    out = {
+        "max_usable_litres": round(max(r.definitive_cumulative for r in capacity)) if capacity else None,
+        "geometric_max_litres": round(GEOMETRIC_MAX),
+        "plug_flow_efficiency": round(max(r.definitive_cumulative for r in capacity) / GEOMETRIC_MAX, 3) if capacity else None,
+        "highest_lower_bound": round(max(r.best_volume for r in lb_crossover)) if lb_crossover else None,
+        "capacity_measurements": [r.to_dict() for r in capacity],
+        "partial_measurements": [r.to_dict() for r in partial],
+        "lower_bounds_count": len(lower_bounds),
+        "total_draws_analysed": len(results),
+    }
+
+    json.dump(out, sys.stdout, indent=2)
+    print()  # trailing newline
+
+
+def output_human(results: list[InflectionResult], days: int, verbose: bool):
+    """Human-readable output to stdout."""
+    capacity = [r for r in results if r.category == "capacity"]
+    partial = [r for r in results if r.category == "partial"]
+    lower_bounds = [r for r in results if r.category == "lower_bound"]
+
+    if verbose:
         print(f"\n{'='*115}")
         print(f"ALL DRAWS — {len(results)} at 2-second resolution")
         print(f"{'='*115}")
@@ -403,19 +463,13 @@ def main():
                   f"{r.t1_start:4.1f}° {r.mains_temp:4.1f}° {r.avg_flow_rate:4.0f} │ "
                   f"{charge_str:>10s} │ {r.category}")
 
-    # --- Summary ---
-    capacity = [r for r in results if r.category == "CAPACITY"]
-    partial = [r for r in results if r.category == "PARTIAL"]
-    lower_bounds = [r for r in results if r.category.startswith("LOWER BOUND")]
-
-    print(f"\nDHW USABLE VOLUME — {len(results)} draws analysed over {args.days} days")
+    print(f"\nDHW USABLE VOLUME — {len(results)} draws analysed over {days} days")
     print(f"{'='*70}")
 
-    # The answer: maximum observed from a full charge
     if capacity:
         best = max(r.definitive_cumulative for r in capacity)
         print(f"\n  Maximum measured usable volume: {best:.0f}L")
-        print(f"  (geometric max 243L, plug flow efficiency {best/243:.0%})")
+        print(f"  (geometric max {GEOMETRIC_MAX:.0f}L, plug flow efficiency {best/GEOMETRIC_MAX:.0%})")
         print()
         for r in capacity:
             print(f"    {r.draw.start.strftime('%d/%m %H:%M')}: "
@@ -426,16 +480,12 @@ def main():
         print(f"\n  No capacity measurements yet.")
         print(f"  (need a draw >150L from a fully-charged cylinder)")
 
-    # Lower bounds — what we know capacity exceeds
-    if lower_bounds:
-        # Only from crossover charges
-        lb_crossover = [r for r in lower_bounds
-                        if r.draw.preceding_charge and r.draw.preceding_charge.crossover]
-        if lb_crossover:
-            best_lb = max(r.best_volume for r in lb_crossover if r.best_volume)
-            print(f"\n  Highest confirmed lower bound: ≥{best_lb:.0f}L")
+    lb_crossover = [r for r in lower_bounds
+                    if r.draw.preceding_charge and r.draw.preceding_charge.crossover]
+    if lb_crossover:
+        best_lb = max(r.best_volume for r in lb_crossover if r.best_volume)
+        print(f"\n  Highest confirmed lower bound: ≥{best_lb:.0f}L")
 
-    # Partial measurements — not capacity, but informative
     if partial:
         print(f"\n  Partial-state measurements (not full charge):")
         for r in partial:
@@ -448,29 +498,39 @@ def main():
             print(f"    {r.draw.start.strftime('%d/%m %H:%M')}: "
                   f"{r.definitive_cumulative:.0f}L — {ctx}")
 
-    # Write to InfluxDB
-    if args.write:
-        to_write = capacity + partial
-        if to_write:
-            print(f"\nWriting {len(to_write)} measurements to InfluxDB...")
-            for r in to_write:
-                ts = int(r.draw.start.timestamp())
-                cat = "capacity" if r.category == "CAPACITY" else "partial"
-                crossover = "true" if (r.draw.preceding_charge and r.draw.preceding_charge.crossover) else "false"
-                line = (
-                    f'dhw_inflection,category={cat},crossover={crossover} '
-                    f'cumulative_volume={r.definitive_cumulative:.1f},'
-                    f'draw_volume={r.definitive_draw_vol:.1f},'
-                    f'gap_hours={r.draw.gap_hours:.2f},'
-                    f't1_start={r.t1_start:.2f},'
-                    f't1_at_inflection={r.t1_at_definitive:.2f},'
-                    f'mains_temp={r.mains_temp:.1f},'
-                    f'flow_rate={r.avg_flow_rate:.0f},'
-                    f'rate={r.definitive_rate:.5f} '
-                    f'{ts}'
-                )
-                write_influx(line)
-            print("  Done.")
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="DHW T1 inflection detector",
+        epilog="Default: writes to InfluxDB + JSON to stdout. Use --human for readable output."
+    )
+    parser.add_argument("--days", type=int, default=12, help="Days of history to analyse")
+    parser.add_argument("--human", action="store_true", help="Human-readable output instead of JSON")
+    parser.add_argument("--verbose", action="store_true", help="Full per-draw table (implies --human)")
+    parser.add_argument("--no-write", action="store_true", help="Don't write to InfluxDB")
+    args = parser.parse_args()
+
+    if args.verbose:
+        args.human = True
+
+    charges, draws = find_events(args.days)
+
+    results: list[InflectionResult] = []
+    for draw in draws:
+        result = analyse_draw(draw)
+        if result is not None:
+            results.append(result)
+
+    # Always write to InfluxDB unless --no-write
+    if not args.no_write:
+        write_to_influxdb(results)
+
+    # Output
+    if args.human:
+        output_human(results, args.days, args.verbose)
+    else:
+        output_json(results)
 
 
 if __name__ == "__main__":
