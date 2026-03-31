@@ -65,7 +65,7 @@
 
 **What**: Wall/floor/doorway connections defined **once** per pair, applied to both rooms.
 
-**Where**: `data/canonical/thermal_geometry.json`, consumed by `thermal.rs::build_connections/doorways()` and `model/house.py`
+**Where**: `data/canonical/thermal_geometry.json`, consumed by `thermal/geometry.rs::build_connections/doorways()`
 
 **Consequences**: Prevents double-counting. Adding a new room requires defining all its connections.
 
@@ -93,7 +93,7 @@
 
 **Status:** active
 
-**What**: `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both Rust (`thermal.rs`) and Python (`house.py`).
+**What**: `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by Rust (`thermal/geometry.rs`).
 
 **Why**: Eliminates drift between the two implementations. Geometry extracted from building plans and XLSX via `extract_house_inventory.py`, audited by `audit_model_dimensions.py` (509 checks, 0 mismatches).
 

@@ -61,7 +61,7 @@ See [rust-migration-plan.md](rust-migration-plan.md) for the full plan.
 4. ~~`thermal-equilibrium`~~ — ✅ (fixes Python fsolve convergence failure)
 5. ~~`thermal-moisture`~~ — ✅
 
-`model/house.py` is now legacy — kept for reference only.
+`model/house.py` deleted.
 
 After all ported, mark `model/house.py` as legacy.
 

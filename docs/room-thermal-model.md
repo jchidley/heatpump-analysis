@@ -226,23 +226,16 @@ Re-run the model with modified U-values to predict the effect of:
 
 ## Implementation
 
-Python model in `model/house.py`. Commands:
+All thermal commands are now in Rust (`model/house.py` deleted 2026-03-30):
 
 ```bash
-# Fetch data from InfluxDB (default 24h)
-uv run --with influxdb-client --with numpy --with scipy python model/house.py fetch [hours]
-
-# Show room summary (fabric UA, radiator T50, thermal mass, pipe type)
-uv run --with influxdb-client --with numpy --with scipy python model/house.py rooms
-
-# Steady-state energy balance (latest data point)
-uv run --with influxdb-client --with numpy --with scipy python model/house.py analyse
-
-# Fit thermal parameters from cooldown periods
-uv run --with influxdb-client --with numpy --with scipy python model/house.py fit
-
-# Moisture analysis (humidity balance, mould risk, ventilation cross-validation)
-uv run --with influxdb-client --with numpy --with scipy python model/house.py moisture
+cargo run --bin heatpump-analysis -- thermal-rooms
+cargo run --bin heatpump-analysis -- thermal-connections
+cargo run --bin heatpump-analysis -- thermal-analyse --config model/thermal-config.toml
+cargo run --bin heatpump-analysis -- thermal-equilibrium --outside 0 --mwt 40
+cargo run --bin heatpump-analysis -- thermal-moisture --config model/thermal-config.toml
+cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml
+cargo run --bin heatpump-analysis -- thermal-validate --config model/thermal-config.toml
 ```
 
 ## Data Requirements

@@ -139,7 +139,7 @@ Requires Grafana admin password recovery to edit the dashboard.
 
 ## Fix 4: Add Grafana and InfluxDB passwords to ak keystore
 
-During this session we couldn't access the Grafana API (admin password unknown) and the InfluxDB token was only available hardcoded in `model/house.py`.
+During this session we couldn't access the Grafana API (admin password unknown) and the InfluxDB token was only available hardcoded in `model/house.py` (now deleted).
 
 Both credentials need to be added to the `ak` GPG-encrypted keystore (`~/tools/api-keys/secrets/`) so they're available at runtime without hardcoding:
 
@@ -154,7 +154,7 @@ curl -s "http://admin:$(ak get grafana)@pi5data:3000/api/search"
 ```
 
 The InfluxDB token is currently:
-- Hardcoded in `model/house.py` (line: `INFLUX_TOKEN = "jPTPrw..."`) — should be removed after ak is set up
+- ~~Hardcoded in `model/house.py`~~ — file deleted, all commands ported to Rust
 - Hardcoded in Telegraf config (`/home/jack/monitoring/docker-compose.yml` or similar on pi5data)
 - Used by `model/thermal-config.toml` via `token_env = "INFLUX_TOKEN"` (correct pattern — reads from env)
 

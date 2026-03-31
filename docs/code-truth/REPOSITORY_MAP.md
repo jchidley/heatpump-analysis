@@ -99,11 +99,8 @@ Compares fresh thermal artifacts against baseline JSON files. Supports 4 artifac
 
 ## Python Model
 
-### `model/house.py` (1,250 lines)
-
-Lumped-parameter thermal network. 13 rooms with fabric, radiators, ventilation, doorways, solar. Commands: `fetch`, `rooms`, `connections`, `analyse`, `fit`, `equilibrium`, `moisture`. InfluxDB token loaded from `INFLUX_TOKEN` env var or `ak get influxdb`.
-
 **Deleted** (fully superseded by Rust):
+- ~~`model/house.py`~~ (1,250 lines) — all 5 commands ported to Rust 2026-03-30
 - ~~`model/calibrate.py`~~ — replaced by `thermal-calibrate`
 - ~~`model/overnight.py`~~ — replaced by `overnight` command
 
@@ -131,7 +128,7 @@ Thresholds for 4 artifact types: calibrate, validate, fit-diagnostics, operation
 
 ### `data/canonical/thermal_geometry.json` — Room geometry
 
-Single source of truth for room dimensions, external fabric, internal connections, doorways, solar glazing. Consumed by both Python (`model/house.py`) and Rust (`src/thermal/geometry.rs`). Provenance tracked.
+Single source of truth for room dimensions, external fabric, internal connections, doorways, solar glazing. Consumed by Rust (`src/thermal/geometry.rs`). Provenance tracked.
 
 ## Scripts
 
@@ -167,7 +164,7 @@ artifacts/thermal/
 | Operating state thresholds | `config.toml` `[thresholds]`, then `analysis.rs::classify_states()` |
 | Feed IDs or column names | `config.toml` `[emoncms.feeds]`, then `db.rs` and `analysis.rs` |
 | Radiator data | `config.toml` `[radiators]` AND `data/canonical/thermal_geometry.json` (keep in sync) |
-| Room geometry / fabric | `data/canonical/thermal_geometry.json` (consumed by Rust `geometry.rs` and Python `house.py`) |
+| Room geometry / fabric | `data/canonical/thermal_geometry.json` (consumed by Rust `geometry.rs`) |
 | Thermal calibration bounds | `model/thermal-config.toml` `[bounds]` |
 | Thermal physics / energy balance | `src/thermal/physics.rs` (cooldown) and `src/thermal/operational.rs` (full) |
 | Solar gain model | `src/thermal/solar.rs` |

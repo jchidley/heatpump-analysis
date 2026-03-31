@@ -14,7 +14,7 @@ Policy and execution plan for migrating all first-party Python programs to Rust.
 
 ## Scope
 
-**In scope**: `model/house.py` — **all commands ported** ✅
+**Complete**: `model/house.py` deleted 2026-03-30 — all commands ported to Rust.
 
 **Deleted** (fully superseded by Rust, removed 2026-03-30):
 - `model/calibrate.py` — replaced by `thermal-calibrate`
@@ -53,7 +53,7 @@ All calibration/validation/operational commands produce structured JSON artifact
 | 2 | ~~`thermal-equilibrium`~~ | ✅ | Ported 2026-03-30. **Fixes Python fsolve convergence failure** (ier=5). |
 | 3 | ~~`thermal-moisture`~~ | ✅ | Ported 2026-03-30. |
 
-All commands ported. `model/house.py` is now legacy — kept for reference only.
+All commands ported. `model/house.py` deleted.
 
 ### Module layout (`src/thermal/`, 15 submodules)
 

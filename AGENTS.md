@@ -29,8 +29,7 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 | Thermal operational | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
 | Thermal snapshot | `cargo run --bin heatpump-analysis -- thermal-snapshot export --config model/thermal-config.toml --signoff-reason "reason" --approved-by-human` |
 | Regression check | `bash scripts/thermal-regression-ci.sh` |
-| Python equilibrium | `uv run --with influxdb-client --with numpy --with scipy python model/house.py equilibrium [T_out] [MWT]` |
-| Python moisture | `uv run --with influxdb-client --with numpy --with scipy python model/house.py moisture` |
+
 
 `--apikey` only needed for `feeds` and `sync`. Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands.
 
@@ -46,7 +45,7 @@ src/thermal/         → 15 submodules: config, geometry, physics, solar, wind, 
                        validation, diagnostics, operational, artifact, snapshot,
                        display, error, influx, report
 src/overnight.rs     → Overnight strategy backtest
-model/house.py       → Python thermal model (equilibrium, moisture — shares thermal_geometry.json with Rust)
+
 data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust + Python)
 model/thermal-config.toml → Thermal model config (InfluxDB, test nights, bounds)
 ```
@@ -112,7 +111,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - Thresholds are 5kW-specific — 7kW model's heating rate (20 L/min) overlaps 5kW DHW rate
 - Two HDD base temps: 15.5°C (UK standard) vs 17°C (gas-era regression)
 - `octopus.rs` reads from `~/github/octopus/data/` — path hardcoded
-- Radiator T50 values duplicated in `config.toml` (analysis.rs) AND `thermal_geometry.json` (thermal.rs + house.py) — keep in sync
+- Radiator T50 values duplicated in `config.toml` (analysis.rs) AND `thermal_geometry.json` (thermal.rs) — keep in sync
 - SNZB-02P v2.1.0 bug: readings freeze at power-on value. v2.2.0 fixes it. Verify readings vary.
 - Bathroom sensor was in airing cupboard until 25 Mar 2026 21:00 — historical data reads ~3°C high
 - `emon/heatpump/heatmeter_FlowRate` reads ~1 L/min constantly — DHW circuit meter, useless for state classification. Use `BuildingCircuitFlow`.
