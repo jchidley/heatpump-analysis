@@ -277,9 +277,11 @@ The showers removed 117% of the usable hot energy — this is why the cylinder w
 
 ## The improved remaining-litres model
 
-### What's wrong with the current z2m-hub model
+### What was wrong with the v0.1 z2m-hub model (fixed in v0.2.0)
 
-The z2m-hub (`~/github/z2m-hub/src/main.rs`) uses pure volume subtraction: `remaining = 161 - volume_drawn`. Failure modes:
+> **Status**: The improved model described below was implemented in z2m-hub v0.2.0 (March 2026). Config in `/etc/z2m-hub.toml`. Capacity autoloaded from InfluxDB via `dhw-inflection-detector.py` weekly cron.
+
+The v0.1 z2m-hub used pure volume subtraction: `remaining = 161 - volume_drawn`. Failure modes:
 
 | Failure | Impact |
 |---------|--------|

@@ -124,6 +124,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - Conservatory excluded from thermal scoring (30m² glass, sub-hour time constant). Landing excluded (chimney model wrong for heating).
 - Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
+- **DHW inflection detector** (`scripts/dhw-inflection-detector.py`) deployed to pi5data `/usr/local/bin/`. Weekly cron (Sunday 3am) analyses draws at 2s resolution, writes inflection measurements to InfluxDB (`dhw_inflection`) and recommended capacity to `dhw_capacity`. z2m-hub v0.2.0 autoloads `recommended_full_litres` on startup. Run manually: `uv run --with requests python scripts/dhw-inflection-detector.py --days 14 --verbose`.
 - **Adaptive heating MVP** deployed on pi5data as systemd service. HTTP API on port 3031. Mobile controls proxied via z2m-hub (:3030). Config: `model/adaptive-heating-mvp.toml`. Spec: `docs/adaptive-heating-mvp.md`. Kill switch restores known-good baseline.
 - z2m-hub patched to proxy adaptive-heating-mvp mode controls. Phone dashboard at `http://pi5data:3030` has heating mode buttons.
 - `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
