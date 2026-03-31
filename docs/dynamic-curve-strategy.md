@@ -89,15 +89,30 @@ Single numeric write. No TTM timer encoding. The VRC 700 recalculates flow temp 
 
 ### Control loop
 
+The HP has a sweet spot at each outside temp where it delivers the most heat per watt of electricity. From spec data at −3°C: flow 35°C gives 6,800W heat at COP 4.48 vs flow 55°C giving 5,800W at COP 3.06 — **17% more heat using 20% less electricity.** The optimal flow temp depends on outside conditions and we can observe it in real time via `CurrentYieldPower ÷ RunDataElectricPowerConsumption`.
+
+Two-layer control:
+
+**Layer 1 — Comfort guard (hard constraints):**
 ```
-Every 15 minutes:
-  1. Read outside temp, compressor util, room temps
-  2. IF compressor_util < 40% AND coldest_heated_room > 19°C:
-       → Lower curve toward 0.40 (step by 0.05 per cycle, floor 0.35)
-  3. IF compressor_util > 85% OR any heated room < 18°C:
-       → Raise curve toward 0.55 (step by 0.05 per cycle, cap 0.60)
-  4. IF curve changed: write to VRC 700
+IF any heated room < 18°C: raise curve by 0.05 (cap 0.60)
+IF compressor_util > 90%: hold curve (HP at capacity, can’t help)
+IF in DHW or setback: don’t adjust
 ```
+
+**Layer 2 — COP optimisation (gradient-following):**
+```
+Every 15 minutes, if comfort guard is not active:
+  1. Read current COP (yield_kw × 1000 / elec_w)
+  2. Compare to COP at previous curve setting
+  3. IF COP improved AND rooms still ≥ 19°C: step curve down 0.05 (floor 0.35)
+  4. IF COP worsened OR rooms cooling: step curve up 0.05
+  5. IF COP stable: hold
+```
+
+This hunts for the flow temp where `heat_output ÷ electrical_input` is maximised at current conditions. The controller doesn’t need to know the HP’s performance envelope — it discovers the optimum by observation.
+
+The comfort guard overrides everything: rooms below 18°C means raise the curve regardless of COP.
 
 ### Why 15 minutes
 
