@@ -91,7 +91,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - **House**: HTC 261 W/K, 180m², 1930s solid brick + 2010 loft. HP maxes out at ~2°C outside.
 - **Cosy tariff**: THREE windows (04:00–07:00, 13:00–16:00, 22:00–00:00). Battery effective rate 14.63p/kWh.
 - **Overnight**: 19°C setback 00:00–04:00. DHW windows: 05:30–07:00, 13:00–15:00, 22:00–00:00. See `docs/overnight-strategy-analysis.md`.
-- **DHW**: 300L Kingspan Albion, usable 161L, 45°C target, eco/normal manual seasonal switch. CylinderChargeHyst=5K (triggers at 40°C). See `docs/dhw-cylinder-analysis.md`.
+- **DHW**: 300L Kingspan Albion, usable 177–183L from full charge (243L geometric max, ~75% plug flow efficiency), 45°C target, eco/normal manual seasonal switch. CylinderChargeHyst=5K (triggers at 40°C). HwcStorage crossover (≥ T1_pre) = definitive "full" signal. See `docs/dhw-cylinder-analysis.md`.
 - **DHW cylinder sensors**: T1 (`emon/multical/dhw_t1`) = cylinder top / hot out. T2 (`emon/multical/dhw_t2`) = mains inlet / cold in. VR 10 NTC in dry pocket above bottom coil (`ebusd/poll/HwcStorageTemp`) = what VRC 700 uses for charging decisions. See `docs/dhw-fixes.md`.
 - **DHW system**: 3 eBUS devices — HMU (outdoor unit), VWZ AI (indoor unit, has SP1 cylinder sensor), VRC 700 (controller, scheduling brain). See `docs/vrc700-settings-audit.md`.
 - **⚠ eBUS timer encoding**: Never use `00:00` as a timer end time — use `-:-` instead. TTM byte `0x00` = start of day (not end). Byte `0x90` = `-:-` = "until end of day". A window with end < start is silently rejected by the VRC 700. `HwcSFMode` can get stuck on `load` after boost — monitor and reset to `auto`. See `docs/vrc700-settings-audit.md`.
