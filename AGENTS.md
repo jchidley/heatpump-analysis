@@ -29,9 +29,12 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 | Thermal operational | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
 | Thermal snapshot | `cargo run --bin heatpump-analysis -- thermal-snapshot export --config model/thermal-config.toml --signoff-reason "reason" --approved-by-human` |
 | Regression check | `bash scripts/thermal-regression-ci.sh` |
+| Adaptive heating MVP | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml run` |
+| Adaptive heating status | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status` |
+| Adaptive heating restore | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml restore-baseline` |
 
 
-`--apikey` only needed for `feeds` and `sync`. Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands.
+`--apikey` only needed for `feeds` and `sync`. Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands. Three binaries total: `adaptive-heating-mvp` is the live pilot controller.
 
 ## Architecture
 
@@ -48,6 +51,8 @@ src/overnight.rs     → Overnight strategy backtest
 
 data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust + Python)
 model/thermal-config.toml → Thermal model config (InfluxDB, test nights, bounds)
+model/adaptive-heating-mvp.toml → Adaptive heating MVP config
+deploy/adaptive-heating-mvp.service → systemd unit for pi5data
 ```
 
 ## Monitoring Infrastructure
@@ -57,7 +62,7 @@ model/thermal-config.toml → Thermal model config (InfluxDB, test nights, bound
 | emonpi | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Z2M (21 Zigbee devices) |
 | emonhp | 10.0.1.169 | Heat meter + SDM120 → emoncms.org |
 | emondhw | 10.0.1.46 | Multical DHW meter |
-| pi5data | 10.0.1.230 | Central hub: Docker (Mosquitto, InfluxDB, Telegraf, Grafana, ebusd) + systemd |
+| pi5data | 10.0.1.230 | Central hub: Docker (Mosquitto, InfluxDB, Telegraf, Grafana, ebusd) + systemd (z2m-hub :3030, adaptive-heating-mvp :3031) |
 
 MQTT credentials: `emonpi` / `emonpimqtt2016`. Z2M: `ws://emonpi:8080/api` (no auth).
 
@@ -119,6 +124,8 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - Conservatory excluded from thermal scoring (30m² glass, sub-hour time constant). Landing excluded (chimney model wrong for heating).
 - Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
+- **Adaptive heating MVP** deployed on pi5data as systemd service. HTTP API on port 3031. Mobile controls proxied via z2m-hub (:3030). Config: `model/adaptive-heating-mvp.toml`. Spec: `docs/adaptive-heating-mvp.md`. Kill switch restores known-good baseline.
+- z2m-hub patched to proxy adaptive-heating-mvp mode controls. Phone dashboard at `http://pi5data:3030` has heating mode buttons.
 - `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
 

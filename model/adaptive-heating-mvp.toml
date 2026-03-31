@@ -1,0 +1,40 @@
+ebusd_host = "127.0.0.1"
+ebusd_port = 8888
+influx_url = "http://127.0.0.1:8086"
+influx_org = "home"
+influx_bucket = "energy"
+influx_token_env = "INFLUX_TOKEN"
+http_bind = "0.0.0.0:3031"
+state_file = "/home/jack/.local/state/adaptive-heating-mvp/state.toml"
+jsonl_log_file = "/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl"
+control_every_seconds = 900
+sample_every_seconds = 60
+startup_grace_seconds = 120
+
+[baseline]
+hc1_heat_curve = 0.55
+z1_day_temp = 21.0
+z1_night_temp = 19.0
+hwc_temp_desired = 45.0
+z1_op_mode = "auto"
+hwc_op_mode = "auto"
+
+[topics]
+leather_temp = "emon/emonth2_23/temperature"
+aldora_temp = "zigbee2mqtt/aldora_temp_humid"
+
+[dhw]
+charge_trigger_c = 40.0
+target_c = 45.0
+
+[[dhw.cosy_windows]]
+start = "04:00"
+end = "07:00"
+
+[[dhw.cosy_windows]]
+start = "13:00"
+end = "16:00"
+
+[[dhw.cosy_windows]]
+start = "22:00"
+end = "23:59"

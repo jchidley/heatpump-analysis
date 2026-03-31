@@ -189,3 +189,4 @@ This is documented correctly in `docs/vrc700-settings-audit.md` now.
 | ✅ | ~~Remove hardcoded InfluxDB token from `model/house.py`~~ | Done 30 Mar — reads INFLUX_TOKEN env var or `ak get influxdb` |
 | ✅ | ~~Do not run `cosy-scheduler`~~ | Binary removed from pi5data 30 Mar |
 | ⚪ | z2m-hub remaining litres refinement using temperature data | Enhancement, not a fix |
+| ⚪ | Add DHW hygiene / legionella risk monitor | Track turnover + cylinder temperature history; trigger targeted hygiene cycle only when risk rises, not as a permanent high-temperature setpoint |

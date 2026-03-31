@@ -19,7 +19,7 @@ The house is a physical system that's difficult to model precisely. But we don't
 | Weather forecast (next 12h) | Open-Meteo API | 1h |
 | Room temperatures (13 rooms) | Zigbee SNZB-02P + emonth2 | ~5 min |
 | Room humidity (12 rooms) | Zigbee SNZB-02P | ~5 min |
-| Door states | Zigbee door sensors (future) | instant |
+| Door states | Zigbee door sensors (future; Leather first) | instant |
 | Occupancy | Zigbee motion sensors (2 existing + future) | instant |
 | Time of day / tariff period | Clock | - |
 | DHW schedule | Known (05:30, 13:00, 22:00) | - |
@@ -63,6 +63,65 @@ The VRC 700 day/night timer and fixed setpoints become unnecessary. The controll
 
 `Z1NightTemp` and the VRC 700 timers stay as a safety net in case the controller stops. Set to 19°C setback, current timer schedule. The controller overrides `Z1DayTemp` (which the VRC 700 uses whenever it's in "day" mode) to effectively control 24/7.
 
+Beyond these two main levers, the VRC 700 exposes other writable inputs that may be useful experimentally: `HwcSFMode`, `HwcTempDesired`, `HwcOpMode`, `Hc1MaxFlowTempDesired`, `Hc1MinFlowTempDesired`, `Z1OpMode`, timers, holiday periods, and selected installer-policy settings. Their intended Vaillant purpose is irrelevant. What matters is whether writing them causes the VRC 700 to emit different downstream commands and whether those commands improve house-level outcomes.
+
+## Outcomes first, registers second
+
+The control problem is not "which registers should we write?" It is "what outcomes do we want, and which VRC 700 inputs let us get them?"
+
+### Top-level objectives
+
+1. **When occupied: optimise for comfort**
+   - Occupied rooms comfortable
+   - DHW available when expected
+   - No critical room below safety floor
+   - Efficiency matters, but only after comfort is secure
+
+2. **When unoccupied: optimise for cost**
+   - Minimise electricity cost
+   - Maintain protection against frost / damp / silly deep cooldown
+   - Respect known return time and warm-up requirement
+   - Avoid strategies that create unnecessary cycling or equipment stress
+
+This turns occupancy into the top-level mode selector. The same outside temperature can imply very different control actions depending on whether the house is occupied, empty for two hours, or empty until tomorrow evening.
+
+### Primary comfort targets in this house
+
+The controller should not treat all rooms equally.
+
+- **Primary target room: Leather room** — measured by the emonth2. This is the most important comfort reference and should be treated as the main room-level target when the room is thermally independent.
+- **Secondary target room: Aldora** — this should act as the second comfort anchor, especially when Leather is satisfied but the rest of the occupied house is not.
+- **All other rooms** modify the control decision rather than define it. They matter as constraints, context, and evidence of distribution problems.
+- **Conservatory** should be treated as a **heat sink / boundary room**, not a room to optimise for directly. It largely follows outdoor conditions, strongly modified by solar gain, and can distort whole-house optimisation if treated as a normal target room.
+
+This suggests a weighted room strategy rather than a single whole-house average: Leather highest weight, Aldora next, the rest as guardrails and context.
+
+### Door-state dependency for Leather
+
+Leather should only be used as a primary optimisation target when its doors are closed enough for the room to behave as an independent zone.
+
+- If Leather doors are **closed**, optimise normally for Leather comfort.
+- If Leather doors are **open**, do **not** over-optimise the whole heating strategy for Leather alone, because its temperature is then being strongly influenced by adjacent spaces.
+- Planned Zigbee door sensors on the Leather room should feed directly into the room-weighting logic.
+
+Until those door sensors are installed, any Leather-led optimisation should be treated cautiously and cross-checked against Aldora and nearby-room behaviour.
+
+### DHW hygiene is a monitored constraint, not a constant setpoint
+
+Legionella control should not mean "always hold the cylinder at a high temperature". The better strategy is:
+
+- monitor DHW turnover from the Multical volume data
+- monitor cylinder temperature history (`HwcStorageTemp`, T1/T2)
+- track time since last sufficiently hot hygiene cycle
+- treat legionella as a **risk signal** that is usually low in normal occupied use
+- trigger an explicit hygiene cycle only when low turnover / stagnation makes it necessary
+
+In practice this means DHW control has two separate goals:
+- **service**: enough hot water at the right times
+- **hygiene**: occasional targeted anti-legionella intervention when risk rises
+
+The adaptive controller should optimise service and cost most of the time, while continuously monitoring hygiene risk in the background.
+
 ## The house as a laboratory
 
 Every time we change the curve, the house runs an experiment:
@@ -76,11 +135,12 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 
 ### What each sensor adds
 
-**Door sensors** (future: Zigbee contact sensors on internal doors):
+**Door sensors** (future: Zigbee contact sensors on internal doors, Leather first):
 - Open door = two rooms thermally coupled via doorway exchange
 - Closed door = rooms are independent thermal zones
 - The thermal model already has doorway exchange physics (buoyancy-driven, calibrated Cd=0.20)
 - Real-time door state tells us which rooms to treat as a single zone
+- Immediate practical use: avoid over-optimising for Leather when its doors are open
 - Example: hall door open → hall coupled to front room → hall is warmer than the model predicts if door were closed
 
 **Occupancy sensors** (2 existing Aqara motion on hall + landing, more possible):
@@ -148,8 +208,11 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 │    MQTT (Mosquitto) → room temps, door sensors, motion       │
 │    Open-Meteo      → weather forecast, humidity              │
 │    Config/API      → away schedule, tariff periods           │
+│    DHW history      → turnover, hygiene-risk monitor         │
 │                                                              │
 │  Layer 0: Mode selection                                     │
+│    - Occupied → comfort-first targets                        │
+│    - Short absence → mild setback / cost bias                │
 │    - Away mode (house empty, known return time)              │
 │      → setpoint 15°C, curve 0.30 until warm-up ramp          │
 │    - Normal mode → layers 1-3                                │
@@ -169,33 +232,46 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 │    - Door states → adjust room coupling expectations         │
 │    - Occupancy → weight room priorities                      │
 │    - Forecast → anticipate, don't react                      │
+│    - DHW hygiene risk → schedule targeted hot cycle if due   │
 │                                                              │
 │  Outputs:                                                    │
 │    eBUS write → Hc1HeatCurve + Z1DayTemp (when changed)      │
 │    InfluxDB  → log every decision + before/after metrics     │
 │                                                              │
 │  Cadence: every 15 min (reads every 1 min for averaging)     │
-│  Rate limit: max 0.05 curve / 1°C setpoint per cycle         │
-│  Bounds: curve 0.30-0.60, setpoint 15-22°C                   │
-│  Safety net: VRC 700 timers + Z1NightTemp 19°C unchanged     │
+│  Rate limit: min 0.10 curve step per cycle                   │
+│  Bounds: trust 700 accepted range (no extra software limits) │
+│  Safety net: VRC 700 timers + baseline restore on stop/kill  │
 └───────────────────────────────────────────────────────────────┘
 ```
 
 ## What we build
 
-**Phase 1: Curve + setpoint control (build now)**
-- Layers 0–2: away mode, comfort guard, COP gradient-following
-- Writes `Hc1HeatCurve` and `Z1DayTemp` every 15 min when adjustment needed
+**Phase 1: Effect map of the VRC 700 as a steerable state machine**
+- Treat every potentially useful writable register as fair game
+- For each register: confirm writeability, readback, effect on VRC 700 state, effect on downstream eBUS messages, effect on plant behaviour
+- Focus first on `Hc1HeatCurve`, `Z1DayTemp`, `Z1NightTemp`, `Z1QuickVetoTemp`, `Z1OpMode`, `HwcSFMode`, `HwcTempDesired`, `HwcOpMode`, `Hc1MaxFlowTempDesired`, `Hc1MinFlowTempDesired`
+- Build an empirical table: `register → downstream SetMode change → HP/house effect`
+- Use small reversible writes and restore after each experiment
+- **Status:** largely completed enough to begin the live pilot. Many key writable levers have now been confirmed by direct write + readback on the real VRC 700, and `Hc1HeatCurve` has been shown to change `Hc1ActualFlowTempDesired` on the live system.
+
+**Phase 2: Curve + setpoint control**
+- Layers 0–2: occupancy mode, away mode, comfort guard, COP gradient-following
+- Writes `Hc1HeatCurve` and `Z1DayTemp`/`Z1NightTemp` every 15 min when adjustment needed
 - Tariff-aware: bank heat during Cosy windows, coast during expensive periods
 - Away mode: API endpoint or config to set return time → automatic warm-up ramp
 - Log every decision with before/after COP, room temps, outside temp to InfluxDB
 - Every write is an experiment — the dataset grows with each cycle
+- **Status:** MVP implemented in Rust, installed on `pi5data`, and running as a systemd service. See `docs/adaptive-heating-mvp.md` for the frozen MVP spec and current deployment details.
 
-**Phase 2: Context (add when sensors arrive)**
+**Phase 3: Context and DHW policy**
 - Door sensors → know which rooms are coupled
+- Leather door sensors first → gate whether Leather is allowed to dominate optimisation
 - Occupancy from motion sensors → prioritise occupied rooms
 - Weather forecast → anticipate conditions, don’t just react
 - Pre-DHW banking when compressor has headroom
+- Add DHW turnover / hygiene-risk monitoring with targeted hygiene cycles only when due
+- **Status:** still outstanding. This remains the next major refinement layer after the initial pilot has produced useful live data.
 
 ## 24-hour operation
 
@@ -227,9 +303,45 @@ When the house is empty for an extended period:
    - Controller starts ramp `warm_up_hours` before return time
    - Ramp: 15→18°C (curve 0.45), then 18→21°C (curve 0.55)
 4. **Forecast adjustment:** If cold snap during absence, start ramp earlier. If mild, later.
-5. **Cost during absence:** At Tout 7°C, maintaining 15°C costs ~£0.50/day vs ~£2.50/day at 21°C. A week away saves ~£14.
+5. **DHW policy during absence:** minimise DHW maintenance, but continue monitoring turnover and temperature history. If low use / stagnation means hygiene risk rises, schedule a targeted high-temperature hygiene cycle rather than holding DHW hot continuously.
+6. **Cost during absence:** At Tout 7°C, maintaining 15°C costs ~£0.50/day vs ~£2.50/day at 21°C. A week away saves ~£14.
 
 The warm-up ramp timing comes from the calibrated cooling model (k=0.039/hr, capacity 6,723 Wh/°C). The controller doesn't guess — it computes the required lead time from the current house temperature and forecast outside temp.
+
+## Experimental method: write, observe, classify
+
+For each candidate VRC 700 register, the controller test harness should classify it in four stages:
+
+1. **Write accepted** — returns `done`/`empty`
+2. **Readback changed** — the register stores the new value
+3. **VRC 700 state changed** — derived values or outbound control messages change
+4. **Plant changed** — VWZ AI / HMU behaviour changes in a measurable way
+
+The key observation is not just readback. It is what the VRC 700 then sends downstream to the indoor unit and heat pump. The VRC 700 behaves as a steerable state machine: we change its inputs, it recomputes its policy, and it emits repeating downstream control messages (especially `SetMode`) roughly every 10 seconds.
+
+So the real effect map is:
+
+`700 register write → VRC 700 internal state → downstream eBUS messages → VWZ AI / HMU response → house response`
+
+This is what turns the register list into a practical control surface.
+
+## Current project status
+
+The project is no longer at the "should we build this?" stage.
+
+It is now at the **live MVP pilot** stage:
+- the adaptive-control strategy is documented
+- the MVP scope has been frozen in `docs/adaptive-heating-mvp.md`
+- a Rust service has been built and installed on `pi5data`
+- baseline restore is implemented and verified
+- mode control API is live
+- local JSONL + InfluxDB logging are enabled
+
+The remaining work is primarily:
+- integrate mobile controls into `z2m-hub`
+- verify and inspect live logs
+- derive Aldora fallback behaviour from historical data
+- add the next context layers only after observing real pilot results
 
 ## Relationship to thermal model
 
@@ -244,7 +356,8 @@ The controller doesn't need the model to run - it can gradient-follow purely fro
 
 - **Hall/bathroom/office at Tout < 5°C:** Fabric losses exceed rad capacity. Only EWI fixes this.
 - **Elvina trickle vents:** Need to be physically closed. Not a control problem.
-- **DHW efficiency:** Determined by cylinder and HP DHW mode (eco/normal). Not affected by space heating curve.
+- **Conservatory:** Too coupled to outdoor conditions and solar gain to be a normal comfort target. Treat it as a boundary / sink, not a room to optimise for directly.
+- **DHW efficiency:** Determined by cylinder physics, DHW timing, target temperature, and HP operating mode. The adaptive controller can improve timing and targeting, but it cannot change the physical cylinder or refrigerant-side DHW limits.
 - **Defrost:** Controlled autonomously by the HMU. We can predict it, not prevent it.
 
 The adaptive controller optimises within the current physical constraints. EWI changes the constraints. Both are worth doing - the controller first (free, immediate, works better after EWI too).
