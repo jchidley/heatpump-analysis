@@ -90,6 +90,13 @@ These have been confirmed writable on the real VRC 700 by direct eBUS write + re
 
 This is the first strong proof that a writable VRC 700 register changes actual controller demand rather than just stored configuration.
 
+- First live control cycle completed 31 March 2026 (8 decisions over ~1h40m, then continued overnight)
+- First real write: `Hc1HeatCurve` 0.55→0.45 + `Z1DayTemp` 21→20 when Leather exceeded comfort band
+- Bugs found and fixed during first session:
+  - **Null-read write-through**: if `Hc1HeatCurve` read failed, controller wrote a value computed from the baseline default instead of holding. Fixed: curve_before is now required; missing = hold.
+  - **Curve driven below VRC 700 floor**: controller ramped curve to 0.00 while VRC 700 clamped at 0.10, causing pointless repeated writes. Fixed: `CURVE_FLOOR = 0.10` enforced in code.
+  - **No-op detection**: when curve is at floor and setpoint already reduced, controller now holds with reason instead of logging a fake action with no writes.
+
 ### Allowed control levers in V1
 
 All confirmed writable levers are fair game for the MVP if they prove useful:
@@ -108,6 +115,35 @@ All confirmed writable levers are fair game for the MVP if they prove useful:
 - any other VRC 700 writable register that is accepted, read back, and shown to affect useful downstream behaviour
 
 The intended Vaillant purpose of a register does not matter. What matters is whether it helps achieve better house-level outcomes.
+
+### How the VRC 700 weather compensation works
+
+The VRC 700 runs full weather compensation. It does **not** compare setpoint to room temperature and switch on/off like a thermostat. Instead:
+
+1. The VRC 700 takes three inputs: **setpoint** (`Z1DayTemp` / `Z1NightTemp`), **heat curve** (`Hc1HeatCurve`), and **current outside temperature** (`OutsideTemp`).
+2. It feeds these into an internal algorithm that calculates a **target flow temperature** (`Hc1ActualFlowTempDesired`).
+3. That flow temperature demand is what actually drives the heat pump — whether it runs, how hard, and for how long.
+
+The setpoint is **not** a room temperature target that the 700 tries to reach. It is an input to the flow-temperature calculation. A higher setpoint or steeper curve produces a higher flow demand for the same outside temperature. A lower setpoint or flatter curve produces a lower flow demand.
+
+This means the MVP's control levers work as follows:
+- **Lowering `Hc1HeatCurve`** → flatter curve → lower flow temp for any given outside temp → less heat output → house cools or holds
+- **Lowering `Z1DayTemp`** → shifts the curve down → lower flow temp → same effect
+- **Raising either** → steeper/higher curve → more heat
+
+The MVP adjusts these inputs to steer the VRC 700's calculated flow demand, which in turn controls the actual house temperature. The feedback loop is: adjust curve/setpoint → observe what the 700 demands → observe what the house does → adjust again.
+
+Room temperature sensors (Leather, Aldora) are read by the **MVP**, not by the VRC 700. The 700 has no room sensor input in this installation — it runs purely on outside temp + curve + setpoint.
+
+### We're still learning
+
+The above is our current understanding. We are empirically discovering what each lever does, how the 700 responds, and what effect that has on the house. The V1 control strategy (adjust curve + setpoint based on Leather temp) is a starting point, not a conclusion. As we collect more data, we may find that:
+
+- different levers work better in different conditions
+- some levers interact in ways we don't yet understand
+- the optimal control approach looks nothing like what we started with
+
+The pilot exists to generate that knowledge. Don't treat V1's control logic as settled design.
 
 ## MVP operating modes
 
@@ -188,7 +224,13 @@ This is the fixed cadence for the MVP.
 ### Step size
 - minimum practical heat-curve step for MVP: **0.10**
 
-Rationale: smaller steps risk disappearing into the noise, especially on mild days.
+Rationale: smaller steps risk disappearing into the noise, especially on mild days. The curve value maps to flow temperature via the VRC 700's weather compensation algorithm — a 0.10 change in curve at 0°C outside produces a meaningful change in flow demand, but at 16°C outside the effect is much smaller because the curve is already near its floor.
+
+### VRC 700 curve floor
+
+The VRC 700 has an effective minimum `Hc1HeatCurve` value of **0.10**. Writes of 0.05 or 0.00 are accepted but read back as 0.10. This was discovered empirically on 31 March 2026 when the controller drove the curve to 0.00 and readbacks consistently returned 0.10.
+
+The MVP enforces `CURVE_FLOOR = 0.10` in code. When the curve is already at floor and room temperature is still above the comfort band, the controller holds rather than making pointless repeated writes.
 
 ### Allowed value ranges
 The MVP should trust the accepted range enforced by the VRC 700.

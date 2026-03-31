@@ -503,6 +503,13 @@ fn restore_baseline(config: &Config) -> Result<Vec<String>> {
     Ok(results)
 }
 
+/// VRC 700 effective minimum heat curve value (writes below this read back as 0.10)
+const CURVE_FLOOR: f64 = 0.10;
+
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
 fn run_control_cycle(
     config: &Config,
     runtime: &Arc<Mutex<RuntimeState>>,
@@ -551,7 +558,7 @@ fn run_control_cycle(
         .unwrap_or_default()
         .to_lowercase()
         .contains("warm_water");
-    let missing_core = leather_temp.is_none() || outside_temp.is_none();
+    let missing_core = leather_temp.is_none() || outside_temp.is_none() || curve_before.is_none();
 
     // DHW service first: cosy window is preferred charge opportunity, but only if actually needed.
     if state.mode != Mode::Disabled && state.mode != Mode::MonitorOnly {
@@ -589,14 +596,32 @@ fn run_control_cycle(
 
                 if leather < 20.0 {
                     desired_day = 21.0;
-                    desired_curve = current_curve + 0.10;
+                    desired_curve = round2(current_curve + 0.10);
                     action = "heating_recovery".to_string();
                     reason = format!("Leather {:.2}C below comfort band", leather);
                 } else if leather > 21.0 {
                     desired_day = 20.0;
-                    desired_curve = (current_curve - 0.10).max(0.0);
+                    desired_curve = round2((current_curve - 0.10).max(CURVE_FLOOR));
                     action = "heating_coast".to_string();
                     reason = format!("Leather {:.2}C above comfort band", leather);
+                }
+
+                // If no writes would actually change anything, hold instead
+                if action != "hold" {
+                    let would_change_curve =
+                        (desired_curve - current_curve).abs() > 0.001;
+                    let would_change_day =
+                        (desired_day - z1_day_before.unwrap_or(desired_day)).abs() > 0.001;
+                    let would_change_night =
+                        (desired_night - z1_night_before.unwrap_or(desired_night)).abs()
+                            > 0.001;
+                    if !would_change_curve && !would_change_day && !would_change_night {
+                        action = "hold".to_string();
+                        reason = format!(
+                            "Leather {:.2}C outside comfort band but levers already at limit (curve {:.2}, day {:.0})",
+                            leather, current_curve, desired_day
+                        );
+                    }
                 }
 
                 if action != "hold" {
@@ -638,7 +663,7 @@ fn run_control_cycle(
                 let desired_day = 19.0;
                 let desired_night = 19.0;
                 let current_curve = curve_before.unwrap_or(config.baseline.hc1_heat_curve);
-                let desired_curve = (current_curve - 0.10).max(0.0);
+                let desired_curve = round2((current_curve - 0.10).max(CURVE_FLOOR));
                 action = "short_absence_setback".to_string();
                 reason = "short absence cost bias".to_string();
                 if (desired_curve - current_curve).abs() > f64::EPSILON {
