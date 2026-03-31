@@ -137,12 +137,18 @@ struct ServiceState {
 struct DecisionLog {
     ts: DateTime<Utc>,
     mode: Mode,
+    tariff_period: String,
     leather_temp_c: Option<f64>,
     aldora_temp_c: Option<f64>,
     outside_temp_c: Option<f64>,
     hwc_storage_temp_c: Option<f64>,
     run_status: Option<String>,
+    compressor_util: Option<f64>,
+    elec_consumption_w: Option<f64>,
+    yield_power_kw: Option<f64>,
     flow_desired_c: Option<f64>,
+    flow_actual_c: Option<f64>,
+    return_actual_c: Option<f64>,
     curve_before: Option<f64>,
     curve_after: Option<f64>,
     z1_day_before: Option<f64>,
@@ -359,23 +365,38 @@ fn write_influx_decision(client: &Client, config: &Config, entry: &DecisionLog) 
     let mode = format!("{:?}", entry.mode).to_lowercase();
     let action = entry.action.replace(' ', "_");
     let reason = entry.reason.replace('"', "'");
+    let fields: Vec<String> = [
+        influx_field("leather_temp_c", entry.leather_temp_c),
+        influx_field("aldora_temp_c", entry.aldora_temp_c),
+        influx_field("outside_temp_c", entry.outside_temp_c),
+        influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
+        influx_field("compressor_util", entry.compressor_util),
+        influx_field("elec_consumption_w", entry.elec_consumption_w),
+        influx_field("yield_power_kw", entry.yield_power_kw),
+        influx_field("flow_desired_c", entry.flow_desired_c),
+        influx_field("flow_actual_c", entry.flow_actual_c),
+        influx_field("return_actual_c", entry.return_actual_c),
+        influx_field("curve_before", entry.curve_before),
+        influx_field("curve_after", entry.curve_after),
+        influx_field("z1_day_before", entry.z1_day_before),
+        influx_field("z1_day_after", entry.z1_day_after),
+        influx_field("z1_night_before", entry.z1_night_before),
+        influx_field("z1_night_after", entry.z1_night_after),
+        influx_field("hwc_target_before", entry.hwc_target_before),
+        influx_field("hwc_target_after", entry.hwc_target_after),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if fields.is_empty() {
+        return Ok(());
+    }
     let line = format!(
-        "adaptive_heating_mvp,mode={},action={} leather_temp_c={},aldora_temp_c={},outside_temp_c={},hwc_storage_temp_c={},flow_desired_c={},curve_before={},curve_after={},z1_day_before={},z1_day_after={},z1_night_before={},z1_night_after={},hwc_target_before={},hwc_target_after={} {}",
+        "adaptive_heating_mvp,mode={},action={},tariff={} {} {}",
         mode,
         action,
-        influx_opt(entry.leather_temp_c),
-        influx_opt(entry.aldora_temp_c),
-        influx_opt(entry.outside_temp_c),
-        influx_opt(entry.hwc_storage_temp_c),
-        influx_opt(entry.flow_desired_c),
-        influx_opt(entry.curve_before),
-        influx_opt(entry.curve_after),
-        influx_opt(entry.z1_day_before),
-        influx_opt(entry.z1_day_after),
-        influx_opt(entry.z1_night_before),
-        influx_opt(entry.z1_night_after),
-        influx_opt(entry.hwc_target_before),
-        influx_opt(entry.hwc_target_after),
+        entry.tariff_period.replace(' ', "_"),
+        fields.join(","),
         entry.ts.timestamp()
     );
     client
@@ -390,8 +411,8 @@ fn write_influx_decision(client: &Client, config: &Config, entry: &DecisionLog) 
     Ok(())
 }
 
-fn influx_opt(v: Option<f64>) -> String {
-    v.map(|x| x.to_string()).unwrap_or_else(|| "0".to_string())
+fn influx_field(name: &str, v: Option<f64>) -> Option<String> {
+    v.map(|x| format!("{name}={x}"))
 }
 
 fn within_window(now: chrono::NaiveTime, window: &TimeWindow) -> bool {
@@ -409,6 +430,22 @@ fn in_any_window(config: &Config, now: chrono::NaiveTime) -> bool {
         .cosy_windows
         .iter()
         .any(|w| within_window(now, w))
+}
+
+fn classify_tariff_period(now: chrono::NaiveTime) -> String {
+    use chrono::NaiveTime;
+    let t = |hh: u32, mm: u32| NaiveTime::from_hms_opt(hh, mm, 0).unwrap();
+    if now >= t(4, 0) && now < t(7, 0) {
+        "cosy_morning".to_string()
+    } else if now >= t(13, 0) && now < t(16, 0) {
+        "cosy_afternoon".to_string()
+    } else if now >= t(22, 0) {
+        "cosy_evening".to_string()
+    } else if now >= t(16, 0) && now < t(19, 0) {
+        "peak".to_string()
+    } else {
+        "standard".to_string()
+    }
 }
 
 fn restore_baseline(config: &Config) -> Result<Vec<String>> {
@@ -476,6 +513,11 @@ fn run_control_cycle(
     let status = ebusd_read(config, "hmu", "RunDataStatuscode").ok();
     let outside_temp = parse_f64(ebusd_read(config, "700", "DisplayedOutsideTemp"));
     let flow_desired = parse_f64(ebusd_read(config, "700", "Hc1ActualFlowTempDesired"));
+    let flow_actual = parse_f64(ebusd_read(config, "hmu", "RunDataFlowTemp"));
+    let return_actual = parse_f64(ebusd_read(config, "hmu", "RunDataReturnTemp"));
+    let compressor_util = parse_f64(ebusd_read(config, "hmu", "CurrentCompressorUtil"));
+    let elec_consumption = parse_f64(ebusd_read(config, "hmu", "RunDataElectricPowerConsumption"));
+    let yield_power = parse_f64(ebusd_read(config, "hmu", "CurrentYieldPower"));
     let curve_before = parse_f64(ebusd_read(config, "700", "Hc1HeatCurve"));
     let z1_day_before = parse_f64(ebusd_read(config, "700", "Z1DayTemp"));
     let z1_night_before = parse_f64(ebusd_read(config, "700", "Z1NightTemp"));
@@ -487,6 +529,9 @@ fn run_control_cycle(
         .ok()
         .flatten();
     let hwc_storage_temp = parse_f64(ebusd_read(config, "700", "HwcStorageTemp"));
+
+    // Determine tariff period
+    let tariff_period = classify_tariff_period(now_local.time());
 
     let mut action = "hold".to_string();
     let mut reason = "no rule fired".to_string();
@@ -661,12 +706,18 @@ fn run_control_cycle(
     let entry = DecisionLog {
         ts: Utc::now(),
         mode: state.mode,
+        tariff_period,
         leather_temp_c: leather_temp,
         aldora_temp_c: aldora_temp,
         outside_temp_c: outside_temp,
         hwc_storage_temp_c: hwc_storage_temp,
         run_status: status,
+        compressor_util,
+        elec_consumption_w: elec_consumption,
+        yield_power_kw: yield_power,
         flow_desired_c: flow_desired,
+        flow_actual_c: flow_actual,
+        return_actual_c: return_actual,
         curve_before,
         curve_after,
         z1_day_before,
