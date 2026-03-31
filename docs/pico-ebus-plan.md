@@ -679,7 +679,7 @@ the output we want:
 
 **The feedback loop:**
 
-Our Pico W (or Rust program on pi5data) monitors:
+Our Pico W (or the adaptive-heating-mvp Rust service already running on pi5data — see `docs/adaptive-heating-mvp.md`) monitors:
 - SetMode from VRC 700 → VWZ AI (the flow temp it's actually demanding)
 - Status01 from VWZ AI (actual flow/return temps achieved)
 - Room temperatures (13 Zigbee sensors)
