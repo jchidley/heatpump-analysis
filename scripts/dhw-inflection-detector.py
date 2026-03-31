@@ -377,7 +377,7 @@ def analyse_draw(draw: DrawEvent) -> InflectionResult | None:
 
 
 def write_to_influxdb(results: list[InflectionResult]):
-    """Write capacity and partial measurements to InfluxDB."""
+    """Write capacity/partial measurements and recommended capacity to InfluxDB."""
     to_write = [r for r in results if r.definitive_cumulative is not None]
     if not to_write:
         print("No inflection measurements to write.", file=sys.stderr)
@@ -401,7 +401,77 @@ def write_to_influxdb(results: list[InflectionResult]):
             f'{ts}'
         )
         write_influx(line)
+
+    # Write recommended capacity (z2m-hub reads this on startup)
+    capacity = [r for r in results if r.category == "capacity"]
+    rec = compute_recommended_capacity(capacity)
+    if rec["recommended_full_litres"] is not None:
+        val = rec["recommended_full_litres"]
+        method = rec["method"]
+        write_influx(f'dhw_capacity recommended_full_litres={val:.1f},method="{method}"')
+        print(f"  Recommended capacity: {val}L ({method})", file=sys.stderr)
+
     print(f"  Done.", file=sys.stderr)
+
+
+# WWHR threshold: T2 above this = WWHR active (warmer inlet from drain heat exchanger)
+WWHR_T2_THRESHOLD = 20.0
+
+
+def compute_recommended_capacity(capacity: list[InflectionResult]) -> dict:
+    """Compute the recommended full_litres for z2m-hub config.
+
+    WWHR warms the inlet (T2 ~25°C vs ~16°C mains), reducing density contrast
+    and causing earlier inflection. Since most draws are showers (WWHR active),
+    we report the WWHR capacity as the recommended value.
+
+    With only cold-mains measurements, we estimate the WWHR capacity by
+    regression on T2 vs inflection volume, or fall back to a conservative ratio.
+    """
+    if not capacity:
+        return {"recommended_full_litres": None, "method": "no_data"}
+
+    wwhr = [r for r in capacity if r.mains_temp >= WWHR_T2_THRESHOLD]
+    cold = [r for r in capacity if r.mains_temp < WWHR_T2_THRESHOLD]
+
+    if wwhr:
+        # Direct WWHR measurements available — use the best
+        best_wwhr = max(r.definitive_cumulative for r in wwhr)
+        return {
+            "recommended_full_litres": round(best_wwhr),
+            "method": "direct_wwhr",
+            "wwhr_measurements": len(wwhr),
+            "cold_measurements": len(cold),
+        }
+
+    if len(cold) >= 2:
+        # Multiple cold-mains measurements — regress T2 vs volume
+        # and extrapolate to WWHR T2 (~25°C)
+        import statistics
+        t2s = [r.mains_temp for r in cold]
+        vols = [r.definitive_cumulative for r in cold]
+        n = len(t2s)
+        mean_t2 = statistics.mean(t2s)
+        mean_vol = statistics.mean(vols)
+        cov = sum((t - mean_t2) * (v - mean_vol) for t, v in zip(t2s, vols)) / n
+        var_t2 = sum((t - mean_t2) ** 2 for t in t2s) / n
+        if var_t2 > 0.1:
+            slope = cov / var_t2  # litres per °C of inlet temp
+            wwhr_estimate = max(cold, key=lambda r: r.definitive_cumulative).definitive_cumulative + slope * (25.0 - max(r.mains_temp for r in cold))
+            return {
+                "recommended_full_litres": round(max(wwhr_estimate, min(vols))),
+                "method": "regression",
+                "slope_litres_per_degC": round(slope, 1),
+                "cold_measurements": len(cold),
+            }
+
+    # Fallback: single cold-mains measurement, apply conservative 3% reduction
+    best_cold = max(r.definitive_cumulative for r in cold) if cold else max(r.definitive_cumulative for r in capacity)
+    return {
+        "recommended_full_litres": round(best_cold * 0.97),
+        "method": "conservative_ratio",
+        "cold_measurements": len(cold),
+    }
 
 
 def output_json(results: list[InflectionResult]):
@@ -413,11 +483,14 @@ def output_json(results: list[InflectionResult]):
     lb_crossover = [r for r in lower_bounds
                     if r.draw.preceding_charge and r.draw.preceding_charge.crossover]
 
+    recommendation = compute_recommended_capacity(capacity)
+
     out = {
         "max_usable_litres": round(max(r.definitive_cumulative for r in capacity)) if capacity else None,
         "geometric_max_litres": round(GEOMETRIC_MAX),
         "plug_flow_efficiency": round(max(r.definitive_cumulative for r in capacity) / GEOMETRIC_MAX, 3) if capacity else None,
         "highest_lower_bound": round(max(r.best_volume for r in lb_crossover)) if lb_crossover else None,
+        "recommended": recommendation,
         "capacity_measurements": [r.to_dict() for r in capacity],
         "partial_measurements": [r.to_dict() for r in partial],
         "lower_bounds_count": len(lower_bounds),
