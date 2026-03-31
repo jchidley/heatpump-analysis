@@ -132,7 +132,7 @@ pub fn enrich(df: &DataFrame) -> Result<DataFrame> {
     let return_t = df.column("return_t")?.f64()?;
     let delta_t: Vec<f64> = flow_t
         .into_iter()
-        .zip(return_t.into_iter())
+        .zip(return_t)
         .map(|(f, r)| match (f, r) {
             (Some(f), Some(r)) => f - r,
             _ => 0.0,

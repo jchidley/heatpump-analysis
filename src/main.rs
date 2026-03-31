@@ -230,8 +230,8 @@ fn main() -> Result<()> {
             let client = cli.require_client()?;
             let feeds = client.list_feeds()?;
             println!(
-                "{:<10} {:<25} {:<15} {:<8} {}",
-                "ID", "Name", "Tag", "Unit", "Value"
+                "{:<10} {:<25} {:<15} {:<8} Value",
+                "ID", "Name", "Tag", "Unit"
             );
             println!("{}", "-".repeat(70));
             for f in feeds {
@@ -417,7 +417,7 @@ fn main() -> Result<()> {
             let mut df = analysis::enrich(&df)?;
             match output {
                 Some(path) => {
-                    let mut file = std::fs::File::create(&path)?;
+                    let mut file = std::fs::File::create(path)?;
                     polars::prelude::CsvWriter::new(&mut file).finish(&mut df)?;
                     eprintln!("Wrote {} rows to {}", df.height(), path);
                 }
@@ -496,7 +496,7 @@ fn main() -> Result<()> {
             for i in 1..elec_cum.len() {
                 if let (Some(v1), Some(v0)) = (elec_cum[i].1, elec_cum[i - 1].1) {
                     let delta = v1 - v0;
-                    if delta >= 0.0 && delta < 200.0 {
+                    if (0.0..200.0).contains(&delta) {
                         let date = chrono::DateTime::from_timestamp_millis(elec_cum[i].0)
                             .map(|dt| dt.format("%Y-%m-%d").to_string())
                             .unwrap_or_default();

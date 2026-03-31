@@ -164,10 +164,16 @@ impl TempBinModel {
         let feeds = &cfg.emoncms;
         let thresholds = &cfg.thresholds;
 
-        let mut heating_accum: HashMap<i32, (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>)> =
-            HashMap::new();
-        let mut dhw_accum: HashMap<i32, (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>)> =
-            HashMap::new();
+        #[allow(clippy::type_complexity)]
+        let mut heating_accum: HashMap<
+            i32,
+            (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>),
+        > = HashMap::new();
+        #[allow(clippy::type_complexity)]
+        let mut dhw_accum: HashMap<
+            i32,
+            (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>),
+        > = HashMap::new();
         let mut total_by_temp: HashMap<i32, u64> = HashMap::new();
         let mut dhw_count_by_hour: [u64; 24] = [0; 24];
         let mut total_count_by_hour: [u64; 24] = [0; 24];
@@ -245,6 +251,7 @@ impl TempBinModel {
         }
 
         // Convert accumulators to BinStats
+        #[allow(clippy::type_complexity)]
         let to_bins = |accum: HashMap<i32, (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>)>,
                        total: &HashMap<i32, u64>|
          -> HashMap<i32, BinStats> {

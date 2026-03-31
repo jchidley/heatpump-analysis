@@ -379,6 +379,7 @@ fn load_dataframe_inner(
 }
 
 /// Load daily cumulative energy data from the database.
+#[allow(clippy::type_complexity)]
 pub fn load_daily_energy(
     conn: &Connection,
     start: i64,

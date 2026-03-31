@@ -13,10 +13,6 @@ use serde::Deserialize;
 /// Global singleton — initialised once by [`load`], then accessed via [`config`].
 static CONFIG: OnceCell<Config> = OnceCell::new();
 
-// All config structs are deserialized from TOML — fields may appear "unused"
-// from a static-analysis perspective but are accessed at runtime.
-#[allow(dead_code)]
-
 /// Top-level configuration.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]

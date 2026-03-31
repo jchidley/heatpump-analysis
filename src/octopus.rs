@@ -438,6 +438,7 @@ pub fn print_summary(consumption: &DataFrame, weather: &DataFrame) -> Result<()>
 /// Daily HP stats broken down by operating state from the state machine.
 ///
 /// Returns (date, heating_elec_kwh, heating_heat_kwh, dhw_elec_kwh, dhw_heat_kwh)
+#[allow(clippy::type_complexity)]
 pub fn daily_hp_by_state(enriched_df: &DataFrame) -> Result<Vec<(String, f64, f64, f64, f64)>> {
     // The enriched df has ~10s samples with elec_w, heat_w, state, timestamp.
     // Convert power (W) × sample interval to energy (kWh).
@@ -506,6 +507,7 @@ pub fn daily_hp_by_state(enriched_df: &DataFrame) -> Result<Vec<(String, f64, f6
 /// Gas-era uses the reference estimate of 11.82 kWh/day DHW.
 ///
 /// Uses the cutover date of 2024-10-22 (HP monitoring start).
+#[allow(clippy::type_complexity)]
 pub fn print_gas_vs_hp(
     consumption: &DataFrame,
     weather: &DataFrame,

@@ -5,6 +5,7 @@ use super::geometry::{Doorway, ExternalElement, InternalConnection, RoomDef, Sol
 /// Per-room energy balance broken down by component (all values in Watts).
 /// Positive = heat into room, negative = heat out.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct EnergyBalanceComponents {
     pub external: f64,
     pub ventilation: f64,

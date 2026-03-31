@@ -62,7 +62,7 @@ pub fn print_connections() -> ThermalResult<()> {
     let doorways = build_doorways()?;
 
     println!("INTERNAL WALL/FLOOR CONNECTIONS (symmetric)");
-    println!("{:<30} {:>8} {}", "A↔B", "UA W/K", "Description");
+    println!("{:<30} {:>8} Description", "A↔B", "UA W/K");
     println!("{}", "─".repeat(60));
     for c in &connections {
         println!(
@@ -422,8 +422,8 @@ pub fn print_equilibrium(
     println!("{}", "=".repeat(70));
 
     println!(
-        "\n{:<14} {:>6} {:>7} {:>8} {:>9} {}",
-        "Room", "Temp", "Rad_in", "Ext_out", "Vent_out", "Notes"
+        "\n{:<14} {:>6} {:>7} {:>8} {:>9} Notes",
+        "Room", "Temp", "Rad_in", "Ext_out", "Vent_out"
     );
     println!("{}", "─".repeat(60));
 

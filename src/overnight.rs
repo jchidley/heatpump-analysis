@@ -94,6 +94,7 @@ struct Night {
 }
 
 /// Calibrated cooling model: dT/dt = -k × (T_indoor − T_outside)
+#[allow(dead_code)]
 struct CoolingModel {
     k: f64,
     capacity_wh: f64,
@@ -140,6 +141,7 @@ struct Schedule {
 
 /// Result of simulating one schedule on one night
 #[derive(Clone)]
+#[allow(dead_code)]
 struct SimResult {
     schedule_idx: usize,
     cosy_kwh: f64,
@@ -240,7 +242,7 @@ fn extract_nights(df: &DataFrame) -> Result<Vec<Night>> {
 
         // Winter months only (Oct–Mar)
         let month = night_date.month();
-        if month >= 4 && month <= 9 {
+        if (4..=9).contains(&month) {
             continue;
         }
 
@@ -400,7 +402,7 @@ fn calibrate_cooling(nights: &[Night]) -> CoolingModel {
     }
 
     let k = if sum_xx > 0.0 {
-        (sum_xy / sum_xx).max(0.005).min(0.05)
+        (sum_xy / sum_xx).clamp(0.005, 0.05)
     } else {
         0.023 // fallback: whole-house value from thermal model experiments
     };
@@ -526,7 +528,7 @@ fn calibrate_dhw(nights: &[Night]) -> DhwStats {
                 dhw_elec += m.elec_w / 60.0 / 1000.0;
             } else if m.state != "dhw" && in_dhw {
                 let duration = m.offset_min.saturating_sub(dhw_start_offset);
-                if duration >= MIN_DHW_CYCLE_MIN && duration <= 180 {
+                if (MIN_DHW_CYCLE_MIN..=180).contains(&duration) {
                     durations.push(duration as f64);
                     elec_totals.push(dhw_elec);
                 }
@@ -1169,14 +1171,13 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     };
 
     println!(
-        "{:<45} {:>7.2} {:>7.1} {:>5.1}% {:>3}/{:<3} {}",
+        "{:<45} {:>7.2} {:>7.1} {:>5.1}% {:>3}/{:<3} baseline",
         "ACTUAL (measured)",
         actual_total_cost / 100.0,
         actual_total_kwh,
         actual_cosy_pct,
         actual_feasible,
-        nights.len(),
-        "baseline"
+        nights.len()
     );
 
     // Strategy rows
@@ -1229,8 +1230,8 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     println!("SAMPLE NIGHTS (every ~{}th)", (nights.len() / 20).max(1));
     println!("{}", "=".repeat(78));
     println!(
-        "{:<12} {:>5} {:>5} {:>6} {:>6} {:>5} {:>5}  {}",
-        "Date", "T_out", "T_in", "Act", "Best", "Save", "T@07", "Strategy"
+        "{:<12} {:>5} {:>5} {:>6} {:>6} {:>5} {:>5}  Strategy",
+        "Date", "T_out", "T_in", "Act", "Best", "Save", "T@07"
     );
     println!("{}", "─".repeat(90));
 
