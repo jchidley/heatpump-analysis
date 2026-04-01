@@ -1,12 +1,21 @@
 # Adaptive Heating Control
 
-Date: 31 March 2026
+Date: 31 March 2026 (updated 1 April 2026)
+
+## Status
+
+- **V1 MVP**: Deployed on `pi5data` 31 March 2026. Bang-bang curve adjustment (±0.10 every 15 min). Proved eBUS writes work but revealed fundamental control problems — see [`adaptive-heating-mvp.md`](adaptive-heating-mvp.md).
+- **V1 pilot findings**: Curve ping-ponged 0.55→0.10→1.00 in one overnight cycle. 15-minute adjustments are meaningless against Leather's 15-hour thermal time constant. The controller had no model of the house.
+- **V2 design**: Model-predictive control using the calibrated thermal model + reverse-engineered VRC 700 heat curve formula. See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md).
+- **VRC 700 heat curve formula**: `flow = setpoint + curve × (setpoint - outside)^1.27` (fitted from Vaillant manual + empirical pilot data, RMSE 0.74°C).
 
 ## Core idea
 
-The VRC 700 controls the heat pump using a single straight line (weather compensation curve) and no room feedback. We have 20+ sensors it can't see, a thermal model it doesn't have, and eBUS read/write access to override its settings. Every adjustment we make is an experiment - the house responds, we measure the response, and the empirical dataset grows.
+The VRC 700 controls the heat pump using weather compensation: it takes a curve value, a setpoint, and the outside temperature, and calculates a target flow temperature. It has no room sensors, no thermal model, and no knowledge of DHW timing or tariff windows.
 
-The house is a physical system that's difficult to model precisely. But we don't need a perfect model - we need a controller that makes small adjustments, observes the result, and learns which direction is better. The thermal model provides the starting point and safety bounds. The real data provides the truth.
+We have 13 room sensors, a calibrated thermal model (261 W/K HTC, per-room radiator outputs, time constants), eBUS read/write access, and the reverse-engineered heat curve formula. The controller uses the thermal model to calculate the right flow temperature, converts that to a curve value, and writes it. Room temperature feedback is a slow trim, not the primary control loop.
+
+The real control objective is not a fixed temperature band. It is: **Leather at 20–21°C during waking hours (07:00–23:00) at minimum cost, with reliable DHW.** How cold the house gets at 3am is irrelevant provided we can recover in time. DHW charges only during Cosy windows when the cylinder needs it.
 
 ## What we can observe
 
@@ -52,16 +61,30 @@ The house is a physical system that's difficult to model precisely. But we don't
 
 ## What we can control
 
-Two levers, both writable via eBUS:
+All the VRC 700's inputs ultimately produce one output: `Hc1ActualFlowTempDesired` — the target flow temperature sent to the HMU. The curve, setpoint, min/max limits, and outside temp are all just inputs to the algorithm that produces that one number.
 
-| Lever | Register | Effect |
+The VRC 700 heat curve formula (reverse-engineered from manual + pilot data):
+```
+flow_temp = setpoint + curve × (setpoint - outside)^1.27
+```
+
+This means we can calculate the exact curve value needed for any target flow temperature:
+```
+curve = (target_flow - setpoint) / (setpoint - outside)^1.27
+```
+
+The thermal equilibrium model tells us what flow temperature (MWT) produces the desired Leather temperature. Combining these: `target_leather → required_MWT → required_flow → required_curve`. One calculation, not trial and error.
+
+Primary levers:
+
+| Lever | Register | Role |
 |---|---|---|
-| `Hc1HeatCurve` | Weather comp gradient | Changes flow temp for given outside temp - the efficiency lever |
-| `Z1DayTemp` | Room setpoint | Changes what temperature the VRC 700 targets - the demand lever |
+| `Hc1HeatCurve` | Weather comp gradient | Primary flow temp control |
+| `Z1DayTemp` | Room setpoint | Shifts the curve up/down |
 
-The VRC 700 day/night timer and fixed setpoints become unnecessary. The controller writes both every 15 minutes based on current conditions, replacing the fixed straight-line with a continuously-adapted operating point.
+`Z1NightTemp` and the VRC 700 timers stay as a safety net. If the controller stops, baseline restore sets known-good values and the VRC 700 runs autonomously.
 
-`Z1NightTemp` and the VRC 700 timers stay as a safety net in case the controller stops. Set to 19°C setback, current timer schedule. The controller overrides `Z1DayTemp` (which the VRC 700 uses whenever it's in "day" mode) to effectively control 24/7.
+Future option: bypass the VRC 700 entirely by sending `SetModeOverride` directly to the HMU with the desired flow temperature. The message format is decoded (D1C encoding, same as the existing HMU SetMode). This eliminates the curve abstraction entirely.
 
 Beyond these two main levers, the VRC 700 exposes other writable inputs that may be useful experimentally: `HwcSFMode`, `HwcTempDesired`, `HwcOpMode`, `Hc1MaxFlowTempDesired`, `Hc1MinFlowTempDesired`, `Z1OpMode`, timers, holiday periods, and selected installer-policy settings. Their intended Vaillant purpose is irrelevant. What matters is whether writing them causes the VRC 700 to emit different downstream commands and whether those commands improve house-level outcomes.
 
@@ -275,21 +298,16 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 
 ## 24-hour operation
 
-The VRC 700 day/night timer and fixed setback become redundant. The controller owns the setpoint 24/7:
+The real objective is **Leather at 20–21°C by 07:00 and throughout waking hours, at minimum cost**. The overnight temperature is not a target — it’s a free variable the controller uses to minimise cost.
 
-| Period | Current (VRC 700 timers) | Adaptive controller |
-|---|---|---|
-| 00:00–04:00 | Fixed 19°C setback, curve 0.55 | Setpoint 19–21°C based on room temps. Curve lowered to minimise cost during expensive tariff. HP idles at min mod instead of cycling. |
-| 04:00–07:00 (Cosy) | Fixed 21°C, curve 0.55 | Setpoint 21°C, curve raised if rooms need recovery. Cheap electricity — bank heat if possible. |
-| 07:00–13:00 | Fixed 21°C, curve 0.55 | COP optimise — lower curve while rooms hold. Expensive electricity — coast on thermal mass where possible. |
-| 13:00–16:00 (Cosy) | Fixed 21°C, curve 0.55 | Cheap electricity — if rooms drifted during 07–13, recover now cheaply. |
-| 16:00–19:00 (Peak) | Fixed 21°C, curve 0.55 | Most expensive period. Lower curve as far as comfort allows. Coast on afternoon Cosy banking. |
-| 19:00–22:00 | Fixed 21°C, curve 0.55 | Evening — occupied rooms matter. Comfort guard active. |
-| 22:00–00:00 (Cosy) | Fixed 21°C, curve 0.55 | Cheap electricity. Bank heat before overnight — raise setpoint to 21.5°C or curve to 0.55 to enter the night warm. |
+The controller calculates:
+- **Overnight**: given forecast, thermal model, and the morning DHW charge that will steal the HP at ~05:30, what’s the latest heating start time that achieves 20°C in Leather by 07:00? Let the house cool freely until then.
+- **Daytime**: given current outside temp, what curve value gives the right flow temp for Leather 20.5°C? Recalculate when outside temp changes >1°C, after DHW finishes, or if Leather drifts >0.5°C from prediction.
+- **DHW**: charge only during Cosy windows (05:30–07:00, 13:00–15:00, 22:00–00:00), only when cylinder is below trigger threshold. Independent of heating strategy.
 
-The VRC 700 timer stays programmed as a safety net (`Z1NightTemp = 19°C`, day mode from 04:00). If the controller dies, the VRC 700 falls back to the current behaviour. The controller overrides by writing `Z1DayTemp` — which takes effect whenever the VRC 700 is in day mode (04:00–00:00 per the timer).
+Predictable events (DHW charges, outside temp trends, solar gain) are planned for in advance, not reacted to after the fact. See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md) for the full V2 control design.
 
-For the 00:00–04:00 setback period, the controller writes `Z1NightTemp` instead. This is the only time the VRC 700 is in night mode.
+The VRC 700 timer stays programmed as a safety net (`Z1NightTemp = 19°C`, day mode from 04:00). If the controller stops, baseline restore sets known-good values.
 
 ## Away mode
 

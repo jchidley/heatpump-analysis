@@ -4,30 +4,28 @@ Planned enhancements, roughly ordered by value and readiness. Completed items ar
 
 ## Adaptive Heating Control
 
-**Status:** MVP pilot running on `pi5data` since 31 March 2026.
+**Status:** V1 pilot complete (31 Mar – 1 Apr 2026). V2 design written. V1 running on `pi5data` while V2 is implemented.
 
-See [`adaptive-heating-control.md`](adaptive-heating-control.md) for the strategy and [`adaptive-heating-mvp.md`](adaptive-heating-mvp.md) for the frozen MVP spec.
-
-The goal is to optimise the real house's heating and DHW control strategy using the VRC 700 as a steerable policy layer. The MVP is a Rust service on `pi5data` that reads room sensors, outside temp, HP state, and cylinder state every 15 minutes, makes bounded control decisions, and logs everything to InfluxDB and JSONL.
+See [`adaptive-heating-control.md`](adaptive-heating-control.md) for the strategy, [`adaptive-heating-mvp.md`](adaptive-heating-mvp.md) for V1 spec + pilot results, [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md) for V2 model-predictive design.
 
 | Priority | Item | Status |
 |----------|------|--------|
 | ✅ | VRC 700 writable control-surface discovery (~25 registers confirmed) | Done |
-| ✅ | MVP spec frozen (modes, targets, levers, DHW, safety, logging) | Done |
-| ✅ | Rust MVP binary built and deployed on `pi5data` as systemd service | Done |
-| ✅ | HTTP mode control API + mobile dashboard via `z2m-hub` | Done |
-| ✅ | Baseline restore (kill switch) verified on live VRC 700 | Done |
-| ✅ | Decision logging: room temps, HP state, COP fields, tariff, compressor | Done |
-| 🟡 | Live pilot: observe and refine from real data | Running |
-| 🟡 | Derive Aldora proxy band from historical data | Not started |
-| 🔵 | Tariff-aware heating logic (bank during Cosy, coast during peak) | Future |
-| 🔵 | COP gradient-following (replace simple band control) | Future |
+| ✅ | V1 MVP deployed, pilot run, bugs fixed | Done |
+| ✅ | VRC 700 heat curve formula: `flow = setpoint + curve × (setpoint - outside)^1.27` | Done |
+| ✅ | V1 pilot findings: bang-bang fails, thermal model needed, curve ping-pong | Done |
+| ✅ | V2 design: model-predictive control with equilibrium solver + heat curve formula | Done |
+| 🟡 | V2 implementation: `target_mwt_for_leather()` + curve lookup in controller | Next |
+| 🟡 | Overnight optimisation: calculated start time replacing fixed 19°C setback | Next |
+| 🟡 | Predictive DHW planning: pre-compensate before known DHW charges | Next |
+| 🟡 | Outside temp trend tracking: adjust curve ahead of forecast changes | Next |
+| 🔵 | Weather forecast integration (Open-Meteo) for overnight planning | Future |
+| 🔵 | Direct flow temp control via SetModeOverride (bypass VRC 700 curve) | Future |
 | 🔵 | Leather door sensors → disqualify Leather when open | Waiting on hardware |
-| 🔵 | Weather forecast integration | Future |
+| 🔵 | Derive Aldora proxy band from historical data | Future |
 | 🔵 | DHW hygiene / legionella risk monitoring | Future |
-| 🔵 | Richer downstream eBUS `SetMode` capture and decoding | Future |
 
-Success criteria for week-1 pilot: DHW always available, fewer cold rooms, less cycling. Better efficiency is a bonus.
+Real objective: Leather at 20–21°C during waking hours at minimum cost, with reliable DHW during Cosy windows. Overnight temperature is a free variable, not a target.
 
 ## Pico W eBUS Adapter
 

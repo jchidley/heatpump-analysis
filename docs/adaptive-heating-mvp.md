@@ -394,14 +394,31 @@ These are intentionally not complete yet:
 
 ## Pilot status
 
-The MVP is now in the **live pilot installed** state:
-- code exists
-- service is deployed
-- restore path is verified
-- control API is live
-- logging is enabled
+The MVP is now in the **V1 pilot complete, V2 designed** state.
 
-What remains is not "build the MVP" but **observe, integrate, and refine the pilot**.
+### V1 pilot results (31 March – 1 April 2026)
+
+**What worked:**
+- First eBUS control writes confirmed working (curve + setpoint accepted by VRC 700)
+- Correct hold behaviour during DHW charges and while in comfort band
+- Baseline restore on shutdown/kill verified
+- Logging captured rich decision data (room temps, flow temps, COP, tariff periods)
+- Null-read bug found and fixed during pilot
+- VRC 700 curve floor (0.10) discovered and enforced
+
+**What didn’t work:**
+- Bang-bang control (±0.10 every 15 min) caused curve ping-pong: 0.55→0.10→1.00 in one overnight cycle
+- 15-minute decision cadence is meaningless against Leather’s ~15-hour thermal time constant
+- Controller had no model of the house — couldn’t predict that MWT 28°C was already sufficient at 13°C outside
+- Overshooting above 21°C wasted energy; undershooting triggered aggressive recovery that overshot again
+
+**Key discovery:** The VRC 700’s heat curve formula was reverse-engineered from the Vaillant installation manual + pilot data: `flow = setpoint + curve × (setpoint - outside)^1.27` (RMSE 0.74°C). Combined with the thermal equilibrium model, this allows calculating the exact curve value for any target, eliminating trial-and-error.
+
+### V2 design
+
+See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md) for the model-predictive control design that replaces V1’s bang-bang approach.
+
+What remains is implementing V2 and continuing the live pilot with the smarter controller.
 
 ## DHW policy in MVP
 

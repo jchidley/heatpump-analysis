@@ -55,6 +55,10 @@ This means overnight strategy debates are secondary — the HP capacity is the b
 
 Previous setup was 17°C setback (4°C drop). Data showed the house never drops to 17°C naturally, so the old setback was paying for nothing. 19°C setback catches only the coldest nights and costs £20/yr vs £0 for the old 17°C.
 
+### V2 reframing (April 2026)
+
+The 19°C setback is a V1 heuristic, not the real objective. Nobody cares what temperature the house reaches at 3am. What matters is **Leather at 20–21°C by 07:00 at minimum cost**. The V2 adaptive controller replaces the fixed setback with a **calculated heating start time**: let the house cool freely overnight, then start heating at the latest moment that achieves 20°C in Leather by 07:00, accounting for the morning DHW charge that steals the HP at ~05:30. The thermal model + outside temp forecast calculates this directly. See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md).
+
 eBUS commands (already set):
 ```bash
 echo 'write -c 700 Z1NightTemp 19' | nc -w 2 localhost 8888
