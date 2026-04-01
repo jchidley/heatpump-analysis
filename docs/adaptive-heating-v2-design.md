@@ -110,15 +110,19 @@ One calculation, not trial and error. At 13°C outside this gives curve ≈ 0.55
 
 ### Daytime (07:00–23:00): maintain comfort
 
-1. Fetch current outside temp and hourly forecast
-2. Calculate required curve from the model for target Leather 20.5°C
-3. If the required curve differs from current by >0.05, write it
-4. Recalculate when:
-   - Outside temp has changed >1°C since last calculation
-   - DHW charge has just finished (HP available again)
-   - Leather has drifted >0.5°C from model prediction (unexpected event)
-   - Minimum 30 minutes between recalculations
-5. Each recalculation produces an **absolute curve value**, not a delta
+The forecast gives the full daytime outside temp trajectory. The controller uses it to plan the curve profile for the day, not just react to the current temperature.
+
+1. Each hour (or when forecast updates): calculate the required curve for each of the next few hours using the forecast outside temp at that hour
+2. Set the curve for the **current hour's forecast**, not the current measured outside temp (unless forecast is unavailable)
+3. As the day progresses, the curve naturally follows the forecast trajectory:
+   - Morning: higher curve (cold, house recovering)
+   - Midday: curve reduces as outside warms + solar gain
+   - Evening: curve rises again as outside cools
+4. Recalculate immediately (don't wait for the next hour) when:
+   - DHW charge has just finished (HP available again, Leather has dipped)
+   - Leather has drifted >0.5°C from model prediction (unexpected event — door opened, etc.)
+5. Each calculation produces an **absolute curve value** from the model, not a delta
+6. Only write if the required curve differs from current by >0.05 (avoid pointless eBUS writes)
 
 ### Overnight (23:00–07:00): minimise cost, hit target by morning
 
