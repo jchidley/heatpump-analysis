@@ -38,8 +38,9 @@ Everything else — overnight temperature, curve value, setpoint, heating start 
 
 | Input | Source | What it's for |
 |---|---|---|
-| 24h temp forecast | Open-Meteo API | Overnight planning, daytime anticipation |
-| 24h solar forecast | Open-Meteo API | Anticipate solar gain |
+| 24h temp forecast | Open-Meteo API | Overnight planning, daytime curve trajectory |
+| 24h solar radiation forecast | Open-Meteo API | Solar gain prediction — the equilibrium solver already takes irradiance per orientation and calculates gain through each room's glazing |
+| 24h humidity forecast | Open-Meteo API | Future: predict defrost frequency (high humidity + low temp = more defrosts = less HP capacity) |
 
 Open-Meteo URL (free, no API key):
 ```
@@ -112,8 +113,8 @@ One calculation, not trial and error. At 13°C outside this gives curve ≈ 0.55
 
 The forecast gives the full daytime outside temp trajectory. The controller uses it to plan the curve profile for the day, not just react to the current temperature.
 
-1. Each hour (or when forecast updates): calculate the required curve for each of the next few hours using the forecast outside temp at that hour
-2. Set the curve for the **current hour's forecast**, not the current measured outside temp (unless forecast is unavailable)
+1. Each hour (or when forecast updates): calculate the required curve for each of the next few hours using the forecast outside temp **and solar radiation** at that hour
+2. Set the curve for the **current hour's forecast conditions** (temp + solar), not the current measured outside temp (unless forecast is unavailable). On a sunny afternoon the equilibrium solver will calculate a lower MWT because solar gain is doing some of the heating.
 3. As the day progresses, the curve naturally follows the forecast trajectory:
    - Morning: higher curve (cold, house recovering)
    - Midday: curve reduces as outside warms + solar gain
