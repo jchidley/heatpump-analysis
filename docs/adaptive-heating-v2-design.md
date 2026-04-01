@@ -246,7 +246,7 @@ Recommendation: **Option A for Phase 1** (ship fast, binary stays standalone), *
 
 ### Phase 3: Predictive DHW compensation
 
-6. **Pre-DHW curve raise**:
+8. **Pre-DHW curve raise**:
    - 15 min before a predicted DHW charge, raise curve by enough to add ~0.3°C to Leather
    - After DHW finishes, recalculate and set the normal curve
 
