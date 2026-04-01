@@ -239,17 +239,23 @@ Note: at 13°C outside, the baseline curve of 0.55 was already nearly optimal. T
 
 ## DHW in V2
 
-DHW policy remains as specified in V1 (`docs/adaptive-heating-mvp.md`), but V2 must actively account for DHW in its planning:
+DHW is a separate, simple control problem. It does not need the thermal model or forecasting.
 
-1. **Predict DHW timing** — the controller knows the DHW timer windows (05:30–07:00, 13:00–15:00, 22:00–00:00) and can anticipate when DHW will fire based on cylinder temperature vs trigger threshold (40°C).
+### DHW rules
 
-2. **Don't react to DHW-induced cooling** — when DHW is active, Leather will cool at ~0.2–0.5°C. The controller should not adjust the heating curve in response. It should log "DHW active, holding" and wait.
+1. **Charge only during Cosy windows** (05:30–07:00, 13:00–15:00, 22:00–00:00) — this is the only time DHW should run. Cosy rate is 14.05p/kWh vs 28.65p mid-peak.
+2. **Only when needed** — cylinder below trigger threshold (currently 40°C, set by `CylinderChargeHyst=5K` below the 45°C target).
+3. **Don't charge when already hot enough** — if cylinder is above target, do nothing regardless of Cosy window.
+4. **DHW boost via HwcSFMode=load** — the V1 mechanism is correct and should be kept.
+5. **DHW mode (Eco vs Normal) is not controllable via eBUS** — hmu HwcMode is read-only. Seasonal manual switch remains.
 
-3. **Pre-compensate if needed** — if the model predicts that a DHW charge will push Leather below 20°C, the controller could pre-raise the curve slightly before DHW starts. This is a V2+ optimisation, not V2 launch.
+### How DHW affects heating strategy
 
-4. **DHW boost remains via HwcSFMode** — the V1 mechanism (trigger boost during Cosy windows when cylinder is below threshold) is correct and should be kept.
+The HP can't heat and charge DHW simultaneously. A DHW charge takes ~1h (Normal) and grabs the HP entirely. The heating controller must:
 
-5. **DHW mode (Eco vs Normal) is not controllable via eBUS** — hmu HwcMode is read-only. The seasonal manual switch remains.
+- **Know DHW is coming** — if cylinder is below threshold and a Cosy window is approaching, assume DHW will fire.
+- **Not react to DHW-induced room cooling** — Leather drops ~0.2–0.5°C during a DHW charge. The controller should hold, not adjust the curve.
+- **Factor the lost hour into overnight planning** — if the morning DHW charge (05:30–07:00) will take 1h of HP time, the heating start time calculation needs to account for that.
 
 ## What this gives us
 
