@@ -14,7 +14,7 @@ The goal is not simply "keep Leather at 20.5°C." The real objective is:
 
 4. **DHW competes with heating** — the HP can't do both simultaneously. The diverter valve sends all flow to either the heating circuit or the DHW cylinder. A DHW charge takes 58 min (Normal) to 108 min (Eco). During that time, the house gets zero heating input and cools at ~0.2–0.5°C. DHW windows are aligned to Cosy periods (05:30–07:00, 13:00–15:00, 22:00–00:00).
 
-5. **Night setback: 19°C** — 00:00–04:00. The house naturally sits at 18.5–19.5°C overnight so the setback rarely triggers on mild nights. Costs ~£20/yr. The previous 17°C setback was paying for nothing (house never drops that far).
+5. **Night strategy: hit the target by morning, not maintain a floor overnight** — The current 19°C setback (00:00–04:00) is a V1 heuristic, not the real objective. Nobody cares what temperature the house reaches at 3am. What matters is Leather at 20–21°C by 07:00 at minimum cost. The 19°C setback wastes energy holding a floor nobody needs — on a mild night the house stays above 19°C anyway, and on a cold night the energy spent maintaining 19°C could be better spent on a targeted morning recovery. The real optimisation is a **calculated heating start time**: let the house cool freely, then start heating at the latest moment that still achieves 20°C in Leather by 07:00. The thermal model + outside temp forecast can calculate this directly.
 
 6. **Cold day reality** — on <0°C nights, Leather averages 19.1°C at 08:00 and never reaches 21°C. On 0–3°C nights, Leather reaches 21°C at 15:00 on average. On 6–9°C nights, by noon. The controller must accept this reality rather than fighting it.
 
@@ -26,6 +26,7 @@ The controller should:
 - **Not waste energy overshooting** — every degree above 21°C is wasted
 - **Protect DHW reliability** — DHW service must never be compromised by heating optimisation
 - **Not chase Cosy windows** — the battery already handles tariff arbitrage; scheduling complexity yields minimal savings
+- **Calculate overnight strategy dynamically** — use the thermal model + forecast to determine the optimal heating start time each night, rather than a fixed setback temperature
 - **Plan around DHW charges** — know that a DHW charge is coming, don't panic when Leather dips during one
 
 ## What V1 taught us
