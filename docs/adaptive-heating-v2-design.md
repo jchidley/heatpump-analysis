@@ -132,12 +132,30 @@ The controller should **recalculate from the model** (not bump by a fixed delta)
 
 Each recalculation produces an **absolute curve value** from the model, not a delta from the previous one. If the model says curve 0.55 is right and it's already at 0.55, do nothing.
 
-### What NOT to react to
+### Predictable events — plan ahead, don't wait and react
 
-- **DHW-induced cooling** — Leather drops ~0.2–0.5°C during a DHW charge. Don't adjust the curve. Wait for DHW to finish, then recalculate if needed.
-- **Defrost** — temporary HP interruption, same as DHW. Hold.
-- **Short transients** — someone opens a door, Leather dips for 20 minutes then recovers. Don't react unless the drift persists past the 0.5°C / 30-minute threshold.
-- **Compressor cycling** — the VRC 700 cycles the compressor on/off as part of normal operation. The controller should not interpret blocked/shutdown as a problem.
+The thermal model lets us anticipate the effect of known events and adjust *before* they happen:
+
+- **DHW charge coming** — we know the Cosy windows and cylinder state. If DHW will fire at 05:30 and steal the HP for ~1h, and Leather is at 20.3°C, the model predicts a 0.3°C drop. Should we raise the curve 15 minutes before DHW starts so Leather enters the charge at 20.6°C and exits at 20.3°C — no recovery needed? That’s better than letting it drop to 20.0°C and then spending 45 minutes recovering.
+
+- **Outside temp trend** — if it’s 10°C now and falling to 5°C by evening, the curve that’s right now will be too low in 3 hours. The model can calculate the trajectory and adjust the curve gradually ahead of the drop, rather than waiting until Leather falls out of band.
+
+- **Morning recovery** — given the thermal model, current house state, forecast, and the DHW charge that will interrupt at 05:30: what time does heating need to start to hit 20°C in Leather by 07:00? This is a planning calculation, not a reaction.
+
+- **Solar gain** — afternoon sun through the conservatory and south-facing windows adds heat. The model can anticipate this and reduce the curve before the rooms overshoot, rather than waiting for Leather to hit 21.1°C and then coasting.
+
+- **Evening wind-down** — if the last DHW charge is at 22:00, effective heating ends at ~21:00. The model can plan the evening curve to leave Leather at 21°C at bedtime without wasting energy maintaining it after everyone’s asleep.
+
+### Genuine surprises — observe, recalculate, don’t panic
+
+Some things can’t be predicted:
+
+- Someone opens the conservatory door for the dog — 1.4°C dip in Leather over 2.5h on cold mornings
+- An unexpected defrost cycle
+- Sensor failure or eBUS read timeout
+- Compressor cycling (normal VRC 700 behaviour, not a problem)
+
+For these: observe the deviation from the model’s prediction, and if it persists past 0.5°C / 30 minutes, recalculate from current state. Don’t bump the curve by a fixed amount — recalculate the absolute target from the model using the new measured state.
 
 ## Implementation sketch
 
