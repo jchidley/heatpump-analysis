@@ -1,296 +1,233 @@
-# Adaptive Heating V2 — Model-Informed Control
+# Adaptive Heating V2 — Model-Predictive Control
 
 Date: 1 April 2026
 
-## The real control objective
+## Objective
 
-The goal is not simply "keep Leather at 20.5°C." The real objective is:
+**Leather room at 20–21°C during waking hours (07:00–23:00) at minimum electricity cost, with reliable DHW.**
 
-1. **Day target: 21°C** — Z1DayTemp is set to 21. On cold days (<6°C outside), the 5kW HP cannot actually reach 21°C. Leather stabilises at 19.5–20°C regardless of strategy. The HP runs flat out and the house temperature is limited by HP sizing, not scheduling (see `docs/overnight-strategy-analysis.md`).
+Everything else — overnight temperature, curve value, setpoint, heating start time — is a means to that end, not a goal in itself.
 
-2. **Comfort band: 20.0–21.0°C** — below 20 feels cold, above 21 feels hot. The band is asymmetric in consequence: undershooting by 1°C is uncomfortable, overshooting by 1°C wastes energy and makes the room stuffy.
+### Constraints
 
-3. **Cosy tariff windows** — three cheap windows (04:00–07:00, 13:00–16:00, 22:00–00:00) at 14.05p/kWh vs 28.65p mid-peak and 42.97p peak. The Tesla Powerwall covers ~95% of non-Cosy usage, making the effective blended rate 14.63p/kWh. This means **tariff scheduling yields only £15–40/year** — the battery has already captured most of the arbitrage.
+- On cold days (<6°C), the 5kW HP cannot reach 21°C. Leather stabilises at 19.5–20°C. The controller must accept this, not fight it.
+- The HP can't heat and charge DHW simultaneously. DHW steals the HP for ~1h.
+- The Tesla Powerwall covers ~95% of non-Cosy usage at effective 14.63p/kWh. Tariff scheduling yields only £15–40/year — not worth adding complexity for.
+- Overnight temperature is irrelevant. Only the morning arrival temperature matters.
 
-4. **DHW competes with heating** — the HP can't do both simultaneously. The diverter valve sends all flow to either the heating circuit or the DHW cylinder. A DHW charge takes 58 min (Normal) to 108 min (Eco). During that time, the house gets zero heating input and cools at ~0.2–0.5°C. DHW windows are aligned to Cosy periods (05:30–07:00, 13:00–15:00, 22:00–00:00).
+## Inputs
 
-5. **Night strategy: hit the target by morning, not maintain a floor overnight** — The current 19°C setback (00:00–04:00) is a V1 heuristic, not the real objective. Nobody cares what temperature the house reaches at 3am. What matters is Leather at 20–21°C by 07:00 at minimum cost. The 19°C setback wastes energy holding a floor nobody needs — on a mild night the house stays above 19°C anyway, and on a cold night the energy spent maintaining 19°C could be better spent on a targeted morning recovery. The real optimisation is a **calculated heating start time**: let the house cool freely, then start heating at the latest moment that still achieves 20°C in Leather by 07:00. The thermal model + outside temp forecast can calculate this directly.
+### Read every cycle (~1 min sampling, decisions when triggered)
 
-6. **Cold day reality** — on <0°C nights, Leather averages 19.1°C at 08:00 and never reaches 21°C. On 0–3°C nights, Leather reaches 21°C at 15:00 on average. On 6–9°C nights, by noon. The controller must accept this reality rather than fighting it.
-
-### What this means for V2
-
-The controller should:
-- **Target 20.5°C** (band midpoint) on mild days, accepting that 21°C is the ceiling not the floor
-- **Accept 19.5–20°C** on cold days as the physical limit of the 5kW HP
-- **Not waste energy overshooting** — every degree above 21°C is wasted
-- **Protect DHW reliability** — DHW service must never be compromised by heating optimisation
-- **Not chase Cosy windows** — the battery already handles tariff arbitrage; scheduling complexity yields minimal savings
-- **Calculate overnight strategy dynamically** — use the thermal model + forecast to determine the optimal heating start time each night, rather than a fixed setback temperature
-- **Plan around DHW charges** — know that a DHW charge is coming, don't panic when Leather dips during one
-
-## What V1 taught us
-
-The V1 bang-bang controller (add/subtract 0.10 to curve every 15 minutes) produced:
-- Curve driven from 0.55→0.10 in 2 hours while Leather was still above band (stored heat dissipating)
-- Curve driven from 0.10→1.00 in 2 hours while Leather was stuck at 19.7°C (thermal lag)
-- Pointless repeated writes when the curve was already at floor
-- A null-read bug that reset the curve and triggered unnecessary heating
-
-The fundamental problem: **the controller had no model of the house.** It didn't know that Leather has a 15-hour thermal time constant, that MWT 28°C is sufficient at 13°C outside, or that a curve change takes hours to register as a room temperature change.
-
-## What we already have
-
-The thermal model (`thermal-equilibrium`) can already answer the key question:
-
-> Given outside temperature X, what MWT produces Leather temperature Y at equilibrium?
-
-From the model at 13°C outside:
-- MWT 25°C → Leather 19.7°C
-- MWT 28°C → Leather 21.1°C
-- MWT 30°C → Leather 22.1°C
-
-This is approximately linear in this range: **~0.5°C Leather per 1°C MWT.**
-
-We also know:
-- Leather thermal mass: 4,907 kJ/K
-- Leather thermal time constant: ~15 hours
-- Leather cooling rate (heating off): 0.18°C/h at ΔT=10°C
-- Radiator output: `T50 × ((MWT - T_room) / 50)^1.3` where T50 = 4,752W
-- Per-room fabric losses, ventilation rates, inter-room transfer coefficients
-- All calibrated against two controlled cooldown experiments
-
-## The V2 control concept
-
-### Core idea
-
-Instead of adjusting the curve blindly, the controller should:
-
-1. **Calculate the target MWT** from current outside temperature + desired Leather temperature
-2. **Set the flow temperature** (via curve/setpoint, or eventually direct SetMode)
-3. **Wait** for the house to respond — not 15 minutes, but an appropriate fraction of the thermal time constant
-4. **Re-evaluate** only when enough time has passed for the change to register
-
-### Target MWT calculation
-
-Build a lookup table (or use the equilibrium solver directly) that maps:
-
-```
-(outside_temp, target_leather_temp) → required_MWT
-```
-
-For the Leather comfort band of 20.0–21.0°C, target the midpoint: **20.5°C**.
-
-Pre-computed examples:
-
-| Outside °C | Target Leather | Required MWT | Notes |
-|---|---|---|---|
-| 0 | 20.5 | ~33 | Cold day, HP working hard |
-| 5 | 20.5 | ~30 | Typical winter |
-| 10 | 20.5 | ~27 | Mild |
-| 13 | 20.5 | ~26 | Spring/autumn |
-| 15 | 20.5 | ~25 | Near summer cutoff |
-
-These come from running the equilibrium solver at each outside temp and interpolating the MWT that gives Leather = 20.5°C.
-
-### Converting MWT to flow temperature
-
-The VRC 700 demands a **flow temperature**, not an MWT. The relationship depends on the system ΔT:
-
-```
-flow_temp = MWT + ΔT/2
-```
-
-At our typical conditions, ΔT is 3–5°C (we see flow 28°C, return 24°C → ΔT=4, MWT=26). So:
-
-```
-target_flow = target_MWT + 2  (approximately)
-```
-
-This is observable — we read both flow and return from the HMU. The controller can track the actual ΔT and adjust.
-
-### Setting the flow temperature
-
-**V2a (keep VRC 700):** Reverse-engineer the curve/setpoint combination that produces the desired `Hc1ActualFlowTempDesired`. We can observe this: write curve X + setpoint Y, read back the flow demand, adjust. Or build an empirical lookup from the data we've already collected.
-
-**V2b (bypass VRC 700):** Send SetModeOverride directly to the HMU with the desired flow temperature. This is cleaner but requires either disabling the 700 or outpacing its 30-second writes.
-
-**V2c (VWZ AI standalone):** Remove the VRC 700, let the VWZ AI operate standalone, and write to it directly. The VWZ AI has its own heat curve and setpoint registers.
-
-V2a is the safe first step. V2b/c are future options.
-
-### When to recalculate
-
-Leather's time constant is ~15 hours. The V1 mistake was reacting every 15 minutes to a system that takes hours to respond. But "set once, wait hours" is also wrong — daytime conditions change: outside temp swings, solar gain, DHW charges steal the HP, doors open.
-
-The controller should **recalculate from the model** (not bump by a fixed delta) when:
-
-- **Outside temp has changed >1°C** since last calculation — the target flow temp needs updating
-- **DHW charge has just finished** — HP is available again, Leather has dipped, recalculate whether the current curve is still right
-- **Leather has drifted >0.5°C from model prediction** — something unexpected happened (door opened, solar gain, occupancy change). Recalculate, don't blindly bump.
-- **Minimum 30 minutes between recalculations** — anything faster is noise given the thermal time constant
-
-Each recalculation produces an **absolute curve value** from the model, not a delta from the previous one. If the model says curve 0.55 is right and it's already at 0.55, do nothing.
-
-### Predictable events — plan ahead, don't wait and react
-
-The thermal model lets us anticipate the effect of known events and adjust *before* they happen:
-
-- **DHW charge coming** — we know the Cosy windows and cylinder state. If DHW will fire at 05:30 and steal the HP for ~1h, and Leather is at 20.3°C, the model predicts a 0.3°C drop. Should we raise the curve 15 minutes before DHW starts so Leather enters the charge at 20.6°C and exits at 20.3°C — no recovery needed? That’s better than letting it drop to 20.0°C and then spending 45 minutes recovering.
-
-- **Outside temp trend** — if it’s 10°C now and falling to 5°C by evening, the curve that’s right now will be too low in 3 hours. The model can calculate the trajectory and adjust the curve gradually ahead of the drop, rather than waiting until Leather falls out of band.
-
-- **Morning recovery** — given the thermal model, current house state, forecast, and the DHW charge that will interrupt at 05:30: what time does heating need to start to hit 20°C in Leather by 07:00? This is a planning calculation, not a reaction.
-
-- **Solar gain** — afternoon sun through the conservatory and south-facing windows adds heat. The model can anticipate this and reduce the curve before the rooms overshoot, rather than waiting for Leather to hit 21.1°C and then coasting.
-
-- **Evening wind-down** — if the last DHW charge is at 22:00, effective heating ends at ~21:00. The model can plan the evening curve to leave Leather at 21°C at bedtime without wasting energy maintaining it after everyone’s asleep.
-
-### Genuine surprises — observe, recalculate, don’t panic
-
-Some things can’t be predicted:
-
-- Someone opens the conservatory door for the dog — 1.4°C dip in Leather over 2.5h on cold mornings
-- An unexpected defrost cycle
-- Sensor failure or eBUS read timeout
-- Compressor cycling (normal VRC 700 behaviour, not a problem)
-
-For these: observe the deviation from the model’s prediction, and if it persists past 0.5°C / 30 minutes, recalculate from current state. Don’t bump the curve by a fixed amount — recalculate the absolute target from the model using the new measured state.
-
-## Implementation sketch
-
-### New module: `src/thermal/control.rs`
-
-```rust
-/// Calculate the MWT that produces target_leather_temp at the given outside temp.
-/// Uses bisection on the equilibrium solver.
-pub fn target_mwt_for_leather(
-    outside_temp: f64,
-    target_leather: f64,
-    rooms: &HashMap<String, Room>,
-    connections: &[Connection],
-    doorways: &[Doorway],
-) -> f64 {
-    // Bisection: find MWT where equilibrium leather temp = target
-    let mut lo_mwt = 15.0;
-    let mut hi_mwt = 55.0;
-    for _ in 0..50 {
-        let mid = (lo_mwt + hi_mwt) / 2.0;
-        let leather_eq = solve_equilibrium_leather(mid, outside_temp, rooms, connections, doorways);
-        if leather_eq < target_leather {
-            lo_mwt = mid;
-        } else {
-            hi_mwt = mid;
-        }
-    }
-    (lo_mwt + hi_mwt) / 2.0
-}
-```
-
-### Changes to `adaptive-heating-mvp.rs`
-
-Replace the current occupied-mode logic:
-
-```
-// V1 (current):
-if leather < 20.0 { curve += 0.10 }
-if leather > 21.0 { curve -= 0.10 }
-
-// V2 (model-informed):
-let target_mwt = target_mwt_for_leather(outside_temp, 20.5, &model);
-let target_flow = target_mwt + actual_dt / 2.0;
-let required_curve = flow_to_curve(target_flow, outside_temp);  // reverse lookup
-if (required_curve - current_curve).abs() > 0.05 {
-    write_curve(required_curve);
-    last_adjustment = now;
-}
-// Don't re-evaluate for at least 60 minutes
-```
-
-### Data we need to collect first
-
-Before implementing V2, we should build the **curve→flow temp lookup** from the data the pilot has already generated:
-
-| Curve | Outside | Resulting flow demand |
+| Input | Source | What it's for |
 |---|---|---|
-| 0.10 | 12°C | 21.0°C |
-| 0.20 | 12°C | 22.2°C |
-| 0.30 | 12°C | 24.1°C |
-| 0.40 | 12°C | 26.4°C |
-| 0.50 | 12°C | 28.8°C |
-| 0.55 | 16°C | 26.8°C |
-| ... | ... | ... |
+| Leather temp | InfluxDB (emonth2) | Primary comfort target |
+| Aldora temp | InfluxDB (Zigbee) | Secondary reference / validation |
+| Outside temp | eBUS `DisplayedOutsideTemp` | Equilibrium + curve calculation |
+| Cylinder temp | eBUS `HwcStorageTemp` | DHW decisions |
+| HP status | eBUS `RunDataStatuscode` | DHW/defrost/heating detection |
+| Flow temp actual | eBUS `RunDataFlowTemp` | Verify curve produced right flow |
+| Return temp actual | eBUS `RunDataReturnTemp` | Track ΔT for MWT calculation |
+| Flow temp desired | eBUS `Hc1ActualFlowTempDesired` | Verify VRC 700 responded to write |
+| Current curve | eBUS `Hc1HeatCurve` | Know state before writing |
+| Power consumption | eBUS `RunDataElectricPowerConsumption` | Logging / COP |
+| Yield power | eBUS `CurrentYieldPower` | Logging / COP |
+| Compressor util | eBUS `CurrentCompressorUtil` | Detect HP at capacity |
 
-We already have this from the JSONL logs! Every decision logged `curve_before`, `outside_temp`, and `flow_desired`. We can fit the VRC 700's algorithm empirically.
+### Fetched periodically (cache hourly)
 
-## VRC 700 heat curve formula
-
-From the Vaillant installation manual (p15) + empirical pilot data:
-
-```
-flow_temp = setpoint + curve × (setpoint - outside)^1.27
-```
-
-Fitted against 13 pilot data points with RMSE 0.74°C. This allows us to convert between "what flow temp do we want" and "what curve value to write."
-
-Inverse (what curve for a target flow):
-```
-curve = (target_flow - setpoint) / (setpoint - outside)^1.27
-```
-
-Examples at setpoint 21°C:
-| Outside | Target flow | Required curve |
+| Input | Source | What it's for |
 |---|---|---|
-| 13°C | 29°C | 0.57 |
-| 5°C | 32°C | 0.33 |
-| 0°C | 35°C | 0.29 |
+| 24h temp forecast | Open-Meteo API | Overnight planning, daytime anticipation |
+| 24h solar forecast | Open-Meteo API | Anticipate solar gain |
 
-Note: at 13°C outside, the baseline curve of 0.55 was already nearly optimal. The V1 controller drove it to 0.10 and 1.00 unnecessarily.
-
-## DHW in V2
-
-DHW is a separate, simple control problem. It does not need the thermal model or forecasting.
-
-### DHW rules
-
-1. **Charge only during Cosy windows** (05:30–07:00, 13:00–15:00, 22:00–00:00) — this is the only time DHW should run. Cosy rate is 14.05p/kWh vs 28.65p mid-peak.
-2. **Only when needed** — cylinder below trigger threshold (currently 40°C, set by `CylinderChargeHyst=5K` below the 45°C target).
-3. **Don't charge when already hot enough** — if cylinder is above target, do nothing regardless of Cosy window.
-4. **DHW boost via HwcSFMode=load** — the V1 mechanism is correct and should be kept.
-5. **DHW mode (Eco vs Normal) is not controllable via eBUS** — hmu HwcMode is read-only. Seasonal manual switch remains.
-
-### How DHW affects heating strategy
-
-The HP can't heat and charge DHW simultaneously. A DHW charge takes ~1h (Normal) and grabs the HP entirely. The heating controller must:
-
-- **Know DHW is coming** — if cylinder is below threshold and a Cosy window is approaching, assume DHW will fire.
-- **Not react to DHW-induced room cooling** — Leather drops ~0.2–0.5°C during a DHW charge. The controller should hold, not adjust the curve.
-- **Factor the lost hour into overnight planning** — if the morning DHW charge (05:30–07:00) will take 1h of HP time, the heating start time calculation needs to account for that.
-
-## What this gives us
-
-**V1**: curve oscillates 0.10↔1.00, constant writes, 15-minute thrashing
-**V2**: controller calculates MWT 27°C, sets curve once, waits 2 hours, confirms Leather is at 20.5°C, done
-
-The model turns a feedback control problem (measure→react→overshoot→correct) into a feedforward control problem (calculate→set→verify). The thermal model is the feedforward path. Room temperature is the feedback for long-term trim only.
-
-## Weather forecast
-
-Open-Meteo provides free, no-API-key, hourly forecasts including temperature, humidity, and solar radiation. The controller should fetch a 24-hour forecast on each decision cycle (or cache it hourly).
-
+Open-Meteo URL (free, no API key):
 ```
 https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London
 ```
 
-This is essential for V2, not optional:
-- **Overnight planner** needs to know the 07:00 outside temp to calculate heating start time. Tonight the outside temp drops from 13°C to 6.4°C — without the forecast the controller would set the curve for 13°C and undershoot.
-- **Daytime planning** can anticipate afternoon solar gain and evening cooling.
-- **DHW pre-compensation** can factor in whether the house will cool faster or slower during the charge.
+## Outputs
 
-## Still learning
+### Written to VRC 700
 
-The V2 approach assumes the equilibrium model is accurate enough to be useful. The pilot data will validate this — if the model says MWT 27°C gives Leather 20.5°C, and reality shows 19.5°C, we calibrate the model.
+| Output | Register | When |
+|---|---|---|
+| Heat curve | `Hc1HeatCurve` | When model calculation produces a different value (>0.05 change) |
+| Day setpoint | `Z1DayTemp` | Normally fixed at 21. Changed for away mode. |
+| Night setpoint | `Z1NightTemp` | Normally fixed at 19 (safety net). Overnight planner may lower. |
+| DHW boost | `HwcSFMode=load` | Cosy window + cylinder below 40°C |
 
-The curve→flow temp mapping may also drift with VRC 700 firmware or `AdaptHeatCurve` behaviour. The controller should always verify `Hc1ActualFlowTempDesired` matches expectations after a write.
+### Logged (InfluxDB + JSONL)
 
-Eventually (V2b/V2c), we eliminate the curve entirely and set flow temp directly. The thermal model remains the same — only the actuator changes.
+Every decision logs: timestamp, mode, all input values, forecast used, model calculation (target MWT, target flow, required curve), action taken, write results, reason.
+
+## The model
+
+Two formulas connect the real objective to the VRC 700 register:
+
+### 1. Thermal equilibrium: target Leather → required MWT
+
+The calibrated thermal model (`thermal-equilibrium`) solves:
+
+```
+given (outside_temp, target_leather_temp) → required MWT
+```
+
+| Outside °C | Leather target | Required MWT |
+|---|---|---|
+| 0 | 20.5 | ~33 |
+| 5 | 20.5 | ~30 |
+| 10 | 20.5 | ~27 |
+| 13 | 20.5 | ~26 |
+| 15 | 20.5 | ~25 |
+
+Implemented as bisection on the full 13-room equilibrium solver.
+
+### 2. Heat curve formula: required flow → required curve
+
+Reverse-engineered from Vaillant installation manual (p15) + 13 empirical pilot data points (RMSE 0.74°C):
+
+```
+flow_temp = setpoint + curve × (setpoint - outside)^1.27
+curve = (target_flow - setpoint) / (setpoint - outside)^1.27
+```
+
+The flow temp relates to MWT via the system ΔT: `flow = MWT + ΔT/2` where ΔT is tracked from live readings (typically 3–5°C).
+
+### End-to-end
+
+```
+target_leather (20.5°C)
+    → required MWT (equilibrium solver, using forecast outside temp)
+    → required flow (MWT + ΔT/2)
+    → required curve (heat curve formula)
+    → write Hc1HeatCurve
+```
+
+One calculation, not trial and error. At 13°C outside this gives curve ≈ 0.55 — which is the baseline we started with.
+
+## Control strategy
+
+### Daytime (07:00–23:00): maintain comfort
+
+1. Fetch current outside temp and hourly forecast
+2. Calculate required curve from the model for target Leather 20.5°C
+3. If the required curve differs from current by >0.05, write it
+4. Recalculate when:
+   - Outside temp has changed >1°C since last calculation
+   - DHW charge has just finished (HP available again)
+   - Leather has drifted >0.5°C from model prediction (unexpected event)
+   - Minimum 30 minutes between recalculations
+5. Each recalculation produces an **absolute curve value**, not a delta
+
+### Overnight (23:00–07:00): minimise cost, hit target by morning
+
+1. At 23:00, fetch forecast for overnight outside temps (hourly to 07:00)
+2. Using the thermal model, simulate forward:
+   - House starts at current Leather temp
+   - Cooling rate depends on forecast outside temp trajectory
+   - DHW charge at 05:30 steals HP for ~1h (if cylinder needs it)
+   - Heating rate depends on the curve value and forecast outside temp at that hour
+3. Find the **latest heating start time** that achieves Leather ≥ 20°C by 07:00
+4. Until that time: let the house cool freely (curve at minimum / heating off)
+5. At the calculated start time: set the curve for morning recovery using the model (forecast outside temp at that hour → required MWT → required curve)
+6. If HP can't reach 20°C by 07:00 even starting at 23:00 (very cold night): accept the physics, start as early as makes sense, don't waste energy trying to hold an impossible floor
+
+### DHW: simple and independent
+
+1. Is it a Cosy window? (05:30–07:00, 13:00–15:00, 22:00–00:00)
+2. Is the cylinder below 40°C?
+3. If both yes: `HwcSFMode=load`
+4. If no: do nothing
+
+### Predictive planning
+
+The controller doesn't just react to current conditions — it uses the forecast to plan ahead:
+
+| Event | What the controller does |
+|---|---|
+| **DHW charge approaching** | Cylinder below threshold + Cosy window in <30 min → pre-raise curve so Leather enters the charge 0.3°C higher than needed, exits in band |
+| **Outside temp falling** | Forecast shows 5°C drop over next 3h → adjust curve now for the future temp, not current |
+| **Outside temp rising** | Forecast shows warming → reduce curve ahead of overshoot |
+| **Morning DHW interruption** | Factor 1h HP loss into the overnight heating start time calculation |
+| **Solar gain (afternoon)** | Forecast shows high direct radiation → reduce curve before overshoot |
+| **Evening cooling** | Forecast shows overnight drop starting → plan curve to leave Leather at 21°C by 23:00 |
+
+### Unexpected events
+
+When Leather deviates >0.5°C from prediction for >30 minutes:
+- Recalculate from the model using **current measured state**, not the prediction
+- Don't bump the curve by a fixed amount — compute the new absolute target
+- Log the deviation for model calibration
+
+## What V1 taught us
+
+The V1 bang-bang controller (±0.10 every 15 min) proved:
+- eBUS writes work reliably (curve + setpoint accepted by VRC 700)
+- The VRC 700 responds: `Hc1ActualFlowTempDesired` changes within seconds
+- Baseline restore works on shutdown
+- DHW hold logic is correct
+
+But it also showed:
+- Curve ping-ponged 0.55→0.10→1.00 in one overnight cycle
+- 15-minute decisions against a 15-hour time constant = noise
+- No model = no ability to predict or plan
+- Leather rose 1.5°C above band from thermal lag despite aggressive coasting
+
+## Implementation plan
+
+### Phase 1: Core model integration
+
+1. **`src/thermal/control.rs`** — new module:
+   - `target_mwt_for_leather(outside_temp, target_leather, rooms, connections, doorways) → f64`
+   - Bisection on the equilibrium solver (already exists in `display.rs`, extract the solver)
+   - `curve_for_flow(target_flow, setpoint, outside_temp) → f64` (heat curve formula inverse)
+   - `flow_for_curve(curve, setpoint, outside_temp) → f64` (heat curve formula forward)
+
+2. **`src/bin/adaptive-heating-mvp.rs`** — replace V1 occupied-mode logic:
+   - Import thermal model (rooms, connections, doorways from `thermal_geometry.json`)
+   - On each decision: calculate target curve from model instead of ±0.10 bumps
+   - Track `last_outside_temp_at_calc` and `last_leather_prediction` for recalculation triggers
+   - Keep V1 safety logic: DHW hold, defrost hold, missing sensor hold, baseline restore
+
+3. **Weather forecast client** — add to the binary:
+   - Fetch Open-Meteo hourly forecast, cache for 1 hour
+   - Use forecast outside temp (not current) for curve calculation when the difference is >1°C
+   - Log forecast alongside decisions for later validation
+
+### Phase 2: Overnight planner
+
+4. **Forward simulation** — new function in `control.rs`:
+   - `overnight_start_time(current_leather, forecast_temps, dhw_expected, target_leather, target_time) → DateTime`
+   - Simulate cooling using `C × dT/dt = -HLC × (T_room - T_outside)` with hourly forecast temps
+   - Simulate heating using radiator output at the calculated MWT
+   - Account for DHW interruption (1h gap in heating)
+   - Binary search on start time
+
+5. **Overnight mode in the binary**:
+   - At 23:00: run the planner, log the calculated start time
+   - Until start time: set curve to minimum (or Z1OpMode off)
+   - At start time: set curve for recovery
+
+### Phase 3: Predictive DHW compensation
+
+6. **Pre-DHW curve raise**:
+   - 15 min before a predicted DHW charge, raise curve by enough to add ~0.3°C to Leather
+   - After DHW finishes, recalculate and set the normal curve
+
+### What's NOT in V2
+
+- Direct SetModeOverride to HMU (bypass VRC 700) — future V2b
+- Leather door sensor integration — waiting on hardware
+- Aldora as fallback when Leather unavailable — needs proxy band data
+- Per-room occupancy-driven control — needs TRVs
+- Legionella risk monitoring — future
+
+## Safety
+
+- VRC 700 timers remain as safety net (19°C night, 21°C day from 04:00)
+- Baseline restore on shutdown/kill (0.55 curve, 21°C day, 19°C night)
+- If forecast fetch fails: use current outside temp (degrades to V1-like but with model)
+- If equilibrium solver fails: fall back to V1 bang-bang logic
+- If eBUS reads fail: hold, don't write
+- Curve bounds: trust VRC 700 accepted range (0.10–4.00), but log a warning if model requests >1.50 (unusual)
