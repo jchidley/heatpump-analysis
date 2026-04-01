@@ -274,6 +274,19 @@ The HP can't heat and charge DHW simultaneously. A DHW charge takes ~1h (Normal)
 
 The model turns a feedback control problem (measure→react→overshoot→correct) into a feedforward control problem (calculate→set→verify). The thermal model is the feedforward path. Room temperature is the feedback for long-term trim only.
 
+## Weather forecast
+
+Open-Meteo provides free, no-API-key, hourly forecasts including temperature, humidity, and solar radiation. The controller should fetch a 24-hour forecast on each decision cycle (or cache it hourly).
+
+```
+https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London
+```
+
+This is essential for V2, not optional:
+- **Overnight planner** needs to know the 07:00 outside temp to calculate heating start time. Tonight the outside temp drops from 13°C to 6.4°C — without the forecast the controller would set the curve for 13°C and undershoot.
+- **Daytime planning** can anticipate afternoon solar gain and evening cooling.
+- **DHW pre-compensation** can factor in whether the house will cool faster or slower during the charge.
+
 ## Still learning
 
 The V2 approach assumes the equilibrium model is accurate enough to be useful. The pilot data will validate this — if the model says MWT 27°C gives Leather 20.5°C, and reality shows 19.5°C, we calibrate the model.

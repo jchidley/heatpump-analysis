@@ -19,7 +19,7 @@ See [`adaptive-heating-control.md`](adaptive-heating-control.md) for the strateg
 | 🟡 | Overnight optimisation: calculated start time replacing fixed 19°C setback | Next |
 | 🟡 | Predictive DHW planning: pre-compensate before known DHW charges | Next |
 | 🟡 | Outside temp trend tracking: adjust curve ahead of forecast changes | Next |
-| 🔵 | Weather forecast integration (Open-Meteo) for overnight planning | Future |
+| 🟡 | Weather forecast integration (Open-Meteo, free, no API key) | V2 launch |
 | 🔵 | Direct flow temp control via SetModeOverride (bypass VRC 700 curve) | Future |
 | 🔵 | Leather door sensors → disqualify Leather when open | Waiting on hardware |
 | 🔵 | Derive Aldora proxy band from historical data | Future |
