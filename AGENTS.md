@@ -134,7 +134,18 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - **eBUS coverage**: 247 read + 216 write defs for VRC 700, 117 read + 14 passive for HMU, zero decoded for VWZ AI (raw bytes in grab buffer only). ebusd `--enablehex` and `--enabledefine` are on. `grab result all` shows all raw bus traffic including undecoded VWZ AI messages.
 - **eBUS bus hierarchy**: VRC 700 sends SetMode to HMU every ~30s with flow temp demand (D1C encoding). VWZ AI gets separate messages with zeros for flow temp — it’s hydraulic only (valve/pump), not in the flow temp control path. VWZ AI can operate standalone without the VRC 700 (has own heat curve, setpoints, DHW control via its control panel).
 - **Future option**: SetModeOverride to HMU to bypass VRC 700 entirely and set flow temp directly. Message format is decoded. Requires disabling or outpacing the 700's 30-second writes.
-- **Vaillant manuals**: 10 curated PDFs in `C:\Users\jackc\Downloads\Vaillant\`. Key docs: aroTHERM Plus full manual (0020330791), VWZ AI operating + installation (2685948), VRC 700 installation (1968307, has heat curve chart p15), VRC 720 installation (0020287900). Vaillant simulators: VRC 700 `https://simulatorvaillant.com/VRC_700_6/gb/`, sensoCOMFORT `https://simulatorvaillant.com/VRC_720_2/gb/`.
+- **Vaillant manuals**: 10 curated PDFs in `C:\Users\jackc\OneDrive\Library\` (Vaillant filenames start with `arotherm`, `monoblock`, `vrc`, or `0020262548`). Pruned from 16 originals on 1 Apr 2026 — removed duplicates, superseded spec sheets, wrong-model VWZ AI, boiler-only schematics, and marketing fluff. Full inventory:
+  - `arotherm-plus-vwl-35-75-a-s2-installation-operation-manual-0020330791-03-2806789.pdf` — **Main aroTHERM Plus manual** (operating + installation + maintenance). Covers our VWL 55/6 A S2.
+  - `arotherm-plus-installer-quick-guide-2848532.pdf` — Installer quick reference (44 pages, planning + commissioning)
+  - `arotherm-plus-tech-sheet-nov-2024-2965654.pdf` — Spec sheet (latest, Nov 2024)
+  - `arotherm-plus-system-schematics-setup-2831195.pdf` — Top 10 schematics with VRC 700/sensoCOMFORT setup guidance (76 pages)
+  - `system-schematics-for-the-arotherm-plus-2831194.pdf` — Complete schematic collection, all configurations (99 pages)
+  - `monoblock-heat-pump-system-vwz-ai-heat-pump-appliance-interface-2685948.pdf` — **VWZ AI operating + installation**. Documents standalone mode (p22: menu functions without system control). 44 pages.
+  - `0020262548-01vrc7006-wired-thermostat-operating-instructions-2652464.pdf` — VRC 700 user operating guide (party mode, away, boost, eco)
+  - `vrc-700-installation-instructions-1968307.pdf` — **VRC 700 installer guide**. Has heat curve chart (p15) and complete settings table with min/max/defaults (p28–29). 40 pages.
+  - `vrc-700-tech-sheet-apr-20-web-1741263.pdf` — VRC 700 features/specs summary
+  - `vrc-720-gb-0020287900-00-1714662.pdf` — **VRC 720 sensoCOMFORT** operating + installation. Same eBUS address (0x15), drop-in replacement for VRC 700. Up to 5 zones. Has dew point monitoring.
+  - Vaillant simulators: VRC 700 `https://simulatorvaillant.com/VRC_700_6/gb/`, sensoCOMFORT `https://simulatorvaillant.com/VRC_720_2/gb/`.
 - z2m-hub patched to proxy adaptive-heating-mvp mode controls. Phone dashboard at `http://pi5data:3030` has heating mode buttons.
 - `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging

@@ -187,38 +187,62 @@ But it also showed:
 
 ## Implementation plan
 
+### Crate structure issue
+
+The thermal model lives in `src/thermal/` (part of the `heatpump-analysis` binary crate via `src/main.rs`). The adaptive heating controller lives in `src/bin/adaptive-heating-mvp.rs` — a separate binary in the same package. **Binaries in `src/bin/` cannot access `pub(crate)` items from `src/main.rs`.**
+
+Options:
+- **Option A: Pre-computed lookup table.** Run the equilibrium solver offline for a grid of (outside_temp, solar_irradiance) → required_MWT, save as JSON/TOML. The binary loads and interpolates. Zero code sharing needed. Pragmatic for Phase 1.
+- **Option B: Create `src/lib.rs`.** Re-export the thermal model as a library crate. Both binaries import it. Clean but requires restructuring.
+- **Option C: Move the binary into `src/main.rs`** as another subcommand. Simplest sharing but conflates two very different binaries.
+
+Recommendation: **Option A for Phase 1** (ship fast, binary stays standalone), **Option B for Phase 2** (overnight planner needs the full forward simulator, not just a lookup table).
+
 ### Phase 1: Core model integration
 
-1. **`src/thermal/control.rs`** — new module:
-   - `target_mwt_for_leather(outside_temp, target_leather, rooms, connections, doorways) → f64`
-   - Bisection on the equilibrium solver (already exists in `display.rs`, extract the solver)
-   - `curve_for_flow(target_flow, setpoint, outside_temp) → f64` (heat curve formula inverse)
-   - `flow_for_curve(curve, setpoint, outside_temp) → f64` (heat curve formula forward)
+1. **Pre-compute the equilibrium lookup table** — new CLI command:
+   - `cargo run --bin heatpump-analysis -- thermal-control-table --config model/thermal-config.toml`
+   - Runs equilibrium solver across a grid: outside temps -5 to 20°C (1°C steps), solar 0/100/300/500 W/m²
+   - For each point, bisects MWT to find Leather = 20.5°C
+   - Outputs `model/control-table.json`: `[{outside, solar, required_mwt}, ...]`
+   - Re-run when thermal model is recalibrated
 
-2. **`src/bin/adaptive-heating-mvp.rs`** — replace V1 occupied-mode logic:
-   - Import thermal model (rooms, connections, doorways from `thermal_geometry.json`)
-   - On each decision: calculate target curve from model instead of ±0.10 bumps
+2. **Heat curve formula functions** — add to `src/bin/adaptive-heating-mvp.rs`:
+   - `curve_for_flow(target_flow, setpoint, outside_temp) → f64` (inverse formula)
+   - `flow_for_curve(curve, setpoint, outside_temp) → f64` (forward formula)
+   - Exponent constant: 1.27
+
+3. **Weather forecast client** — add to the binary:
+   - Fetch Open-Meteo hourly forecast (temp + solar + humidity), cache for 1 hour
+   - Use forecast outside temp + solar for curve calculation
+   - Log forecast alongside decisions for later validation
+
+4. **Replace V1 occupied-mode logic** in `src/bin/adaptive-heating-mvp.rs`:
+   - Load `model/control-table.json` on startup
+   - On each decision: interpolate required MWT from table using forecast outside temp + solar
+   - Convert MWT → flow → curve using the formula
+   - Apply flow_offset and room_offset corrections
    - Track `last_outside_temp_at_calc` and `last_leather_prediction` for recalculation triggers
    - Keep V1 safety logic: DHW hold, defrost hold, missing sensor hold, baseline restore
 
-3. **Weather forecast client** — add to the binary:
-   - Fetch Open-Meteo hourly forecast, cache for 1 hour
-   - Use forecast outside temp (not current) for curve calculation when the difference is >1°C
-   - Log forecast alongside decisions for later validation
+### Phase 2: Overnight planner (requires Option B — `src/lib.rs`)
 
-### Phase 2: Overnight planner
+5. **Create `src/lib.rs`** — re-export thermal model:
+   - Extract equilibrium solver from `display.rs` into a reusable function
+   - Make `geometry::{build_rooms, build_connections, build_doorways}` and `physics::*` public
+   - Both binaries depend on the library crate
 
-4. **Forward simulation** — new function in `control.rs`:
-   - `overnight_start_time(current_leather, forecast_temps, dhw_expected, target_leather, target_time) → DateTime`
+6. **Forward simulation** — new function:
+   - `overnight_start_time(current_leather, forecast_temps, forecast_solar, dhw_expected, target_leather, target_time) → DateTime`
    - Simulate cooling using `C × dT/dt = -HLC × (T_room - T_outside)` with hourly forecast temps
    - Simulate heating using radiator output at the calculated MWT
    - Account for DHW interruption (1h gap in heating)
    - Binary search on start time
 
-5. **Overnight mode in the binary**:
+7. **Overnight mode in the binary**:
    - At 23:00: run the planner, log the calculated start time
-   - Until start time: set curve to minimum (or Z1OpMode off)
-   - At start time: set curve for recovery
+   - Until start time: let the house cool freely (curve at minimum or Z1OpMode off)
+   - At start time: set curve for recovery using forecast outside temp at that hour
 
 ### Phase 3: Predictive DHW compensation
 
