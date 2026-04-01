@@ -393,7 +393,12 @@ From `ebusd find -f -c hmu` / `ebusd find -f -c 700` on running system:
 ### Bus hierarchy
 
 The VRC 700 is the **scheduling brain** — it decides when to heat and when
-to charge DHW, then sends `SetMode` to the HMU every ~10 seconds:
+to charge DHW, then sends `SetMode` to the HMU every ~30 seconds
+(confirmed from ebusd `grab result all`: 25,700 occurrences over a
+multi-day session). The flow temperature demand goes directly to the
+HMU (0x08), not via the VWZ AI. The VWZ AI (0x76) receives separate
+messages with zeros for the flow temp field — it handles valve/pump
+commands only:
 
 ```
 SetMode QQ=10: auto;28.5;-;-;0;1;1;0;0;0

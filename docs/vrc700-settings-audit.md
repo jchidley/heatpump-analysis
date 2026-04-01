@@ -314,4 +314,4 @@ echo "read -f -c 700 Z1ActualRoomTempDesired" | nc -w3 pi5data 8888
 
 3. **Never use `00:00` as a timer end time.** Use `-:-` for "until end of day". See issue #5 above for the full explanation.
 
-4. **All commands go to the VRC 700 (`-c 700`).** The VRC 700 relays decisions to the VWZ AI and HMU via SetMode every ~10 seconds. Do not write directly to the HMU or VWZ AI — the VRC 700 will overwrite your values within seconds.
+4. **All commands go to the VRC 700 (`-c 700`).** The VRC 700 sends SetMode to the HMU every ~30 seconds (25,700 occurrences in a grab session). The flow temperature demand goes **directly to the HMU** (address 0x08), not via the VWZ AI. The VWZ AI (0x76) receives separate messages with zeros for flow temp — it only handles valve/pump commands, not flow temperature control. Do not write directly to the HMU — the VRC 700 will overwrite within 30 seconds.

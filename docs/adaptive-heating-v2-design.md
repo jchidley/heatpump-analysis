@@ -93,6 +93,8 @@ flow_temp = setpoint + curve × (setpoint - outside)^1.27
 curve = (target_flow - setpoint) / (setpoint - outside)^1.27
 ```
 
+Note: the Vaillant manual chart (p15) implies exponent ~1.10 at setpoint 20°C. Our empirical data at setpoint 21°C fits better at 1.27. The discrepancy is likely the VRC 700's setpoint shift mechanism (the manual shows the curve translates along a 45° axis when setpoint deviates from 20°C). The 1.27 exponent is fitted to our actual system and setpoint — use it, not the chart value.
+
 The flow temp relates to MWT via the system ΔT: `flow = MWT + ΔT/2` where ΔT is tracked from live readings (typically 3–5°C).
 
 ### End-to-end
