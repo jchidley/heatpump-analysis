@@ -20,7 +20,8 @@ mod wind;
 pub use calibration::calibrate;
 pub use diagnostics::fit_diagnostics;
 pub use display::{
-    print_analyse, print_connections, print_equilibrium, print_moisture, print_rooms,
+    generate_control_table, print_analyse, print_connections, print_equilibrium,
+    print_moisture, print_rooms,
 };
 pub use operational::operational_validate;
 pub use snapshot::{snapshot_export, snapshot_import};

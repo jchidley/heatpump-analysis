@@ -1,325 +1,161 @@
 # Adaptive Heating V2 — Model-Predictive Control
 
-Date: 1 April 2026
+Last updated: 1 April 2026
 
 ## Objective
 
-**Leather room at 20–21°C during waking hours (07:00–23:00) at minimum electricity cost, with reliable DHW.**
+Leather room 20–21°C during waking hours (07:00–23:00) at minimum electricity cost, with reliable DHW.
 
-Everything else — overnight temperature, curve value, setpoint, heating start time — is a means to that end, not a goal in itself.
+Constraints: HP maxes out below 6°C outside (accept 19.5–20°C). DHW steals HP for ~1h. Tariff optimisation not worth the complexity. Overnight temp is a free variable.
 
-### Constraints
+## Architecture
 
-- On cold days (<6°C), the 5kW HP cannot reach 21°C. Leather stabilises at 19.5–20°C. The controller must accept this, not fight it.
-- The HP can't heat and charge DHW simultaneously. DHW steals the HP for ~1h.
-- The Tesla Powerwall covers ~95% of non-Cosy usage at effective 14.63p/kWh. Tariff scheduling yields only £15–40/year — not worth adding complexity for.
-- Overnight temperature is irrelevant. Only the morning arrival temperature matters.
+### VRC 700 control
 
-## Inputs
+On startup: `Z1OpMode=night` (value 3). VRC 700 uses `Z1NightTemp` (19°C) permanently. Disables CcTimer, Optimum Start, day/night transitions. Setpoint values are never modified.
 
-### Read every cycle (~1 min sampling, decisions when triggered)
+On shutdown: `Z1OpMode=auto`, `Hc1HeatCurve=0.55`. VRC 700 resumes timer control.
 
-| Input | Source | What it's for |
-|---|---|---|
-| Leather temp | InfluxDB (emonth2) | Primary comfort target |
-| Aldora temp | InfluxDB (Zigbee) | Secondary reference / validation |
-| Outside temp | eBUS `DisplayedOutsideTemp` | Equilibrium + curve calculation |
-| Cylinder temp | eBUS `HwcStorageTemp` | DHW decisions |
-| HP status | eBUS `RunDataStatuscode` | DHW/defrost/heating detection |
-| Flow temp actual | eBUS `RunDataFlowTemp` | Verify curve produced right flow |
-| Return temp actual | eBUS `RunDataReturnTemp` | Track ΔT for MWT calculation |
-| Flow temp desired | eBUS `Hc1ActualFlowTempDesired` | Verify VRC 700 responded to write |
-| Current curve | eBUS `Hc1HeatCurve` | Know state before writing |
-| Power consumption | eBUS `RunDataElectricPowerConsumption` | Logging / COP |
-| Yield power | eBUS `CurrentYieldPower` | Logging / COP |
-| Compressor util | eBUS `CurrentCompressorUtil` | Detect HP at capacity |
+Crash without restore: house at 19°C with last curve. Safe.
 
-### Fetched periodically (cache hourly)
-
-| Input | Source | What it's for |
-|---|---|---|
-| 24h temp forecast | Open-Meteo API | Overnight planning, daytime curve trajectory |
-| 24h solar radiation forecast | Open-Meteo API | Solar gain prediction — the equilibrium solver already takes irradiance per orientation and calculates gain through each room's glazing |
-| 24h humidity forecast | Open-Meteo API | Future: predict defrost frequency (high humidity + low temp = more defrosts = less HP capacity) |
-
-Open-Meteo URL (free, no API key):
-```
-https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London
-```
-
-## Outputs
-
-### Written to VRC 700
-
-| Output | Register | When |
-|---|---|---|
-| Heat curve | `Hc1HeatCurve` | When model calculation produces a different value (>0.05 change) |
-| Day setpoint | `Z1DayTemp` | Normally fixed at 21. Changed for away mode. |
-| Night setpoint | `Z1NightTemp` | Normally fixed at 19 (safety net). Overnight planner may lower. |
-| DHW boost | `HwcSFMode=load` | Cosy window + cylinder below 40°C |
-
-### Logged (InfluxDB + JSONL)
-
-Every decision logs: timestamp, mode, all input values, forecast used, model calculation (target MWT, target flow, required curve), action taken, write results, reason.
-
-## The model
-
-Two formulas connect the real objective to the VRC 700 register:
-
-### 1. Thermal equilibrium: target Leather → required MWT
-
-The calibrated thermal model (`thermal-equilibrium`) solves:
+### Two-loop control
 
 ```
-given (outside_temp, target_leather_temp) → required MWT
+Outer loop (every 15 min):
+    thermal model: (forecast outside, solar) → required MWT → target flow temp
+    initial curve guess via formula: curve = (flow - 19) / (19 - outside)^1.25
+
+Inner loop (every ~1 min):
+    error = target_flow - Hc1ActualFlowTempDesired
+    if |error| > 0.5°C:
+        curve += 0.10 × error      (max step 0.20, clamp 0.10–4.00)
+        write Hc1HeatCurve
 ```
 
-| Outside °C | Leather target | Required MWT |
-|---|---|---|
-| 0 | 20.5 | ~33 |
-| 5 | 20.5 | ~30 |
-| 10 | 20.5 | ~27 |
-| 13 | 20.5 | ~26 |
-| 15 | 20.5 | ~25 |
+The outer loop uses the calibrated thermal physics model. The inner loop treats the VRC 700 as a black box — nudge curve until output matches target. The formula is only the initial guess; the inner loop converges in 2–3 minutes.
 
-Implemented as bisection on the full 13-room equilibrium solver.
+**Why not open-loop formula?** The VRC 700's internal computation is opaque — hidden Optimum Start, `Hc1MinFlowTempDesired`=20°C floor, undocumented offsets. See "Pilot data findings" below.
 
-### 2. Heat curve formula: required flow → required curve
+### Error correction
 
-Reverse-engineered from Vaillant installation manual (p15) + 13 empirical pilot data points (RMSE 0.74°C):
+**Inner loop** replaces the old `flow_offset` EMA — closes directly on `Hc1ActualFlowTempDesired`.
 
-```
-flow_temp = setpoint + curve × (setpoint - outside)^1.25
-curve = (target_flow - setpoint) / (setpoint - outside)^1.25
-```
+**`room_offset`** (outer loop): after 2h+ at stable flow, compare equilibrium model prediction vs actual Leather. EMA α=0.2, clamped ±3°C. Applied: `bisect_mwt_for_room("leather", target - room_offset, ...)`.
 
-Two sources, two exponents:
-- **1.10** — from digitising the Vaillant heat curve chart (VRC 700 installation manual p15). Chart is drawn at setpoint 20°C across the full range (-20°C to +15°C outside).
-- **1.27** — from fitting 13 actual `Hc1ActualFlowTempDesired` readbacks during the V1 pilot. Setpoint 21°C, outside 11–16°C. RMSE 0.74°C.
+### DHW
 
-The discrepancy is likely a combination of: the VRC 700’s setpoint shift mechanism (curve translates along a 45° axis when setpoint ≠ 20°C, shown in the bottom chart on p15), and fitting to a narrow outside temp range.
+Cosy windows (04:00–07:00, 13:00–16:00, 22:00–23:59) + cylinder < 40°C → `HwcSFMode=load`.
 
-With the expanded dataset (17 points from 1 Apr pilot, curves 0.10–1.00, outside 12–16°C), the best-fit exponent is **1.25** (RMSE 0.83°C). A simple linear model `flow = setpoint + curve × 1.69 × (setpoint - outside)` gives RMSE 0.73°C — slightly better. Both under-predict at low curves and over-predict at high curves by up to 1°C. Neither fits well at mild outside temps (15–16°C).
+### Safety
 
-This is exactly what the online error correction is designed for. Use **1.25** as the starting exponent and let the flow_offset absorb the residual. Re-validate when winter data becomes available (outside <5°C).
-
-The flow temp relates to MWT via the system ΔT: `flow = MWT + ΔT/2` where ΔT is tracked from live readings (typically 3–5°C).
-
-### End-to-end
-
-```
-target_leather (20.5°C)
-    → required MWT (equilibrium solver, using forecast outside temp)
-    → required flow (MWT + ΔT/2)
-    → required curve (heat curve formula)
-    → write Hc1HeatCurve
-```
-
-One calculation, not trial and error. At 13°C outside this gives curve ≈ 0.55 — which is the baseline we started with.
-
-## Control strategy
-
-### Daytime (07:00–23:00): maintain comfort
-
-The forecast gives the full daytime outside temp trajectory. The controller uses it to plan the curve profile for the day, not just react to the current temperature.
-
-1. Each hour (or when forecast updates): calculate the required curve for each of the next few hours using the forecast outside temp **and solar radiation** at that hour
-2. Set the curve for the **current hour's forecast conditions** (temp + solar), not the current measured outside temp (unless forecast is unavailable). On a sunny afternoon the equilibrium solver will calculate a lower MWT because solar gain is doing some of the heating.
-3. As the day progresses, the curve naturally follows the forecast trajectory:
-   - Morning: higher curve (cold, house recovering)
-   - Midday: curve reduces as outside warms + solar gain
-   - Evening: curve rises again as outside cools
-4. Recalculate immediately (don't wait for the next hour) when:
-   - DHW charge has just finished (HP available again, Leather has dipped)
-   - Leather has drifted >0.5°C from model prediction (unexpected event — door opened, etc.)
-5. Each calculation produces an **absolute curve value** from the model, not a delta
-6. Only write if the required curve differs from current by >0.05 (avoid pointless eBUS writes)
-
-### Overnight (23:00–07:00): minimise cost, hit target by morning
-
-1. At 23:00, fetch forecast for overnight outside temps (hourly to 07:00)
-2. Using the thermal model, simulate forward:
-   - House starts at current Leather temp
-   - Cooling rate depends on forecast outside temp trajectory
-   - DHW charge at 05:30 steals HP for ~1h (if cylinder needs it)
-   - Heating rate depends on the curve value and forecast outside temp at that hour
-3. Find the **latest heating start time** that achieves Leather ≥ 20°C by 07:00
-4. Until that time: let the house cool freely (curve at minimum / heating off)
-5. At the calculated start time: set the curve for morning recovery using the model (forecast outside temp at that hour → required MWT → required curve)
-6. If HP can't reach 20°C by 07:00 even starting at 23:00 (very cold night): accept the physics, start as early as makes sense, don't waste energy trying to hold an impossible floor
-
-### DHW: simple and independent
-
-1. Is it a Cosy window? (05:30–07:00, 13:00–15:00, 22:00–00:00)
-2. Is the cylinder below 40°C?
-3. If both yes: `HwcSFMode=load`
-4. If no: do nothing
-
-### Predictive planning
-
-The controller doesn't just react to current conditions — it uses the forecast to plan ahead:
-
-| Event | What the controller does |
-|---|---|
-| **DHW charge approaching** | Cylinder below threshold + Cosy window in <30 min → pre-raise curve so Leather enters the charge 0.3°C higher than needed, exits in band |
-| **Outside temp falling** | Forecast shows 5°C drop over next 3h → adjust curve now for the future temp, not current |
-| **Outside temp rising** | Forecast shows warming → reduce curve ahead of overshoot |
-| **Morning DHW interruption** | Factor 1h HP loss into the overnight heating start time calculation |
-| **Solar gain (afternoon)** | Forecast shows high direct radiation → reduce curve before overshoot |
-| **Evening cooling** | Forecast shows overnight drop starting → plan curve to leave Leather at 21°C by 23:00 |
-
-### Unexpected events
-
-When Leather deviates >0.5°C from prediction for >30 minutes:
-- Recalculate from the model using **current measured state**, not the prediction
-- Don't bump the curve by a fixed amount — compute the new absolute target
-- Log the deviation for model calibration
-
-## What V1 taught us
-
-The V1 bang-bang controller (±0.10 every 15 min) proved:
-- eBUS writes work reliably (curve + setpoint accepted by VRC 700)
-- The VRC 700 responds: `Hc1ActualFlowTempDesired` changes within seconds
-- Baseline restore works on shutdown
-- DHW hold logic is correct
-
-But it also showed:
-- Curve ping-ponged 0.55→0.10→1.00 in one overnight cycle
-- 15-minute decisions against a 15-hour time constant = noise
-- No model = no ability to predict or plan
-- Leather rose 1.5°C above band from thermal lag despite aggressive coasting
+- Baseline restore on shutdown: `Z1OpMode=auto`, `Hc1HeatCurve=0.55`
+- Solver fails → hold last target_flow, inner loop maintains it
+- eBUS fails → hold, don't write
+- Inner loop: deadband 0.5°C, max step 0.20, curve 0.10–4.00
+- Warn if curve > 1.50
+- `room_offset` clamped ±3°C
 
 ## Implementation plan
 
-### Crate structure issue
+### Phase 1a: Inner feedback loop + fixed setpoint 🔴 NEXT
 
-The thermal model lives in `src/thermal/` (part of the `heatpump-analysis` binary crate via `src/main.rs`). The adaptive heating controller lives in `src/bin/adaptive-heating-mvp.rs` — a separate binary in the same package. **Binaries in `src/bin/` cannot access `pub(crate)` items from `src/main.rs`.**
+Fix the deployed Phase 1 code. Replace open-loop formula with closed-loop feedback.
 
-Options:
-- **Option A: Pre-computed lookup table.** Run the equilibrium solver offline for a grid of (outside_temp, solar_irradiance) → required_MWT, save as JSON/TOML. The binary loads and interpolates. Zero code sharing needed. Pragmatic for Phase 1.
-- **Option B: Create `src/lib.rs`.** Re-export the thermal model as a library crate. Both binaries import it. Clean but requires restructuring.
-- **Option C: Move the binary into `src/main.rs`** as another subcommand. Simplest sharing but conflates two very different binaries.
+**Config** (`model/adaptive-heating-mvp.toml`):
+- `model.setpoint_c` = **19.0** (was 21.0)
+- Add: `inner_loop_gain = 0.10`, `inner_loop_deadband_c = 0.5`, `inner_loop_max_step = 0.20`
 
-Recommendation: **Option A for Phase 1** (ship fast, binary stays standalone), **Option B for Phase 2** (overnight planner needs the full forward simulator, not just a lookup table).
+**Code** (`src/bin/adaptive-heating-mvp.rs`):
 
-### Phase 1: Core model integration
+1. **Startup**: add `ebusd_write(config, "700", "Z1OpMode", "night")` before control loop.
 
-1. **Pre-compute the equilibrium lookup table** — new CLI command:
-   - `cargo run --bin heatpump-analysis -- thermal-control-table --config model/thermal-config.toml`
-   - Runs equilibrium solver across a grid: outside temps -5 to 20°C (1°C steps), solar 0/100/300/500 W/m²
-   - For each point, bisects MWT to find Leather = 20.5°C
-   - Outputs `model/control-table.json`: `[{outside, solar, required_mwt}, ...]`
-   - Re-run when thermal model is recalibrated
+2. **Add `target_flow_c: Option<f64>`** to shared state between loops.
 
-2. **Heat curve formula functions** — add to `src/bin/adaptive-heating-mvp.rs`:
-   - `curve_for_flow(target_flow, setpoint, outside_temp) → f64` (inverse formula)
-   - `flow_for_curve(curve, setpoint, outside_temp) → f64` (forward formula)
-   - Exponent constant: 1.25
+3. **Split control loop**:
+   - Outer (every 900s): `calculate_required_curve()` sets `target_flow_c` instead of writing curve directly. Provides initial curve guess via formula.
+   - Inner (every 60s): reads `Hc1ActualFlowTempDesired`, adjusts curve proportionally toward `target_flow_c`. Same guards (not DHW, not defrost, not missing sensors).
 
-3. **Weather forecast client** — add to the binary:
-   - Fetch Open-Meteo hourly forecast (temp + solar + humidity), cache for 1 hour
-   - Use forecast outside temp + solar for curve calculation
-   - Log forecast alongside decisions for later validation
+4. **Remove `flow_offset`** from `RuntimeState`, `calculate_required_curve()`, logging.
 
-4. **Replace V1 occupied-mode logic** in `src/bin/adaptive-heating-mvp.rs`:
-   - Load `model/control-table.json` on startup
-   - On each decision: interpolate required MWT from table using forecast outside temp + solar
-   - Convert MWT → flow → curve using the formula
-   - Apply flow_offset and room_offset corrections
-   - Track `last_outside_temp_at_calc` and `last_leather_prediction` for recalculation triggers
-   - Keep V1 safety logic: DHW hold, defrost hold, missing sensor hold, baseline restore
+5. **Fix `curve_stable_since`**: init to `Some(Utc::now())` on startup.
 
-### Phase 2: Overnight planner (requires Option B — `src/lib.rs`)
+6. **Fix `last_leather_prediction_c`**: store `target_leather_c - room_offset` (was storing MWT).
 
-5. **Create `src/lib.rs`** — re-export thermal model:
-   - Extract equilibrium solver from `display.rs` into a reusable function
-   - Make `geometry::{build_rooms, build_connections, build_doorways}` and `physics::*` public
-   - Both binaries depend on the library crate
+7. **Add curve >1.50 warning**.
 
-6. **Forward simulation** — new function:
-   - `overnight_start_time(current_leather, forecast_temps, forecast_solar, dhw_expected, target_leather, target_time) → DateTime`
-   - Simulate cooling using `C × dT/dt = -HLC × (T_room - T_outside)` with hourly forecast temps
-   - Simulate heating using radiator output at the calculated MWT
-   - Account for DHW interruption (1h gap in heating)
-   - Binary search on start time
+8. **Update `restore_baseline()`**: write `Z1OpMode=auto`, `Hc1HeatCurve=0.55`. Remove `Z1DayTemp`, `Z1NightTemp`, `HwcTempDesired` writes.
 
-7. **Overnight mode in the binary**:
-   - At 23:00: run the planner, log the calculated start time
-   - Until start time: let the house cool freely (curve at minimum or Z1OpMode off)
-   - At start time: set curve for recovery using forecast outside temp at that hour
+9. **Update `StatusResponse`**: replace `flow_offset` with `target_flow_c`.
+
+**Deploy**:
+```bash
+scp src/bin/adaptive-heating-mvp.rs pi5data:~/adaptive-heating-mvp/src/main.rs
+scp model/adaptive-heating-mvp.toml pi5data:~/adaptive-heating-mvp/model/
+ssh pi5data "source ~/.cargo/env && cd ~/adaptive-heating-mvp && cargo build --release"
+ssh pi5data "sudo systemctl restart adaptive-heating-mvp"
+curl -s http://pi5data:3031/status | python3 -m json.tool
+```
+
+**Validate**: `Z1OpMode` reads `night`. Inner loop converges within 3 cycles. No `flow_offset` in logs. Kill restores `Z1OpMode=auto`.
+
+### Phase 1b: Library crate + live solver
+
+Eliminate control table. Call equilibrium solver directly from binary.
+
+1. Create `src/lib.rs`, move `pub mod thermal` there. Widen `pub(crate)` → `pub` on: `geometry::{build_rooms, build_connections, build_doorways}`, `physics::{full_room_energy_balance_components, radiator_output, compute_thermal_masses}`, `display::{solve_equilibrium_temps, bisect_mwt_for_room}`, `config::*`, `error::*`.
+
+2. Replace `ControlTable` with `bisect_mwt_for_room("leather", target - room_offset, outside, solar, 0.0)`. Remove `control_table_path` config.
+
+3. Deploy `data/canonical/thermal_geometry.json` + `model/thermal-config.toml` to pi5data. Benchmark solver on ARM (<1s).
+
+4. Add event-driven outer loop: trigger on DHW→heating transition, leather deviation >0.5°C for >15 min.
+
+5. Add HP capacity clamp: if `CurrentCompressorUtil` > 95% for >30 min, stop raising curve.
+
+### Phase 2: Overnight planner (requires 1b)
+
+Forward simulation: `overnight_start_time(current_leather, forecast[], dhw_expected, target, target_time)`. Simulate cooling with thermal mass + hourly forecast, heating with radiator output at calculated MWT. Binary search on latest start time for Leather ≥ 20°C by 07:00. Account for 1h DHW interruption. Replaces fixed `preheat_hours`.
 
 ### Phase 3: Predictive DHW compensation
 
-8. **Pre-DHW curve raise**:
-   - 15 min before a predicted DHW charge, raise curve by enough to add ~0.3°C to Leather
-   - After DHW finishes, recalculate and set the normal curve
+15 min before predicted DHW charge, boost target_flow to pre-raise Leather by ~0.3°C. After DHW finishes, immediate outer-loop recalc.
 
-### What's NOT in V2
+## Pilot data findings
 
-- Direct SetModeOverride to HMU (bypass VRC 700) — future V2b
-- Leather door sensor integration — waiting on hardware
-- Aldora as fallback when Leather unavailable — needs proxy band data
-- Per-room occupancy-driven control — needs TRVs
-- Legionella risk monitoring — future
+70 data points from V1 pilot (31 Mar – 1 Apr 2026), curves 0.10–1.00, outside 10.9–16.4°C.
 
-## Online error correction
+**Exponent**: Best fit 1.25–1.27 (RMSE 0.63°C deduplicated daytime). Vaillant manual says 1.10 — underpredicts by 2.5–3.1°C at curves ≥0.50. Correcting for actual VRC 700 setpoint per hour doesn't change the result.
 
-Both models (thermal equilibrium and heat curve formula) have errors. The controller measures the actual result and corrects for them.
+**Optimum Start**: At 03:00 (3h before 06:00 day timer), `Hc1ActualFlowTempDesired` jumped 21.0→22.3°C with curve at 0.10. VRC 700 silently ramps effective setpoint. No register to disable. `Z1OpMode=night` eliminates it.
 
-### Flow temp error — corrects the heat curve formula
+**VRC 700 is opaque**: Back-solving night data gives effective setpoint ~20°C (neither `Z1NightTemp`=19 nor `Z1DayTemp`=21). Hidden `Hc1MinFlowTempDesired`=20°C floor, undocumented offsets. **Do not model the VRC 700's formula. Treat as black box. Validate thermal model on actual measured flow/return temps only.**
 
-After writing a curve value, read back `Hc1ActualFlowTempDesired`:
+## Key files
 
-```
-predicted_flow = setpoint + curve × (setpoint - outside)^1.27
-actual_flow = Hc1ActualFlowTempDesired (eBUS readback)
-flow_error = actual_flow - predicted_flow
-```
+| File | Purpose |
+|---|---|
+| `src/bin/adaptive-heating-mvp.rs` | Controller source (deployed as `src/main.rs` on pi5data) |
+| `model/adaptive-heating-mvp.toml` | Config |
+| `model/control-table.json` | MWT lookup (Phase 1 only, removed in 1b) |
+| `src/thermal/display.rs` | `solve_equilibrium_temps()`, `bisect_mwt_for_room()` |
+| `src/thermal/physics.rs` | Energy balance, radiator output, thermal mass |
+| `data/canonical/thermal_geometry.json` | Room geometry (needed by solver in Phase 1b) |
+| `deploy/adaptive-heating-mvp.service` | systemd unit |
 
-Maintain a running `flow_offset` (exponential moving average of recent errors). Apply to the next calculation:
+## eBUS quick reference
 
-```
-adjusted_curve = curve_for_flow(target_flow - flow_offset, setpoint, outside)
-```
+Writes to circuit `700`. TCP `localhost:8888` on pi5data.
 
-Corrects for: exponent being wrong at extreme temps, VRC 700 internal adjustments, `AdaptHeatCurve` interference, seasonal drift.
-
-### Room temp error — corrects the thermal model
-
-After sufficient time at a stable curve (>2 hours, no DHW, no large outside temp change), compare predicted Leather to measured:
-
-```
-predicted_leather = equilibrium_solver(outside_temp, current_mwt)
-actual_leather = sensor reading
-room_error = actual_leather - predicted_leather
-```
-
-Maintain a running `room_offset`. Apply to the next target MWT calculation:
-
-```
-adjusted_mwt = target_mwt_for_leather(outside, target_leather - room_offset)
-```
-
-Corrects for: ventilation rate changes, inter-room transfer assumptions, thermal mass inaccuracies, radiator output vs model.
-
-### Both offsets are logged
-
-Every decision logs predicted vs actual values and current offsets. This builds a dataset for offline recalibration of the underlying models.
-
-### Why this is stable
-
-The feedforward model gets us close (within 1–2°C). The error correction trims the systematic bias. Because we’re correcting the model’s prediction rather than bumping the curve by a fixed amount, the corrections are proportional and bounded — no ping-pong.
-
-## Future: direct flow temp control
-
-Eventually (V2b/V2c), we eliminate the curve entirely and set flow temp directly via SetModeOverride to the HMU. The thermal model and room temp error correction remain the same — only the actuator changes. The flow temp error correction becomes unnecessary (we write flow temp directly), but the room temp correction still applies.
-
-## Safety
-
-- VRC 700 timers remain as safety net (19°C night, 21°C day from 04:00)
-- Baseline restore on shutdown/kill (0.55 curve, 21°C day, 19°C night)
-- If forecast fetch fails: use current outside temp (degrades gracefully, model still works)
-- If equilibrium solver fails: fall back to V1 bang-bang logic
-- If eBUS reads fail: hold, don't write
-- Curve bounds: trust VRC 700 accepted range (0.10–4.00), but log a warning if model requests >1.50 (unusual)
-- Error offsets clamped to ±3°C — if the correction is larger, the model is fundamentally wrong and needs offline recalibration, not runtime patching
+| Register | R/W | Notes |
+|---|---|---|
+| `Z1OpMode` | RW | 0=off, 1=auto, 2=day, **3=night** |
+| `Hc1HeatCurve` | RW | 0.10–4.00 |
+| `Hc1ActualFlowTempDesired` | R | **Inner loop feedback** |
+| `DisplayedOutsideTemp` | R | Filtered outside temp |
+| `HwcStorageTemp` | R | Cylinder NTC |
+| `HwcSFMode` | RW | auto / load |
+| `RunDataStatuscode` | R (hmu) | HP state (Heating/Warm_Water/Standby/etc) |
+| `RunDataFlowTemp` | R (hmu) | Actual flow |
+| `RunDataReturnTemp` | R (hmu) | Actual return |
+| `CurrentCompressorUtil` | R (hmu) | HP load % |
+| `Hc1MinFlowTempDesired` | RW | Currently 20°C (VRC 700 floor) |

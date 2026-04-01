@@ -1,0 +1,522 @@
+[
+  {
+    "outside_c": -5.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 31.63330078125
+  },
+  {
+    "outside_c": -5.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 31.54541015625
+  },
+  {
+    "outside_c": -5.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 31.32568359375
+  },
+  {
+    "outside_c": -5.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 31.10595703125
+  },
+  {
+    "outside_c": -4.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 31.41357421875
+  },
+  {
+    "outside_c": -4.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 31.28173828125
+  },
+  {
+    "outside_c": -4.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 31.06201171875
+  },
+  {
+    "outside_c": -4.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 30.84228515625
+  },
+  {
+    "outside_c": -3.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 31.14990234375
+  },
+  {
+    "outside_c": -3.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 31.06201171875
+  },
+  {
+    "outside_c": -3.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 30.84228515625
+  },
+  {
+    "outside_c": -3.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 30.57861328125
+  },
+  {
+    "outside_c": -2.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 30.93017578125
+  },
+  {
+    "outside_c": -2.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 30.79833984375
+  },
+  {
+    "outside_c": -2.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 30.57861328125
+  },
+  {
+    "outside_c": -2.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 30.35888671875
+  },
+  {
+    "outside_c": -1.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 30.66650390625
+  },
+  {
+    "outside_c": -1.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 30.53466796875
+  },
+  {
+    "outside_c": -1.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 30.31494140625
+  },
+  {
+    "outside_c": -1.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 30.09521484375
+  },
+  {
+    "outside_c": 0.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 30.40283203125
+  },
+  {
+    "outside_c": 0.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 30.31494140625
+  },
+  {
+    "outside_c": 0.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 30.05126953125
+  },
+  {
+    "outside_c": 0.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 29.83154296875
+  },
+  {
+    "outside_c": 1.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 30.18310546875
+  },
+  {
+    "outside_c": 1.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 30.05126953125
+  },
+  {
+    "outside_c": 1.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 29.78759765625
+  },
+  {
+    "outside_c": 1.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 29.56787109375
+  },
+  {
+    "outside_c": 2.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 29.91943359375
+  },
+  {
+    "outside_c": 2.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 29.78759765625
+  },
+  {
+    "outside_c": 2.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 29.52392578125
+  },
+  {
+    "outside_c": 2.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 29.30419921875
+  },
+  {
+    "outside_c": 3.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 29.65576171875
+  },
+  {
+    "outside_c": 3.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 29.52392578125
+  },
+  {
+    "outside_c": 3.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 29.26025390625
+  },
+  {
+    "outside_c": 3.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 29.04052734375
+  },
+  {
+    "outside_c": 4.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 29.39208984375
+  },
+  {
+    "outside_c": 4.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 29.26025390625
+  },
+  {
+    "outside_c": 4.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 28.99658203125
+  },
+  {
+    "outside_c": 4.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 28.77685546875
+  },
+  {
+    "outside_c": 5.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 29.12841796875
+  },
+  {
+    "outside_c": 5.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 28.99658203125
+  },
+  {
+    "outside_c": 5.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 28.73291015625
+  },
+  {
+    "outside_c": 5.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 28.46923828125
+  },
+  {
+    "outside_c": 6.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 28.82080078125
+  },
+  {
+    "outside_c": 6.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 28.73291015625
+  },
+  {
+    "outside_c": 6.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 28.46923828125
+  },
+  {
+    "outside_c": 6.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 28.20556640625
+  },
+  {
+    "outside_c": 7.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 28.55712890625
+  },
+  {
+    "outside_c": 7.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 28.42529296875
+  },
+  {
+    "outside_c": 7.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 28.16162109375
+  },
+  {
+    "outside_c": 7.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 27.89794921875
+  },
+  {
+    "outside_c": 8.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 28.29345703125
+  },
+  {
+    "outside_c": 8.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 28.16162109375
+  },
+  {
+    "outside_c": 8.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 27.89794921875
+  },
+  {
+    "outside_c": 8.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 27.59033203125
+  },
+  {
+    "outside_c": 9.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 27.98583984375
+  },
+  {
+    "outside_c": 9.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 27.85400390625
+  },
+  {
+    "outside_c": 9.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 27.59033203125
+  },
+  {
+    "outside_c": 9.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 27.28271484375
+  },
+  {
+    "outside_c": 10.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 27.67822265625
+  },
+  {
+    "outside_c": 10.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 27.54638671875
+  },
+  {
+    "outside_c": 10.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 27.28271484375
+  },
+  {
+    "outside_c": 10.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 26.97509765625
+  },
+  {
+    "outside_c": 11.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 27.41455078125
+  },
+  {
+    "outside_c": 11.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 27.23876953125
+  },
+  {
+    "outside_c": 11.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 26.97509765625
+  },
+  {
+    "outside_c": 11.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 26.66748046875
+  },
+  {
+    "outside_c": 12.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 27.10693359375
+  },
+  {
+    "outside_c": 12.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 26.93115234375
+  },
+  {
+    "outside_c": 12.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 26.62353515625
+  },
+  {
+    "outside_c": 12.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 26.35986328125
+  },
+  {
+    "outside_c": 13.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 26.75537109375
+  },
+  {
+    "outside_c": 13.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 26.62353515625
+  },
+  {
+    "outside_c": 13.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 26.31591796875
+  },
+  {
+    "outside_c": 13.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 26.00830078125
+  },
+  {
+    "outside_c": 14.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 26.44775390625
+  },
+  {
+    "outside_c": 14.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 26.27197265625
+  },
+  {
+    "outside_c": 14.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 25.96435546875
+  },
+  {
+    "outside_c": 14.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 25.70068359375
+  },
+  {
+    "outside_c": 15.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 26.09619140625
+  },
+  {
+    "outside_c": 15.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 25.92041015625
+  },
+  {
+    "outside_c": 15.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 25.61279296875
+  },
+  {
+    "outside_c": 15.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 25.34912109375
+  },
+  {
+    "outside_c": 16.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 25.74462890625
+  },
+  {
+    "outside_c": 16.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 25.56884765625
+  },
+  {
+    "outside_c": 16.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 25.26123046875
+  },
+  {
+    "outside_c": 16.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 24.99755859375
+  },
+  {
+    "outside_c": 17.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 25.39306640625
+  },
+  {
+    "outside_c": 17.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 25.21728515625
+  },
+  {
+    "outside_c": 17.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 24.90966796875
+  },
+  {
+    "outside_c": 17.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 24.60205078125
+  },
+  {
+    "outside_c": 18.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 25.04150390625
+  },
+  {
+    "outside_c": 18.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 24.86572265625
+  },
+  {
+    "outside_c": 18.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 24.55810546875
+  },
+  {
+    "outside_c": 18.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 24.25048828125
+  },
+  {
+    "outside_c": 19.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 24.64599609375
+  },
+  {
+    "outside_c": 19.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 24.51416015625
+  },
+  {
+    "outside_c": 19.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 24.16259765625
+  },
+  {
+    "outside_c": 19.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 23.85498046875
+  },
+  {
+    "outside_c": 20.0,
+    "solar_w_m2": 0.0,
+    "required_mwt": 24.29443359375
+  },
+  {
+    "outside_c": 20.0,
+    "solar_w_m2": 100.0,
+    "required_mwt": 24.11865234375
+  },
+  {
+    "outside_c": 20.0,
+    "solar_w_m2": 300.0,
+    "required_mwt": 23.76708984375
+  },
+  {
+    "outside_c": 20.0,
+    "solar_w_m2": 500.0,
+    "required_mwt": 23.45947265625
+  }
+]

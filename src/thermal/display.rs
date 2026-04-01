@@ -301,6 +301,153 @@ fn query_latest_ebusd(
     rows.last()?.get("_value")?.parse().ok()
 }
 
+/// Pure equilibrium solver: returns a map of room name → equilibrium temperature.
+///
+/// No I/O, no printing — suitable for programmatic use (e.g. control table generation).
+pub fn solve_equilibrium_temps(
+    outside_temp: f64,
+    mwt: f64,
+    irr_sw: f64,
+    irr_ne: f64,
+) -> ThermalResult<std::collections::BTreeMap<String, f64>> {
+    let rooms = build_rooms()?;
+    let connections = build_connections()?;
+    let doorways = build_doorways()?;
+    let doorway_cd = 0.20;
+    let wind_multiplier = 1.0;
+    let sleeping = false;
+    let ne_horiz = 0.0;
+
+    let room_names: Vec<String> = rooms.keys().cloned().collect();
+    let mut temps: HashMap<String, f64> = room_names.iter().map(|n| (n.clone(), 19.0)).collect();
+
+    let max_iter = 200;
+    let tol = 1e-4;
+    for _iter in 0..max_iter {
+        let mut max_change: f64 = 0.0;
+        for name in &room_names {
+            let room = &rooms[name];
+            let mut lo = -10.0_f64;
+            let mut hi = 50.0_f64;
+            for _ in 0..100 {
+                let mid = (lo + hi) / 2.0;
+                temps.insert(name.clone(), mid);
+                let bal = full_room_energy_balance_components(
+                    room, mid, outside_temp, &temps, &connections, &doorways,
+                    doorway_cd, wind_multiplier, mwt, sleeping, irr_sw, irr_ne, ne_horiz,
+                );
+                if bal.total > 0.0 { lo = mid; } else { hi = mid; }
+                if (hi - lo) < tol * 0.01 { break; }
+            }
+            let new_t = (lo + hi) / 2.0;
+            let old_t = temps.insert(name.clone(), new_t).unwrap_or(new_t);
+            max_change = max_change.max((new_t - old_t).abs());
+        }
+        if max_change < tol { break; }
+    }
+
+    Ok(temps.into_iter().collect())
+}
+
+/// Bisect MWT to find the value that produces a target room temperature.
+///
+/// Returns `None` if not achievable in range 15..60°C.
+pub fn bisect_mwt_for_room(
+    room_name: &str,
+    target_temp: f64,
+    outside_temp: f64,
+    irr_sw: f64,
+    irr_ne: f64,
+) -> ThermalResult<Option<f64>> {
+    let mut lo = 15.0_f64;
+    let mut hi = 60.0_f64;
+
+    // Check if target is achievable at all
+    let temps_at_hi = solve_equilibrium_temps(outside_temp, hi, irr_sw, irr_ne)?;
+    if let Some(&t) = temps_at_hi.get(room_name) {
+        if t < target_temp {
+            return Ok(None); // can't reach target even at max MWT
+        }
+    } else {
+        return Ok(None);
+    }
+
+    // Check if target is already met with no heating
+    let temps_at_lo = solve_equilibrium_temps(outside_temp, lo, irr_sw, irr_ne)?;
+    if let Some(&t) = temps_at_lo.get(room_name) {
+        if t >= target_temp {
+            return Ok(Some(lo)); // already warm enough
+        }
+    }
+
+    for _ in 0..50 {
+        let mid = (lo + hi) / 2.0;
+        let temps = solve_equilibrium_temps(outside_temp, mid, irr_sw, irr_ne)?;
+        if let Some(&t) = temps.get(room_name) {
+            if t < target_temp {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        } else {
+            return Ok(None);
+        }
+        if (hi - lo) < 0.05 { break; }
+    }
+    Ok(Some((lo + hi) / 2.0))
+}
+
+/// Generate a control lookup table for the adaptive heating controller.
+///
+/// Grid: outside temps from -5 to 20°C (1°C steps), solar 0/100/300/500 W/m².
+/// For each point, bisects MWT to find Leather = 20.5°C.
+pub fn generate_control_table(
+    config_path: &Path,
+) -> ThermalResult<()> {
+    let _ = load_thermal_config(config_path)?; // validate config exists
+
+    let target_leather = 20.5;
+    let outside_range: Vec<i32> = (-5..=20).collect();
+    let solar_levels = [0.0, 100.0, 300.0, 500.0];
+
+    #[derive(serde::Serialize)]
+    struct ControlPoint {
+        outside_c: f64,
+        solar_w_m2: f64,
+        required_mwt: Option<f64>,
+    }
+
+    let mut table = Vec::new();
+    for &outside in &outside_range {
+        for &solar in &solar_levels {
+            let mwt = bisect_mwt_for_room(
+                "leather", target_leather, outside as f64, solar, 0.0,
+            )?;
+            table.push(ControlPoint {
+                outside_c: outside as f64,
+                solar_w_m2: solar,
+                required_mwt: mwt,
+            });
+            let mwt_str = mwt.map(|v| format!("{:.1}", v)).unwrap_or("N/A".to_string());
+            println!(
+                "outside={:>3}°C  solar={:>3}W/m²  → MWT={}",
+                outside, solar as i32, mwt_str
+            );
+        }
+    }
+
+    let out_path = config_path.parent().unwrap_or(Path::new(".")).join("control-table.json");
+    let json = serde_json::to_string_pretty(&table)
+        .map_err(|e| super::error::ThermalError::ArtifactSerialize(e))?;
+    std::fs::write(&out_path, &json)
+        .map_err(|e| super::error::ThermalError::ArtifactWrite {
+            path: out_path.display().to_string(),
+            source: e,
+        })?;
+    println!("\nWritten to {}", out_path.display());
+    Ok(())
+}
+
 /// Solve for equilibrium room temperatures at given outside temp and MWT.
 ///
 /// Uses Gauss-Seidel iteration with bisection per room: for each room in turn,

@@ -160,6 +160,12 @@ enum Commands {
         #[arg(long, default_value = "0")]
         solar_ne: f64,
     },
+    /// Generate control lookup table for adaptive heating controller
+    ThermalControlTable {
+        /// Path to thermal calibration config TOML
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+    },
     /// Calibrate thermal model parameters from InfluxDB using fixed test windows
     ThermalCalibrate {
         /// Path to thermal calibration config TOML
@@ -564,6 +570,10 @@ fn main() -> Result<()> {
                 solar_sw,
                 solar_ne,
             )?;
+        }
+
+        Commands::ThermalControlTable { ref config } => {
+            thermal::generate_control_table(std::path::Path::new(config))?;
         }
 
         Commands::ThermalCalibrate { ref config } => {
