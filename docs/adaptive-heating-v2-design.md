@@ -89,15 +89,19 @@ Implemented as bisection on the full 13-room equilibrium solver.
 Reverse-engineered from Vaillant installation manual (p15) + 13 empirical pilot data points (RMSE 0.74°C):
 
 ```
-flow_temp = setpoint + curve × (setpoint - outside)^1.27
-curve = (target_flow - setpoint) / (setpoint - outside)^1.27
+flow_temp = setpoint + curve × (setpoint - outside)^1.25
+curve = (target_flow - setpoint) / (setpoint - outside)^1.25
 ```
 
 Two sources, two exponents:
 - **1.10** — from digitising the Vaillant heat curve chart (VRC 700 installation manual p15). Chart is drawn at setpoint 20°C across the full range (-20°C to +15°C outside).
 - **1.27** — from fitting 13 actual `Hc1ActualFlowTempDesired` readbacks during the V1 pilot. Setpoint 21°C, outside 11–16°C. RMSE 0.74°C.
 
-The discrepancy is likely a combination of: the VRC 700’s setpoint shift mechanism (curve translates along a 45° axis when setpoint ≠ 20°C, shown in the bottom chart on p15), and fitting to a narrow outside temp range. Use **1.27** — it’s what our VRC 700 actually produces at our setpoint in our operating range. Re-validate if operating at outside temps significantly below 10°C.
+The discrepancy is likely a combination of: the VRC 700’s setpoint shift mechanism (curve translates along a 45° axis when setpoint ≠ 20°C, shown in the bottom chart on p15), and fitting to a narrow outside temp range.
+
+With the expanded dataset (17 points from 1 Apr pilot, curves 0.10–1.00, outside 12–16°C), the best-fit exponent is **1.25** (RMSE 0.83°C). A simple linear model `flow = setpoint + curve × 1.69 × (setpoint - outside)` gives RMSE 0.73°C — slightly better. Both under-predict at low curves and over-predict at high curves by up to 1°C. Neither fits well at mild outside temps (15–16°C).
+
+This is exactly what the online error correction is designed for. Use **1.25** as the starting exponent and let the flow_offset absorb the residual. Re-validate when winter data becomes available (outside <5°C).
 
 The flow temp relates to MWT via the system ΔT: `flow = MWT + ΔT/2` where ΔT is tracked from live readings (typically 3–5°C).
 
@@ -210,7 +214,7 @@ Recommendation: **Option A for Phase 1** (ship fast, binary stays standalone), *
 2. **Heat curve formula functions** — add to `src/bin/adaptive-heating-mvp.rs`:
    - `curve_for_flow(target_flow, setpoint, outside_temp) → f64` (inverse formula)
    - `flow_for_curve(curve, setpoint, outside_temp) → f64` (forward formula)
-   - Exponent constant: 1.27
+   - Exponent constant: 1.25
 
 3. **Weather forecast client** — add to the binary:
    - Fetch Open-Meteo hourly forecast (temp + solar + humidity), cache for 1 hour
