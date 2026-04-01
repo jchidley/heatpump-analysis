@@ -386,7 +386,7 @@ These are intentionally not complete yet:
 - Leather door-sensor integration
 - Aldora-driven fallback control
 - richer downstream eBUS `SetMode` capture and decoding
-- forecast-aware control
+- forecast-aware control (promoted to V2 core — Open-Meteo 24h temp + solar + humidity, free, no API key)
 - occupancy sensor weighting
 - DHW hygiene / legionella risk monitor
 - more advanced DHW strategy by outside temperature / turnover history

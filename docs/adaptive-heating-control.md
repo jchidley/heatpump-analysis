@@ -24,8 +24,9 @@ The real control objective is not a fixed temperature band. It is: **Leather at 
 | Input | Source | Update rate |
 |---|---|---|
 | Outside temperature | eBUS `Broadcast/Outsidetemp` | 30s |
-| Outside humidity | Open-Meteo API | 1h |
-| Weather forecast (next 12h) | Open-Meteo API | 1h |
+| Outside humidity | Open-Meteo API (hourly forecast) | 1h |
+| 24h temperature forecast | Open-Meteo API | 1h |
+| 24h solar radiation forecast | Open-Meteo API | 1h |
 | Room temperatures (13 rooms) | Zigbee SNZB-02P + emonth2 | ~5 min |
 | Room humidity (12 rooms) | Zigbee SNZB-02P | ~5 min |
 | Door states | Zigbee door sensors (future; Leather first) | instant |
@@ -229,7 +230,7 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 │  Inputs:                                                     │
 │    eBUS (TCP :8888) → outside temp, HP state, compressor     │
 │    MQTT (Mosquitto) → room temps, door sensors, motion       │
-│    Open-Meteo      → weather forecast, humidity              │
+│    Open-Meteo      → 24h forecast: temp, solar, humidity    │
 │    Config/API      → away schedule, tariff periods           │
 │    DHW history      → turnover, hygiene-risk monitor         │
 │                                                              │
@@ -301,11 +302,11 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 The real objective is **Leather at 20–21°C by 07:00 and throughout waking hours, at minimum cost**. The overnight temperature is not a target — it’s a free variable the controller uses to minimise cost.
 
 The controller calculates:
-- **Overnight**: given forecast, thermal model, and the morning DHW charge that will steal the HP at ~05:30, what’s the latest heating start time that achieves 20°C in Leather by 07:00? Let the house cool freely until then.
-- **Daytime**: given current outside temp, what curve value gives the right flow temp for Leather 20.5°C? Recalculate when outside temp changes >1°C, after DHW finishes, or if Leather drifts >0.5°C from prediction.
+- **Overnight**: given forecast (temperature + solar), thermal model, and the morning DHW charge that will steal the HP at ~05:30, what’s the latest heating start time that achieves 20°C in Leather by 07:00? Let the house cool freely until then.
+- **Daytime**: the controller follows the hourly forecast trajectory (temperature + solar radiation), calculating the required curve for each hour. On a sunny afternoon the equilibrium solver calculates a lower MWT because solar gain through the conservatory and south-facing windows does some of the heating. The curve profile naturally rises in the morning, falls through midday, and rises again in the evening.
 - **DHW**: charge only during Cosy windows (05:30–07:00, 13:00–15:00, 22:00–00:00), only when cylinder is below trigger threshold. Independent of heating strategy.
 
-Predictable events (DHW charges, outside temp trends, solar gain) are planned for in advance, not reacted to after the fact. See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md) for the full V2 control design.
+Predictable events (DHW charges, outside temp trends, solar gain) are planned for in advance using the forecast, not reacted to after the fact. See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md) for the full V2 control design.
 
 The VRC 700 timer stays programmed as a safety net (`Z1NightTemp = 19°C`, day mode from 04:00). If the controller stops, baseline restore sets known-good values.
 

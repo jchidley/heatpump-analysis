@@ -18,8 +18,7 @@ See [`adaptive-heating-control.md`](adaptive-heating-control.md) for the strateg
 | 🟡 | V2 implementation: `target_mwt_for_leather()` + curve lookup in controller | Next |
 | 🟡 | Overnight optimisation: calculated start time replacing fixed 19°C setback | Next |
 | 🟡 | Predictive DHW planning: pre-compensate before known DHW charges | Next |
-| 🟡 | Outside temp trend tracking: adjust curve ahead of forecast changes | Next |
-| 🟡 | Weather forecast integration (Open-Meteo, free, no API key) | V2 launch |
+| 🟡 | Open-Meteo forecast (24h temp + solar + humidity): drives daytime curve trajectory and overnight planner | V2 core |
 | 🔵 | Direct flow temp control via SetModeOverride (bypass VRC 700 curve) | Future |
 | 🔵 | Leather door sensors → disqualify Leather when open | Waiting on hardware |
 | 🔵 | Derive Aldora proxy band from historical data | Future |
@@ -94,6 +93,6 @@ See [rust-migration-plan.md](rust-migration-plan.md) for the full plan.
 - **Defrost analysis** — dedicated report on defrost frequency, duration, energy cost vs outside temp/humidity
 - **Multi-period comparison** — "this January vs last January" with degree-day normalisation
 - **Alerting** — detect COP degradation, unusual cycling, sensor drift
-- **Weather forecast correlation** — predict next-day heating demand from Met Office forecast
+- **Weather forecast correlation** — predict next-day heating demand from forecast (largely addressed by V2 Open-Meteo integration)
 - **Leather door sensors** — Zigbee contact sensors on Leather room doors, feed into adaptive controller
 - **Aldora radiator upgrade** — reuse existing 909W DP DF, currently deferred (see Physical Improvements above)
