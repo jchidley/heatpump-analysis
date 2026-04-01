@@ -119,33 +119,25 @@ This is observable — we read both flow and return from the HMU. The controller
 
 V2a is the safe first step. V2b/c are future options.
 
-### Wait time — respecting thermal lag
+### When to recalculate
 
-Leather's time constant is ~15 hours. The 1-sigma response time (63% of the way to equilibrium) is 15 hours. But we don't need to wait for full equilibrium — we need to wait long enough to see the **direction** of change.
+Leather's time constant is ~15 hours. The V1 mistake was reacting every 15 minutes to a system that takes hours to respond. But "set once, wait hours" is also wrong — daytime conditions change: outside temp swings, solar gain, DHW charges steal the HP, doors open.
 
-Practical wait time: **1–2 hours minimum** between MWT adjustments.
+The controller should **recalculate from the model** (not bump by a fixed delta) when:
 
-The controller should:
-- Set the target MWT
-- Log the expected equilibrium Leather temp from the model
-- Wait at least 60 minutes
-- Re-read Leather
-- If Leather is moving in the right direction (towards target), hold
-- If Leather is moving the wrong way or not moving, check whether the MWT is being achieved (flow temp correct?) before adjusting MWT further
+- **Outside temp has changed >1°C** since last calculation — the target flow temp needs updating
+- **DHW charge has just finished** — HP is available again, Leather has dipped, recalculate whether the current curve is still right
+- **Leather has drifted >0.5°C from model prediction** — something unexpected happened (door opened, solar gain, occupancy change). Recalculate, don't blindly bump.
+- **Minimum 30 minutes between recalculations** — anything faster is noise given the thermal time constant
 
-### Edge cases
+Each recalculation produces an **absolute curve value** from the model, not a delta from the previous one. If the model says curve 0.55 is right and it's already at 0.55, do nothing.
 
-**Rapid disturbance (door opened, solar gain, occupancy change):**
-The model predicts equilibrium. Short-term disturbances shouldn't trigger MWT changes. The controller should filter out transients — e.g., require Leather to be outside the band for 30+ minutes before acting.
+### What NOT to react to
 
-**DHW interruption:**
-When the HP switches to DHW, the radiators cool. Leather will drift down during a long DHW charge. The controller should not react to this — it knows DHW is active and the heating will resume. The model can predict how much Leather will drop during a typical DHW charge.
-
-**Defrost:**
-Similar to DHW — temporary interruption, don't react.
-
-**Outside temperature changing:**
-Recalculate target MWT when outside temp changes significantly (>1°C). The model handles this naturally.
+- **DHW-induced cooling** — Leather drops ~0.2–0.5°C during a DHW charge. Don't adjust the curve. Wait for DHW to finish, then recalculate if needed.
+- **Defrost** — temporary HP interruption, same as DHW. Hold.
+- **Short transients** — someone opens a door, Leather dips for 20 minutes then recovers. Don't react unless the drift persists past the 0.5°C / 30-minute threshold.
+- **Compressor cycling** — the VRC 700 cycles the compressor on/off as part of normal operation. The controller should not interpret blocked/shutdown as a problem.
 
 ## Implementation sketch
 
