@@ -234,11 +234,64 @@ But it also showed:
 - Per-room occupancy-driven control — needs TRVs
 - Legionella risk monitoring — future
 
+## Online error correction
+
+Both models (thermal equilibrium and heat curve formula) have errors. The controller measures the actual result and corrects for them.
+
+### Flow temp error — corrects the heat curve formula
+
+After writing a curve value, read back `Hc1ActualFlowTempDesired`:
+
+```
+predicted_flow = setpoint + curve × (setpoint - outside)^1.27
+actual_flow = Hc1ActualFlowTempDesired (eBUS readback)
+flow_error = actual_flow - predicted_flow
+```
+
+Maintain a running `flow_offset` (exponential moving average of recent errors). Apply to the next calculation:
+
+```
+adjusted_curve = curve_for_flow(target_flow - flow_offset, setpoint, outside)
+```
+
+Corrects for: exponent being wrong at extreme temps, VRC 700 internal adjustments, `AdaptHeatCurve` interference, seasonal drift.
+
+### Room temp error — corrects the thermal model
+
+After sufficient time at a stable curve (>2 hours, no DHW, no large outside temp change), compare predicted Leather to measured:
+
+```
+predicted_leather = equilibrium_solver(outside_temp, current_mwt)
+actual_leather = sensor reading
+room_error = actual_leather - predicted_leather
+```
+
+Maintain a running `room_offset`. Apply to the next target MWT calculation:
+
+```
+adjusted_mwt = target_mwt_for_leather(outside, target_leather - room_offset)
+```
+
+Corrects for: ventilation rate changes, inter-room transfer assumptions, thermal mass inaccuracies, radiator output vs model.
+
+### Both offsets are logged
+
+Every decision logs predicted vs actual values and current offsets. This builds a dataset for offline recalibration of the underlying models.
+
+### Why this is stable
+
+The feedforward model gets us close (within 1–2°C). The error correction trims the systematic bias. Because we’re correcting the model’s prediction rather than bumping the curve by a fixed amount, the corrections are proportional and bounded — no ping-pong.
+
+## Future: direct flow temp control
+
+Eventually (V2b/V2c), we eliminate the curve entirely and set flow temp directly via SetModeOverride to the HMU. The thermal model and room temp error correction remain the same — only the actuator changes. The flow temp error correction becomes unnecessary (we write flow temp directly), but the room temp correction still applies.
+
 ## Safety
 
 - VRC 700 timers remain as safety net (19°C night, 21°C day from 04:00)
 - Baseline restore on shutdown/kill (0.55 curve, 21°C day, 19°C night)
-- If forecast fetch fails: use current outside temp (degrades to V1-like but with model)
+- If forecast fetch fails: use current outside temp (degrades gracefully, model still works)
 - If equilibrium solver fails: fall back to V1 bang-bang logic
 - If eBUS reads fail: hold, don't write
 - Curve bounds: trust VRC 700 accepted range (0.10–4.00), but log a warning if model requests >1.50 (unusual)
+- Error offsets clamped to ±3°C — if the correction is larger, the model is fundamentally wrong and needs offline recalibration, not runtime patching
