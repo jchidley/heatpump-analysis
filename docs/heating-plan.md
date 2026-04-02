@@ -173,26 +173,19 @@ cargo run --bin heatpump-analysis -- heating-history \
   --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z --human
 ```
 
-`heating-history` is the first-pass fused reproduction command for this plan. It combines room temperatures, eBUS plant data, and adaptive controller decision history into one structured output.
+`heating-history` is the fused historical command for this plan.
 
-It currently reports:
-- time window
-- Leather / Aldora min-max-latest
-- outside min-max-latest
-- heat curve min-max-latest
-- target flow min-max-latest
-- actual desired flow min-max-latest
-- actual flow / return min-max-latest
-- controller mode changes and controller events
-- DHW overlap periods
-- detected comfort-miss periods, likely preheat start, and likely sawtooth behaviour
-- warnings when evidence is missing or incomplete
+Use `docs/history-evidence-workflows.md` for:
+- step-by-step review workflow
+- confounder handling
+- confidence assessment
+- joined heating + DHW interpretation
 
-Use it for this plan's recurring questions:
-- did preheat start at the right time?
-- was Leather ≥ 20°C by 07:00?
-- did DHW overlap with preheat?
-- was the controller fighting itself, or responding sensibly to extra load?
+Use `docs/history-evidence-plan.md` for:
+- authority map
+- canonical anchor windows
+- maturity / gap tracking
+- links from next steps to evidence commands
 
 For current state instead of historical reconstruction, use `docs/live-queries.md`.
 

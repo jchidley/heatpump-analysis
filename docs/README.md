@@ -66,6 +66,9 @@ It is **not** the best place for full strategy explanations or detailed code map
 ## Practical rule of thumb
 
 - **What should happen?** → `heating-plan.md`, `dhw-plan.md`
+- **What is live right now?** → `current-production-state.md`, `live-queries.md`
+- **How do I reconstruct a past window?** → `history-evidence-workflows.md`
+- **What is the authority map / evidence roadmap?** → `history-evidence-plan.md`
 - **How do I operate/recover it?** → runbooks / `deploy/SECRETS.md`
 - **Where do I change the code?** → `docs/code-truth/`
 - **What should an agent remember while working?** → `AGENTS.md`

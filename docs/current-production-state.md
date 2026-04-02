@@ -8,6 +8,11 @@ For strategy and rationale, see:
 - `heating-plan.md`
 - `dhw-plan.md`
 
+For live queries and historical reconstruction, see:
+- `live-queries.md`
+- `history-evidence-workflows.md`
+- `history-evidence-plan.md`
+
 For code locations and module structure, see:
 - `code-truth/README.md`
 - `code-truth/REPOSITORY_MAP.md`
@@ -80,6 +85,7 @@ The live controller is deployed from a checkout at `/home/jack/adaptive-heating-
 systemctl status adaptive-heating-mvp
 journalctl -u adaptive-heating-mvp -n 50 --no-pager
 curl -s http://pi5data:3031/status
+cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status
 ```
 
 ### DHW / dashboard

@@ -6,6 +6,8 @@ Use this alongside:
 - `current-production-state.md` — what is deployed/live now
 - `heating-plan.md` — heating strategy and rationale
 - `dhw-plan.md` — DHW strategy and rationale
+- `history-evidence-workflows.md` — reconstructing past windows instead of querying live state
+- `history-evidence-plan.md` — authority map and evidence roadmap
 - `code-truth/README.md` — where the implementation lives
 
 ## Principles
@@ -13,6 +15,7 @@ Use this alongside:
 - Treat live values as **queries**, not documentation.
 - Keep plan docs for policy and interpretation, not daily snapshots.
 - Prefer compact summaries over raw register dumps when checking current state.
+- If the question is about a **past window**, stop and use `history-evidence-workflows.md` instead.
 
 ## Heating controller snapshot
 
@@ -48,6 +51,15 @@ This command may warn in local dev if some live integrations are unavailable; fo
 | Do actuator readings match controller intent? | adaptive CLI `status` | Includes curve, target flow, actual desired flow, flow/return |
 | What does the raw Vaillant side say? | raw eBUS heating reads | Source register view |
 | Am I checking live state or historical performance? | Live now → `status`; chosen past window → `heating-history` | Avoid mixing live queries with evidence reconstruction |
+
+### Healthy recent example
+
+Recent lightweight runtime state (2026-04-02):
+- `mode = occupied`
+- `target_flow_c ≈ 28.67`
+- `last_reason = "HTTP occupied"`
+
+Interpret this as: the live controller is running in normal occupied mode and exposing runtime state via the HTTP API.
 
 ### Expected shape
 
@@ -217,6 +229,8 @@ It prints:
   - **actuator output** (`Hc1ActualFlowTempDesired`, heat curve)
   - **comfort outcome** (Leather / room temperatures)
 - Reproducible anchor: `heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` showed preheat start at 03:06, DHW overlap 04:15–05:37, and a comfort miss despite the planner running.
+
+## DHW quick checks
 
 ### DHW looks healthy when
 - `t1_c` is present and plausible

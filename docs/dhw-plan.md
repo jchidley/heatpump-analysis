@@ -354,29 +354,24 @@ cargo run --bin heatpump-analysis -- dhw-history \
   --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z --human
 ```
 
-`dhw-history` is the first-pass fused reproduction command for this plan. It combines Multical T1, eBUS `HwcStorageTemp`, z2m-hub remaining litres (when present), and charging-state reconstruction into one structured output.
+`dhw-history` is the fused historical command for this plan.
 
-It currently reports:
-- time window
-- charges detected
-- `T1` start / peak / end across charge windows
-- `HwcStorageTemp` start / peak / end across charge windows
-- crossover yes / no
-- remaining litres start / end if present
-- `HwcSFMode` values if present in history
-- charging yes / no over the window
-- warnings for suspicious or incomplete evidence
-- detected no-crossover / low-`T1` / stuck-`load` / large-divergence events
+Use `docs/history-evidence-workflows.md` for:
+- step-by-step review workflow
+- confounder handling
+- confidence assessment
+- joined heating + DHW interpretation
 
-Use it for this plan's recurring questions:
-- did the charge actually complete?
-- how far apart were `T1` and `HwcStorageTemp`?
-- was the cylinder practically full?
-- did the controller trigger on a cold lower cylinder while top-of-cylinder comfort was still good?
+Use `docs/history-evidence-plan.md` for:
+- authority map
+- canonical anchor windows
+- maturity / gap tracking
+- links from next steps to evidence commands
 
 #### `dhw-sessions` CLI (capacity + inflection analysis)
 
 ```bash
+export INFLUX_TOKEN=$(ak get influxdb)
 cargo run --bin heatpump-analysis -- dhw-sessions --days 14              # verbose (default)
 cargo run --bin heatpump-analysis -- dhw-sessions --days 14 --format json
 cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't update InfluxDB
@@ -389,7 +384,7 @@ cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't
 - Writes `dhw_inflection` measurements + `dhw_capacity` recommended value to InfluxDB
 - Run periodically to keep capacity number fresh as seasonal mains temp changes
 
-Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`.
+Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`. For historical workflow and interpretation, use `docs/history-evidence-workflows.md`.
 
 ### InfluxDB measurements
 
