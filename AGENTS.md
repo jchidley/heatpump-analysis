@@ -58,6 +58,7 @@ data/canonical/thermal_geometry.json → Room geometry (single source of truth, 
 model/thermal-config.toml → Thermal model config (InfluxDB, test nights, bounds)
 model/adaptive-heating-mvp.toml → Adaptive heating MVP config
 deploy/adaptive-heating-mvp.service → systemd unit for pi5data
+deploy/SECRETS.md → Secrets management (InfluxDB token, dev vs prod)
 ```
 
 ## Monitoring Infrastructure
@@ -70,6 +71,8 @@ deploy/adaptive-heating-mvp.service → systemd unit for pi5data
 | pi5data | 10.0.1.230 | Central hub: Docker (Mosquitto, InfluxDB, Telegraf, Grafana, ebusd) + systemd (z2m-hub :3030, adaptive-heating-mvp :3031) |
 
 MQTT credentials: `emonpi` / `emonpimqtt2016`. Z2M: `ws://emonpi:8080/api` (no auth).
+
+Secrets on pi5data: InfluxDB token in `/etc/adaptive-heating-mvp.env` (root:root 0600, loaded by systemd EnvironmentFile). Same token as Telegraf uses. See `deploy/SECRETS.md`. Dev fallback: `ak get influxdb` (warns if used).
 
 See `heating-monitoring-setup.md` for full details, `docs/emon-installation-runbook.md` for rebuild procedures.
 

@@ -300,6 +300,7 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 | `model/adaptive-heating-mvp.toml` | Config |
 | `src/lib.rs` | Library crate exposing thermal solver |
 | `deploy/adaptive-heating-mvp.service` | systemd unit for pi5data |
+| `deploy/SECRETS.md` | Secrets management: InfluxDB token setup, dev vs prod |
 | `src/thermal/display.rs` | `bisect_mwt_for_room()`, `solve_equilibrium_temps()` |
 | `data/canonical/thermal_geometry.json` | Room geometry for solver |
 
@@ -319,6 +320,26 @@ Writes to circuit `700`. TCP `localhost:8888` on pi5data.
 
 Derived: instantaneous COP = `CurrentYieldPower × 1000 / RunDataElectricPowerConsumption`.
 | `HwcSFMode` | RW | auto / load (DHW boost trigger) |
+
+## Deployment (pi5data)
+
+The controller runs as a systemd service on pi5data (10.0.1.230).
+
+| Component | Location |
+|---|---|
+| Binary | `/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp` |
+| Config | `/home/jack/adaptive-heating-mvp/model/adaptive-heating-mvp.toml` |
+| Thermal geometry | `/home/jack/adaptive-heating-mvp/data/canonical/thermal_geometry.json` |
+| Systemd unit | `/etc/systemd/system/adaptive-heating-mvp.service` |
+| Secrets (InfluxDB token) | `/etc/adaptive-heating-mvp.env` (root:root 0600) |
+| Runtime state | `/home/jack/adaptive-heating-mvp/state/runtime.toml` |
+| Decision log (JSONL) | `/home/jack/adaptive-heating-mvp/log/decisions.jsonl` |
+
+The InfluxDB token is the same one Telegraf uses (both read from the local InfluxDB Docker container). See `deploy/SECRETS.md` for setup on fresh install.
+
+Build on pi5data: `source ~/.cargo/env && cd ~/adaptive-heating-mvp && cargo build --release`
+
+Deploy source from dev machine: `scp src/bin/adaptive-heating-mvp.rs pi5data:~/adaptive-heating-mvp/src/main.rs`
 
 ## Revert to autonomous VRC 700
 
