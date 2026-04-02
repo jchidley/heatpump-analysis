@@ -108,17 +108,19 @@ Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-lo
 
 2. ~~**ΔT stabilisation**~~: `calculate_required_curve()` only uses live ΔT when `RunDataStatuscode` contains "Heating" + "Compressor". Otherwise falls back to `default_delta_t_c` (4.0°C). Deployed and verified - outer loop correctly used live ΔT=3.94°C during compressor active.
 
-**Live solver:**
+**Live solver: ✅ DONE (2 Apr 2026)**
 
-1. Create `src/lib.rs`, move `pub mod thermal` there. Widen visibility on: `geometry::*`, `physics::*`, `display::{solve_equilibrium_temps, bisect_mwt_for_room}`, `config::*`, `error::*`.
+1. ~~Create `src/lib.rs`~~, thermal module exposed as library. `bisect_mwt_for_room`, `solve_equilibrium_temps`, `ThermalError`, `ThermalResult` re-exported.
 
-2. Replace `ControlTable` with `bisect_mwt_for_room("leather", target_leather, outside, solar, wind)`. Remove `control_table_path` config.
+2. ~~Replace `ControlTable`~~ with live `bisect_mwt_for_room("leather", target_leather, outside, solar, 0.0)`. Removed 80 LOC of bilinear interpolation. Startup validates: "leather 20.5°C at 5°C → MWT 29.1°C" (matches old table exactly).
 
-3. Deploy `data/canonical/thermal_geometry.json` + `model/thermal-config.toml` to pi5data. Benchmark solver on ARM (<1s).
+3. ~~Deploy to pi5data~~. Thermal module (16 files) + `thermal_geometry.json` synced. Solver runs in <1ms on ARM.
 
-4. Add event-driven outer loop: trigger on DHW→heating transition, leather deviation >0.5°C for >15 min.
+**Remaining (not blocking Phase 2):**
 
-5. Add HP capacity clamp: if `CurrentCompressorUtil` > 95% for >30 min, stop raising curve.
+4. Event-driven outer loop: trigger on DHW→heating transition, leather deviation >0.5°C for >15 min.
+
+5. HP capacity clamp: if `CurrentCompressorUtil` > 95% for >30 min, stop raising curve.
 
 ### Phase 2: Overnight planner (requires 1b)
 
