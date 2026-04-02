@@ -183,9 +183,14 @@ Normal mode by outside temp:
 **Eco mode is cheaper** (lower flow = better COP) but below ~8°C it takes so long that the heating steal becomes costly: 261 W/K × ΔT × extra_minutes of lost heating. At some crossover temperature, the total system cost (DHW energy + heating recovery) favours normal mode.
 
 **DHW scheduling decision** for the overnight planner:
-- Mild nights (>8°C): eco mode, charge in 04:00-07:00 Cosy window before preheat (~90 min budget)
-- Cold nights (2-8°C): eco mode if DHW can fit in 22:00-00:00 window the night before, freeing the morning for preheat. Or normal mode in the morning (~60 min).
-- Coldest nights (<2°C): normal mode mandatory (eco hits timeout and is incomplete). Schedule in 22:00-00:00 if cylinder needs it, to protect morning preheat. HP is at capacity — every minute matters.
+
+The 22:00-00:00 Cosy window is preferred for DHW on cold nights. Cylinder standing loss is only 13W — a 22:00 charge to 45°C delivers 44.7°C by morning (0.26°C drop over 7h). Charging to 46°C eliminates this at trivial cost. A wasted charge (no morning draw) costs ~9p. This frees the entire 04:00-07:00 window for preheat.
+
+- Mild nights (>8°C): eco mode, charge in 04:00-07:00 window (~90 min budget). Morning preheat has surplus capacity.
+- Cool nights (2-8°C): eco mode in 22:00-00:00 window the night before. Morning 100% for preheat.
+- Coldest nights (<2°C): normal mode in 22:00-00:00 window. Eco hits timeout and is incomplete. HP is at capacity — every morning minute matters.
+
+Open question: at what temperature does eco mode become cheaper *in total* (DHW COP saving vs heating recovery cost from longer steal)? Below ~8°C the 22:00 window avoids the trade-off entirely — DHW and heating don't compete.
 
 **HwcMode (eco/normal) control**: Currently read-only via `hmu HwcMode` — must be changed on the aroTHERM controller physically. Investigation needed: the VWZ AI (0x76) has extensive undecoded B512/B513 register traffic and its own control panel (manual p22). There may be a writable register on the VWZ AI or an undiscovered VRC 700 register that controls eco/normal. The SetMode message from VRC 700 → VWZ AI includes DHW mode bits — if we can decode these, we might be able to set HwcMode indirectly. Until then, the planner must detect the active mode from max flow temp (≥50°C = normal, <50°C = eco) and plan accordingly.
 
