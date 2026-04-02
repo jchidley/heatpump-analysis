@@ -262,8 +262,8 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 │    eBUS write → Hc1HeatCurve + Z1DayTemp (when changed)      │
 │    InfluxDB  → log every decision + before/after metrics     │
 │                                                              │
-│  Cadence: every 15 min (reads every 1 min for averaging)     │
-│  Rate limit: min 0.10 curve step per cycle                   │
+│  Cadence: outer 15 min, inner 60s (V2 two-loop)              │
+│  Inner loop: gain 0.05, max step 0.20, deadband 0.5°C       │
 │  Bounds: trust 700 accepted range (no extra software limits) │
 │  Safety net: VRC 700 timers + baseline restore on stop/kill  │
 └───────────────────────────────────────────────────────────────┘

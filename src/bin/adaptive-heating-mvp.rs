@@ -1195,7 +1195,7 @@ fn run_inner_cycle(
     let model = &config.model;
 
     // Phase 1b: floor guard — near the curve floor, reduce gain and widen deadband
-    // to prevent hunting where each 0.01 curve ≈ 0.18°C flow change
+    // to prevent hunting where each 0.01 curve ≈ 0.20°C flow change
     let (effective_gain, effective_deadband) = if cb < 0.25 {
         (model.inner_loop_gain * 0.5, model.inner_loop_deadband_c * 2.0)
     } else {

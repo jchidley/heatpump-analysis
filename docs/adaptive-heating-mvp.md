@@ -222,9 +222,9 @@ Reason: opening the doors changes the room state immediately and couples it stro
 This is the fixed cadence for the MVP.
 
 ### Step size
-- minimum practical heat-curve step for MVP: **0.10**
-
-Rationale: smaller steps risk disappearing into the noise, especially on mild days. The curve value maps to flow temperature via the VRC 700's weather compensation algorithm — a 0.10 change in curve at 0°C outside produces a meaningful change in flow demand, but at 16°C outside the effect is much smaller because the curve is already near its floor.
+- V1 used **0.10** step (bang-bang, too coarse — caused 0.10↔1.00 oscillation)
+- V2 inner loop uses proportional gain × error, typically producing 0.03–0.05 steps
+- **Curve resolution is IEEE 754 float** (verified 2 Apr 2026 via hex read). Each 0.01 curve ≈ 0.20°C flow change at SP=19, outside 7°C. Measured: 0.55→29.88°C, 0.56→30.08°C. Writes to 0.001 precision are accepted and used by the VRC 700.
 
 ### VRC 700 curve floor
 

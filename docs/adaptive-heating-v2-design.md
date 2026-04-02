@@ -41,7 +41,7 @@ Outer loop (every 15 min):
 Inner loop (every ~1 min):
     error = target_flow - Hc1ActualFlowTempDesired
     if |error| > 0.5°C:
-        curve += 0.05 × error      (max step 0.20, clamp 0.10–4.00)
+        curve += 0.05 × error      (max step 0.20, clamp 0.10-4.00)
         write Hc1HeatCurve
 ```
 
@@ -94,11 +94,11 @@ Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-lo
 
 **Known issues to address in Phase 1b:**
 
-1. ~~**Inner loop hunts near curve floor.**~~ **FIXED** (2 Apr): reduced `inner_loop_gain` from 0.10 to 0.05. Hunting was caused by gain too high at low curves — each 0.01 curve ≈ 0.18°C flow, so gain=0.10 with 0.9°C error made 1.6°C overshoots. At gain=0.05 the loop converges in 2 ticks. The 20°C floor (`Hc1MinFlowTempDesired`) was not the cause — it doesn’t bind at SP=19 with outside < 17°C.
+1. ~~**Inner loop hunts near curve floor.**~~ **FIXED** (2 Apr): reduced `inner_loop_gain` from 0.10 to 0.05. Hunting was caused by gain too high at low curves — each 0.01 curve ≈ 0.20°C flow (verified: 0.55→29.88°C, 0.56→30.08°C at SP=19/outside 7°C), so gain=0.10 with 0.9°C error made 1.8°C overshoots. At gain=0.05 the loop converges in 2 ticks. The 20°C floor (`Hc1MinFlowTempDesired`) was not the cause — it doesn't bind at SP=19 with outside < 17°C.
 
 2. **Outer/inner ΔT fight.** When compressor shuts down, live ΔT collapses (flow≈return), `target_flow = MWT + ΔT/2` drops, outer loop writes a lower curve, then inner loop adjusts. Wasted eBUS writes, not harmful. Fix: use `default_delta_t_c` when compressor is off.
 
-3. **DHW steals preheat.** Night of 1-2 Apr: cylinder drifted to 39.5°C (barely below 40°C trigger), DHW charged for 1.5h during preheat, leather dropped from 20.1→19.9°C. By 07:15 leather was 19.9°C - below comfort band. **Not fixing in Phase 1b** — 40°C trigger is already marginal for morning hot water, and the Phase 2 overnight planner will schedule DHW and preheat sequentially.
+3. **DHW steals preheat.** Night of 1-2 Apr: cylinder drifted to 39.5°C (barely below 40°C trigger), DHW charged for 1.5h during preheat, leather dropped from 20.1→19.9°C. By 07:15 leather was 19.9°C - below comfort band. **Not fixing in Phase 1b** - 40°C trigger is already marginal for morning hot water, and the Phase 2 overnight planner will schedule DHW and preheat sequentially.
 
 ### Phase 1b: Bug fixes + live solver 🟡 IN PROGRESS
 
@@ -106,7 +106,7 @@ Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-lo
 
 1. ~~**Inner loop floor guard**~~: when `curve_before < 0.25`, gain halved to 0.025, deadband doubled to 1.0°C. Deployed and verified.
 
-2. ~~**ΔT stabilisation**~~: `calculate_required_curve()` only uses live ΔT when `RunDataStatuscode` contains "Heating" + "Compressor". Otherwise falls back to `default_delta_t_c` (4.0°C). Deployed and verified — outer loop correctly used live ΔT=3.94°C during compressor active.
+2. ~~**ΔT stabilisation**~~: `calculate_required_curve()` only uses live ΔT when `RunDataStatuscode` contains "Heating" + "Compressor". Otherwise falls back to `default_delta_t_c` (4.0°C). Deployed and verified - outer loop correctly used live ΔT=3.94°C during compressor active.
 
 **Live solver:**
 
@@ -184,30 +184,30 @@ Normal mode by outside temp:
 
 **DHW scheduling decision** for the overnight planner:
 
-The 22:00-00:00 Cosy window is preferred for DHW on cold nights. But T1 decays at **0.25°C/hour** (measured, 20 observations) — a 22:00 charge to 45.5°C delivers **~43.3°C by 07:00** (9h × 0.25 = 2.25°C drop). This is marginal for shower comfort (household prefers ≥43°C at the tap). Verified: 1 Apr charge peaked at 45.5°C at 14:00, decayed to 43.6°C by 22:00 (−1.9°C in 8h, no draws).
+The 22:00-00:00 Cosy window is preferred for DHW on cold nights. But T1 decays at **0.25°C/hour** (measured, 20 observations) - a 22:00 charge to 45.5°C delivers **~43.3°C by 07:00** (9h × 0.25 = 2.25°C drop). This is marginal for shower comfort (household prefers ≥43°C at the tap). Verified: 1 Apr charge peaked at 45.5°C at 14:00, decayed to 43.6°C by 22:00 (-1.9°C in 8h, no draws).
 
-**Minimum acceptable T1 for showers is TBD** — needs household experiment. 45°C is definitely fine; 43°C might be too. If 43°C is acceptable, a 22:00 charge to 45°C works. If not, charge to 47-48°C (small COP penalty) or top up at 04:00.
+**Minimum acceptable T1 for showers is TBD** - needs household experiment. 45°C is definitely fine; 43°C might be too. If 43°C is acceptable, a 22:00 charge to 45°C works. If not, charge to 47-48°C (small COP penalty) or top up at 04:00.
 
 **We have better data than the HP.** The VRC 700 decides DHW charges from HwcStorageTemp (VR10 NTC at 600mm, 0.5°C resolution, 30s updates, 5K hysteresis = triggers at 40°C). We have Multical T1 at the cylinder top (actual hot outlet temp, 0.01°C, 2s). The controller should make DHW decisions from T1, not from HwcStorageTemp. This means:
 - Trigger DHW from T1 threshold (e.g. T1 < 43°C) via `HwcSFMode=load`, not relying on the VRC 700's hysteresis
 - Monitor charge completion from T1 reaching target (e.g. T1 ≥ 45°C), not from VRC 700 timeout
 - Track overnight T1 decay and only top up if T1 is actually below comfort threshold by morning
 
-**Cosy windows are always preferred** — 14.05p/kWh vs 28.65p mid-peak. The battery effective rate (14.63p) is close to Cosy, but on the coldest days the HP runs flat out and the battery can deplete during afternoon mid-peak/peak (28.65–42.97p). Every kWh shifted into a Cosy window reduces battery pressure on those hard days.
+**Cosy windows are always preferred** - 14.05p/kWh vs 28.65p mid-peak. The battery effective rate (14.63p) is close to Cosy, but on the coldest days the HP runs flat out and the battery can deplete during afternoon mid-peak/peak (28.65-42.97p). Every kWh shifted into a Cosy window reduces battery pressure on those hard days.
 
-**But overnight DHW is flexible within the 22:00–07:00 block.** Three Cosy-rated sub-windows exist: 22:00–00:00 and 04:00–07:00. The 00:00–04:00 gap is mid-peak but battery is always full overnight — a top-up here costs ~1p extra and is acceptable if thermally needed.
+**But overnight DHW is flexible within the 22:00-07:00 block.** Three Cosy-rated sub-windows exist: 22:00-00:00 and 04:00-07:00. The 00:00-04:00 gap is mid-peak but battery is always full overnight - a top-up here costs ~1p extra and is acceptable if thermally needed.
 
-**The best case has no trade-off.** On cold nights, DHW at 22:00–00:00 is both Cosy-rated AND frees the 04:00–07:00 window for preheat. On mild nights, DHW at 04:00–05:00 is Cosy-rated and preheat has surplus capacity. The only non-Cosy scenario is a rare 02:00–04:00 top-up.
+**The best case has no trade-off.** On cold nights, DHW at 22:00-00:00 is both Cosy-rated AND frees the 04:00-07:00 window for preheat. On mild nights, DHW at 04:00-05:00 is Cosy-rated and preheat has surplus capacity. The only non-Cosy scenario is a rare 02:00-04:00 top-up.
 
-**Preferred strategy: DHW at 22:00–00:00 (Cosy), monitor T1 overnight, top up at 04:00 (Cosy) only if T1 has dropped below comfort threshold.** This maximises Cosy usage, minimises battery pressure, and frees the morning for preheat on cold days.
+**Preferred strategy: DHW at 22:00-00:00 (Cosy), monitor T1 overnight, top up at 04:00 (Cosy) only if T1 has dropped below comfort threshold.** This maximises Cosy usage, minimises battery pressure, and frees the morning for preheat on cold days.
 
 - Mild nights (>8°C): eco mode, charge in 04:00-07:00 window (~90 min budget). Morning preheat has surplus capacity.
 - Cool nights (2-8°C): eco mode in 22:00-00:00 window the night before. Morning 100% for preheat.
-- Coldest nights (<2°C): normal mode in 22:00-00:00 window. Eco hits timeout and is incomplete. HP is at capacity — every morning minute matters.
+- Coldest nights (<2°C): normal mode in 22:00-00:00 window. Eco hits timeout and is incomplete. HP is at capacity - every morning minute matters.
 
-Open question: at what temperature does eco mode become cheaper *in total* (DHW COP saving vs heating recovery cost from longer steal)? Below ~8°C the 22:00 window avoids the trade-off entirely — DHW and heating don't compete.
+Open question: at what temperature does eco mode become cheaper *in total* (DHW COP saving vs heating recovery cost from longer steal)? Below ~8°C the 22:00 window avoids the trade-off entirely - DHW and heating don't compete.
 
-**HwcMode (eco/normal) control**: Currently read-only via `hmu HwcMode` — must be changed on the aroTHERM controller physically. Investigation needed: the VWZ AI (0x76) has extensive undecoded B512/B513 register traffic and its own control panel (manual p22). There may be a writable register on the VWZ AI or an undiscovered VRC 700 register that controls eco/normal. The SetMode message from VRC 700 → VWZ AI includes DHW mode bits — if we can decode these, we might be able to set HwcMode indirectly. Until then, the planner must detect the active mode from max flow temp (≥50°C = normal, <50°C = eco) and plan accordingly.
+**HwcMode (eco/normal) control**: Currently read-only via `hmu HwcMode` - must be changed on the aroTHERM controller physically. Investigation needed: the VWZ AI (0x76) has extensive undecoded B512/B513 register traffic and its own control panel (manual p22). There may be a writable register on the VWZ AI or an undiscovered VRC 700 register that controls eco/normal. The SetMode message from VRC 700 → VWZ AI includes DHW mode bits - if we can decode these, we might be able to set HwcMode indirectly. Until then, the planner must detect the active mode from max flow temp (≥50°C = normal, <50°C = eco) and plan accordingly.
 
 ### Phase 3: Predictive DHW compensation
 
