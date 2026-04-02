@@ -22,7 +22,7 @@ Domestic hot water management for 6 Rhodes Avenue. 300L Kingspan Albion cylinder
 | Cold feed | **Dip pipe** from 490mm connection to bottom (~0mm) — all cold water enters at the bottom regardless of WWHR |
 | Internal expansion | Air bubble at top (floating baffle, no external vessel). ~46mm→25mm as water heats 10→45°C |
 | Standing heat loss | 13W measured (vs 93W rated — stratification + air bubble insulates top) |
-| T1 decay rate | 0.25°C/h (σ=0.02, 20 observations) |
+| T1 decay rate | 0.25°C/h (σ=0.02, 20 observations). Measured: T1 43.4→42.4°C over 4h, T2 21.5→22.0°C (heat migrating down), room 20.9°C unchanged |
 | Annual standby cost | ~£5/year at COP 3.9 |
 
 ### Connection heights
@@ -125,6 +125,8 @@ Every charge has two phases, visible in sensor data:
 2. **Uniform heating** (crossover): begins when HwcStorageTemp ≥ T1 at charge start. Entire cylinder is now at/above T1. T1 starts rising ~0.1°C/min
 
 **Crossover = cylinder is full.** Confirmed across 32+ charge cycles (100%).
+
+Heat exchanger approach temperature: starts negative (HP flow cooler than T1), crosses over mid-charge, ends at +3.2°C (excellent for indirect coil-in-coil). Typical morning charge: HP flow rises 31→48°C over 115 min, delivering ~5.75 kWh thermal at COP ~3.0 in eco mode.
 
 ### Charge duration and cost
 

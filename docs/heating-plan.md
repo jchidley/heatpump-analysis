@@ -80,7 +80,7 @@ Three setpoints analysed. SP=19 chosen because:
 
 **Why not Z1OpMode=auto?** The VRC 700 has undocumented Optimum Start: at 03:00 (3h before 06:00 day timer), `Hc1ActualFlowTempDesired` jumped from 21.0°C to 22.3°C with curve at 0.10. No register to disable it. Night mode eliminates Optimum Start, CcTimer transitions, and day/night setpoint switches — giving the controller full authority.
 
-On shutdown: `Z1OpMode=auto`, `Hc1HeatCurve=0.55`. VRC 700 resumes autonomous control.
+On shutdown/kill: **baseline restore** writes `Z1OpMode=auto`, `Hc1HeatCurve=0.55`. VRC 700 resumes autonomous timer control. Crash without restore: house sits at 19°C with last curve — safe.
 
 ### Other writable registers
 
@@ -115,7 +115,7 @@ Inner loop (every ~60s):
         write Hc1HeatCurve
 ```
 
-**Inner loop tuning**: gain=0.05, deadband=0.5°C, max_step=0.20. Below curve 0.25: gain halved to 0.025, deadband doubled to 1.0°C. Converges in 1–2 ticks.
+**Inner loop tuning**: gain=0.05, deadband=0.5°C, max_step=0.20, curve clamped to 0.10–4.00 (trust the VRC 700's accepted range — no extra software limits). Below curve 0.25: gain halved to 0.025, deadband doubled to 1.0°C. Converges in 1–2 ticks.
 
 **ΔT stabilisation**: uses live flow-return ΔT only when `RunDataStatuscode` contains "Heating" + "Compressor". Otherwise `default_delta_t_c` = 4.0°C.
 
@@ -139,7 +139,7 @@ The controller has layered priorities:
 | `disabled` | No writes, monitoring only |
 | `monitor-only` | Read sensors + log, no eBUS writes |
 
-HTTP API on port 3031: `POST /mode/occupied`, `/mode/away`, `/mode/disabled`, `/mode/monitor-only`, `/kill`.
+HTTP API on port 3031: `POST /mode/occupied`, `/mode/away`, `/mode/disabled`, `/mode/monitor-only`, `/kill`. Kill switch triggers immediate baseline restore and stops all eBUS writes.
 
 ### Logging
 
@@ -261,6 +261,7 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 6. **Eco/normal mode detection** — plan DHW duration from detected mode (max flow temp ≥50°C = normal)
 7. **Pre-DHW banking** — 15 min before predicted DHW charge, boost target_flow to pre-raise Leather ~0.3°C
 8. **Direct flow temp control** — `SetModeOverride` to HMU, bypassing VRC 700 entirely
+9. **Defrost analysis** — eBUS provides definitive defrost status (code 516) vs current inference from negative DT/heat
 
 ## Key files
 
@@ -286,6 +287,8 @@ Writes to circuit `700`. TCP `localhost:8888` on pi5data.
 | `RunDataStatuscode` | R (hmu) | HP state |
 | `RunDataFlowTemp` / `ReturnTemp` | R (hmu) | Actual flow/return |
 | `CurrentCompressorUtil` | R (hmu) | HP load % |
+
+Derived: instantaneous COP = `CurrentYieldPower × 1000 / RunDataElectricPowerConsumption`.
 | `HwcSFMode` | RW | auto / load (DHW boost trigger) |
 
 ## Revert to autonomous VRC 700
