@@ -55,6 +55,7 @@ For secrets handling, see:
 | Remaining litres | z2m-hub model + Influx-backed recommended full litres |
 | Manual boost path | `POST /api/dhw/boost` via z2m-hub |
 | Planned next step | T1-based charge triggering instead of pure VRC hysteresis |
+| Latest reproducible evidence window | `dhw-history --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z` → completed 36 min top-up; later `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining |
 
 ## Deployment paths on pi5data
 

@@ -113,11 +113,35 @@ This queries z2m-hub and returns:
 - whether it is likely safe for two showers
 - warning strings for suspicious or missing state
 
+These live DHW commands do **not** need `INFLUX_TOKEN`. They are suitable for quick operator checks and LLM live-state queries.
+
+### Which DHW live command should I use?
+
+| Question | Best command | Why |
+|---|---|---|
+| Do we have enough hot water right now? | `cargo run --bin heatpump-analysis -- dhw-live-status` | Best compact summary: litres, T1, charge state, two-shower safety |
+| Is DHW actively charging right now? | `cargo run --bin heatpump-analysis -- dhw-live-status` or `curl -s http://pi5data:3030/api/dhw/status` | Fast yes/no plus controller-facing state |
+| What does z2m-hub think in raw form? | `curl -s http://pi5data:3030/api/hot-water` | Underlying derived DHW state |
+| What does the Vaillant controller think? | raw eBUS `HwcStorageTemp` / `HwcSFMode` | Source register view |
+| Should I trust a low `HwcStorageTemp` reading on its own? | No — cross-check `t1_c`, `remaining_litres`, and charge state | Lower-cylinder temperature is not the same as usable hot-water truth |
+
 ### Structured form
 
 ```bash
 cargo run --bin heatpump-analysis -- dhw-live-status
 ```
+
+### Healthy recent example
+
+Recent healthy live snapshot (2026-04-02):
+- `charge_state = full`
+- `t1_c ≈ 45.24`
+- `hwc_storage_c ≈ 44.5`
+- `remaining_litres = 198`
+- `sfmode = auto`
+- `warnings = []`
+
+Interpret this as: cylinder is practically full, no boost is stuck, and the household is safe for two showers.
 
 ### Raw z2m-hub endpoints
 
@@ -179,6 +203,13 @@ It prints:
 - `remaining litres` is non-zero after a full charge
 - charge state matches observed behaviour
 - `HwcSFMode` is normally `auto` unless an active boost is in progress
+- `warnings` is empty or only contains known benign gaps
+
+### DHW interpretation caveat
+- Do **not** treat a low `HwcStorageTemp` alone as proof that usable hot water is low.
+- `HwcStorageTemp` is a lower-cylinder control signal, not the household comfort truth.
+- For practical DHW availability, prefer `t1_c`, `remaining_litres`, crossover/charge state, and the `safe_for_two_showers` summary.
+- Reproducible example: `dhw-history --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z` showed `T1` ~45°C while `HwcStorageTemp` later fell to 27°C with ~118 L still remaining.
 
 ## Safe fallback commands
 

@@ -8,6 +8,7 @@ This document is the canonical reference for **DHW operating policy, cylinder be
 
 Use other docs for adjacent needs:
 - **Current live deployment snapshot:** `docs/current-production-state.md`
+- **Current live query commands:** `docs/live-queries.md`
 - **Historical evidence / reproducibility roadmap:** `docs/history-evidence-plan.md`
 - **Code locations / module structure in this repo:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
 - **Secrets / InfluxDB token handling:** `deploy/SECRETS.md`
@@ -271,6 +272,30 @@ Preferred overnight strategy:
 - **T1 is authoritative for DHW decisions**: HwcStorageTemp reads 13°C with 100L of 45°C water above it after large draws. Multical T1 at the actual outlet is the reliable signal. Phase 2 will use T1 for charge triggering instead of VRC 700 hysteresis
 - **Partial-charge model**: when a charge ends without crossover, z2m-hub uses gap-based interpolation. Future: shower-equivalent calculation (`V × (T_zone − T_cold) / (T_shower − T_cold)`) would give more accurate remaining estimate for two-zone cylinders
 
+### Reproducible evidence check: morning top-up with large sensor divergence
+
+A representative recent window confirms the current policy and reinforces the T1-first direction:
+
+```bash
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- dhw-history \
+  --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z
+```
+
+Observed in that window:
+- one completed top-up charge from **05:01–05:37**
+- `T1` rose **42.85 → 45.46°C**
+- `HwcStorageTemp` rose **42.5 → 45.0°C**
+- `crossover = true`
+- by **08:00**, `T1` was still **45.0°C** while `HwcStorageTemp` had fallen to **27.0°C**
+- z2m-hub still estimated **118 L remaining**
+
+Meaning:
+- this is a clean, reproducible example of **why T1 is authoritative for household comfort**
+- a cold lower-cylinder reading does **not** mean the cylinder is practically empty
+- the current **45°C target**, **198 L full-capacity assumption**, and **crossover-as-completion** rule remain consistent with observed behaviour
+- this strengthens the case for **T1-based charge decisions** and does **not** currently justify changing timer windows
+
 ## HP contention with heating
 
 Each DHW charge blocks space heating. Impact by outside temperature:
@@ -363,7 +388,7 @@ cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't
 - Writes `dhw_inflection` measurements + `dhw_capacity` recommended value to InfluxDB
 - Run periodically to keep capacity number fresh as seasonal mains temp changes
 
-Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan.
+Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`.
 
 ### InfluxDB measurements
 
@@ -443,7 +468,7 @@ Showers removed 117% of usable hot energy — this is why the cylinder fully dep
 
 ## Next steps
 
-1. **T1-based charge decisions** — trigger DHW from T1 < threshold via `HwcSFMode=load`, not VRC 700 hysteresis. Monitor completion from T1 ≥ 45°C. Review representative windows with `dhw-history`. Blocked on: minimum acceptable T1 household experiment
+1. **T1-based charge decisions** — trigger DHW from T1 < threshold via `HwcSFMode=load`, not VRC 700 hysteresis. Monitor completion from T1 ≥ 45°C. Review representative windows with `dhw-history` (for example `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z`, where `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining). Blocked on: minimum acceptable T1 household experiment
 2. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions` monthly, then inspect representative charge windows with `dhw-history`
 3. **Legionella monitor** — track turnover + temperature history, alert on stagnation risk
 4. **SPA display improvements** — richer status on phone dashboard

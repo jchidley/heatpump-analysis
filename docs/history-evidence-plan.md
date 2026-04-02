@@ -29,6 +29,23 @@ The desired end state is:
 3. live-query commands show **what is happening now**
 4. no important historical conclusion depends on undocumented operator memory
 
+## Environment prerequisites
+
+Historical fused commands in this repo often need InfluxDB access.
+
+Use:
+
+```bash
+export INFLUX_TOKEN=$(ak get influxdb)
+```
+
+This is typically required for:
+- `cargo run --bin heatpump-analysis -- heating-history ...`
+- `cargo run --bin heatpump-analysis -- dhw-history ...`
+- `cargo run --bin heatpump-analysis -- dhw-sessions ...`
+
+Live-query commands in `live-queries.md` usually do **not** need this token.
+
 ## Principles
 
 ### Historical evidence should not live mainly in prose
@@ -313,9 +330,23 @@ These are the first concrete evidence slices that should be reproducible because
 ### DHW priorities
 
 1. **Morning charge window** — how did `T1`, `HwcStorageTemp`, and charge completion evolve during a representative charge?
+   - reproducible example: `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z` via `dhw-history` (completed 36 min top-up, then `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C and z2m-hub still estimated ~118 L remaining)
 2. **Low-`T1` trigger window** — did the VRC 700 trigger based on low lower-cylinder temperature even while top-of-cylinder comfort remained high?
 3. **Capacity / inflection window** — where did `T1` start to collapse, and how many usable litres were delivered?
 4. **Eco vs normal comparison window** — how did charge duration, completion, and top temperature differ by inferred mode?
+
+## Canonical evidence anchor windows
+
+These are named, reproducible windows that can be reused across plan updates and future analysis.
+
+### DHW anchors
+
+| Window | Why it matters | Command |
+|---|---|---|
+| 2026-04-02 05:00–08:00 UTC | Completed morning top-up, then large `T1` / `HwcStorageTemp` divergence while practical hot-water availability remained good | `cargo run --bin heatpump-analysis -- dhw-history --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z` |
+| Next partial / no-crossover charge | Validate partial-charge interpretation and gap-based remaining-litres model | `dhw-history` once a representative window is nominated |
+| Next clear capacity / inflection window | Refresh the usable-litres evidence and collapse point | `cargo run --bin heatpump-analysis -- dhw-sessions --days 14 --format json` |
+| Next inferred eco vs normal pair | Compare completion, duration, and peak temperatures by inferred mode | `dhw-history` on nominated windows |
 
 ## Gaps in current reproducibility
 
@@ -344,6 +375,13 @@ Still needed:
 - how `T1` and `HwcStorageTemp` diverged
 - whether the cylinder was practically full
 - whether a threshold or trigger decision looked sensible
+
+Current maturity by DHW question:
+- **T1-based charge decisions** — **B moving toward A**. `dhw-history` is already good enough for repeated examples; 2026-04-02 05:00–08:00 is the first canonical anchor.
+- **Summer mains temp repeat** — **A/B**. `dhw-sessions` already gives useful repeatable evidence, but monthly interpretation still needs lightweight operator judgement.
+- **Legionella monitor** — **C**. Policy exists, but there is no dedicated reproducible hygiene command yet.
+- **Eco/normal detection** — **B**. Some windows can be inferred from charge characteristics, but explicit mode evidence is still weak.
+- **Predictive DHW compensation** — **B/C**. Needs joined use of `dhw-history` and `heating-history`, and clearer cross-window recipes.
 
 Current state: first-pass command exists; some evidence may still be incomplete or warning-backed.
 
@@ -426,6 +464,45 @@ First-pass event detection:
 - `HwcSFMode=load` stuck
 - large `T1` / `HwcStorageTemp` divergence
 
+### DHW recipe: assess whether lower-cylinder hysteresis matches practical comfort
+
+Run:
+
+```bash
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- dhw-history --since ... --until ...
+```
+
+Check:
+- `charges_detected[*].crossover`
+- `t1_c`
+- `hwc_storage_c`
+- `remaining_litres`
+- `events.large_t1_hwc_divergence`
+- `warnings`
+
+Interpretation:
+- if `crossover=true`, the charge completed by the operational rule in the DHW plan
+- if `T1` remains high while `HwcStorageTemp` collapses, lower-cylinder hysteresis is **not** a direct comfort truth
+- if `remaining_litres` stays materially positive with high `T1`, the cylinder may still be practically fine for showers even when the lower sensor looks cold
+- if warnings indicate large divergence, treat that as evidence in favour of T1-based trigger logic rather than as a sensor fault by default
+
+Baseline reproducible example:
+
+```bash
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- dhw-history \
+  --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z
+```
+
+This window showed:
+- a completed **36 min** top-up charge
+- `T1` rising to ~45.5°C
+- later `HwcStorageTemp` falling to **27°C**
+- z2m-hub still estimating **~118 L** remaining
+
+That is currently the canonical reproducible example supporting T1-first DHW interpretation.
+
 ## Link to next steps in the heating plan
 
 From `heating-plan.md`, the next steps need the following evidence.
@@ -445,7 +522,7 @@ From `dhw-plan.md`, the next steps need the following evidence.
 
 | Next step | Evidence needed | Best command |
 |---|---|---|
-| T1-based charge decisions | repeated examples of T1 vs HwcStorage vs trigger timing | `dhw-history` |
+| T1-based charge decisions | repeated examples of T1 vs HwcStorage vs trigger timing. Baseline reproducible example: 2026-04-02 05:00–08:00 showed `T1` ~45°C with `HwcStorageTemp` at 27°C and ~118 L still remaining after a completed top-up | `dhw-history` |
 | Summer mains temp repeat | monthly T2 / capacity / WWHR shifts | `dhw-sessions` initially, later `dhw-history` summaries |
 | Legionella monitor | turnover + sufficiently hot cycle history | later dedicated hygiene command |
 | Eco/normal detection | inferred mode over charge windows | `dhw-history` |
