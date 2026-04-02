@@ -193,11 +193,11 @@ The 22:00-00:00 Cosy window is preferred for DHW on cold nights. But T1 decays a
 - Monitor charge completion from T1 reaching target (e.g. T1 ≥ 45°C), not from VRC 700 timeout
 - Track overnight T1 decay and only top up if T1 is actually below comfort threshold by morning
 
-**Cosy window constraint is artificial.** The Powerwall (13.5 kWh) covers ~95% of non-Cosy usage. Overnight the battery is full — a 2 kWh DHW charge at 02:00 costs ~14.63p/kWh (battery effective rate) vs ~7.5p/kWh in a Cosy window. The extra cost is ~14p per charge. But the battery never depletes overnight, so DHW can happen at any time from 22:00 to 07:00 without affecting afternoon peak coverage. The only real constraint is thermal: charge at the time that gives the best T1 by morning use AND least interference with heating preheat.
+**Cosy window constraint is artificial.** The Powerwall (13.5 kWh) covers ~95% of non-Cosy usage. Overnight the battery is full — a 2 kWh DHW charge at 02:00 costs ~14.63p/kWh (battery effective rate) vs 14.05p/kWh in a Cosy window. The extra cost is **~1p per charge** — essentially nothing. But the battery never depletes overnight, so DHW can happen at any time from 22:00 to 07:00 without affecting afternoon peak coverage. The only real constraint is thermal: charge at the time that gives the best T1 by morning use AND least interference with heating preheat.
 
 **Preferred strategy: charge whenever is thermally optimal overnight, monitor T1, top up only if needed.** On cold nights, charge early (22:00–00:00) to free the morning for preheat. On mild nights, charge at 04:00–05:00 when it doesn't matter. Let the overnight planner decide based on forecast, not tariff windows.
 
-A wasted overnight charge costs ~9–14p depending on timing. This is negligible.
+A wasted overnight charge costs ~29p (2 kWh × 14.63p). The Cosy vs non-Cosy premium is ~1p total — irrelevant.
 
 - Mild nights (>8°C): eco mode, charge in 04:00-07:00 window (~90 min budget). Morning preheat has surplus capacity.
 - Cool nights (2-8°C): eco mode in 22:00-00:00 window the night before. Morning 100% for preheat.
