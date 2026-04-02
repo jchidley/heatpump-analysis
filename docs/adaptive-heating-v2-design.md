@@ -236,17 +236,18 @@ Open question: at what temperature does eco mode become cheaper *in total* (DHW 
 
 **HwcMode (eco/normal) control**: Currently read-only via `hmu HwcMode` - must be changed on the aroTHERM controller physically. Investigation needed: the VWZ AI (0x76) has extensive undecoded B512/B513 register traffic and its own control panel (manual p22). There may be a writable register on the VWZ AI or an undiscovered VRC 700 register that controls eco/normal. The SetMode message from VRC 700 → VWZ AI includes DHW mode bits - if we can decode these, we might be able to set HwcMode indirectly. Until then, the planner must detect the active mode from max flow temp (≥50°C = normal, <50°C = eco) and plan accordingly.
 
-### Phase 2b: DHW scheduling with T1 🔴 NEXT
+### Phase 2b: DHW scheduling with T1 🟡 IN PROGRESS
 
-Replace Phase 1a DHW logic (HwcStorageTemp < 40°C in Cosy windows) with T1-based decisions:
-1. Add InfluxDB T1 query to controller (topic `emon/multical/dhw_t1`)
+**Step 1: ✅ DONE (2 Apr 2026)** — T1 query added to controller. Multical T1 (`emon/multical/dhw_t1`) now logged every outer cycle. First reading: T1=44.7°C while HwcStorageTemp=27.0°C — confirms T1 is essential (VR10 reads below thermocline after draws).
+
+**Remaining steps:**
 2. At 22:00 Cosy window: if T1 < comfort_threshold (TBD, needs household experiment), trigger `HwcSFMode=load`
 3. Monitor charge completion from T1 ≥ 45°C (not VRC 700 timeout)
 4. At 04:00: top-up if T1 has decayed below threshold overnight
 5. During preheat: don't trigger DHW even if HwcStorageTemp < 40°C (T1 is more reliable)
 
-Prerequisites:
-- Household experiment: what's the minimum acceptable T1 for morning showers?
+**Blocked on:**
+- Household experiment: what's the minimum acceptable T1 for morning showers? (45°C definitely OK, 43°C might be)
 - HwcMode investigation: can we control eco/normal via eBUS?
 
 ### Phase 3: Predictive DHW compensation
