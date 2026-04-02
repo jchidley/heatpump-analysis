@@ -50,7 +50,7 @@
 
 **Why**: VRC 700 handles 10-second heartbeat, safety fallbacks, valve control, VWZ AI communication. Replacing it requires sending SetMode every 10s — much higher complexity and risk.
 
-**Where**: `docs/adaptive-heating-control.md`, `docs/pico-ebus-plan.md`
+**Where**: `docs/heating-plan.md`, `docs/pico-ebus-plan.md`
 
 ### D7: Baseline restore on stop/kill
 
@@ -68,7 +68,7 @@
 
 **Why**: SP=19 with curve=0.10 gives **zero radiator output** — cleanest separation between "heating" and "not heating". The overnight planner (Phase 2) needs curve=0.10 to mean genuinely off. At cold temps, deliberate curve raises provide overnight heating. Three setpoints analysed (19/20/21) — 19 was optimal for overnight separation.
 
-**Where**: `src/bin/adaptive-heating-mvp.rs` startup, `docs/adaptive-heating-v2-design.md` "Why SP=19" section
+**Where**: `src/bin/adaptive-heating-mvp.rs` startup, `docs/heating-plan.md` "Why SP=19" section
 
 ### D9: Inner loop replaces all EMAs
 
@@ -100,7 +100,7 @@
 
 **What**: DHW availability is a hard constraint. Phase 1a: Cosy windows + HwcStorageTemp < 40°C → `HwcSFMode=load`. Phase 2 will use Multical T1 for DHW decisions (0.01°C/2s at actual hot outlet vs VR10 NTC 0.5°C/30s at 600mm).
 
-**Key finding**: eco mode fails below 5°C (95% hit 120-min timeout). Normal mode avg 60 min, works everywhere. See DHW duration model in `docs/adaptive-heating-v2-design.md`.
+**Key finding**: eco mode fails below 5°C (95% hit 120-min timeout). Normal mode avg 60 min, works everywhere. See DHW duration model in `docs/dhw-plan.md`.
 
 **Preferred Phase 2 strategy**: charge at 22:00 Cosy window, monitor T1 overnight (0.25°C/h drop), top up at 04:00 Cosy if T1 below comfort threshold. Cosy windows preferred to reduce battery pressure on cold days.
 

@@ -122,18 +122,15 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 
 | Document | Concern |
 |----------|---------|
-| `docs/adaptive-heating-v2-design.md` | **V2 design**: two-loop architecture, phased implementation, DHW strategy, pilot findings |
-| `docs/adaptive-heating-control.md` | Strategy, philosophy, room targeting, control theory |
-| `docs/adaptive-heating-mvp.md` | Frozen V1 MVP spec (historical, superseded by V2 design) |
-| `docs/roadmap.md` | Planned enhancements with status |
+| `docs/heating-plan.md` | Heating control: two-loop architecture, overnight planner, away mode, physical improvements |
+| `docs/dhw-plan.md` | DHW: cylinder spec, charging, scheduling, capacity, T1-based decisions |
 | `docs/pico-ebus-plan.md` | Pico W eBUS adapter build plan |
 | `docs/vrc700-settings-audit.md` | VRC 700 settings, timer encoding, eBUS commands |
-| `docs/dhw-cylinder-analysis.md` | Cylinder specs, sensor locations, charge physics, usable volume, remaining-litres model |
+| `docs/dhw-plan.md` | (see above) |
 | `docs/house-layout.md` | 13 rooms, radiators, ventilation, sensor locations |
 | `docs/room-thermal-model.md` | Thermal model methodology |
 | `docs/hydraulic-analysis.md` | Flow rate thresholds, sludge filter |
-| `docs/overnight-strategy-analysis.md` | Overnight heating strategy backtest |
-| `docs/rust-migration-plan.md` | Python→Rust migration (complete) |
+
 | `docs/explanation.md` | Domain background (HTC, COP, degree days) |
 | `docs/emon-installation-runbook.md` | emonPi2/emonhp rebuild procedures |
 | `docs/octopus-data-inventory.md` | Octopus consumption data fields |
@@ -159,8 +156,8 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | **Adaptive heating config** | `model/adaptive-heating-mvp.toml` |
 | **Adaptive heating modes/API** | `src/bin/adaptive-heating-mvp.rs` (HTTP handlers + Mode enum) |
 | **Adaptive heating baseline** | `model/adaptive-heating-mvp.toml` `[baseline]` + `restore_baseline()` |
-| **V2 design / phase plan** | `docs/adaptive-heating-v2-design.md` |
-| **DHW duration model** | `docs/adaptive-heating-v2-design.md` Phase 2 section |
+| **Heating control / phase plan** | `docs/heating-plan.md` |
+| **DHW scheduling + duration model** | `docs/dhw-plan.md` |
 | **DHW session analysis** | `src/thermal/dhw_sessions.rs` |
 | **Mobile dashboard** | `~/github/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
 | eBUS polling | `scripts/ebusd-poll.sh` on pi5data |
