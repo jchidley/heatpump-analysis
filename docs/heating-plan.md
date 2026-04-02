@@ -290,7 +290,7 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 - Outer/inner loop sawtooth: outer resets curve every 15 min (model guess 0.51–0.57), inner overrides to 0.59–0.68. With door open, the inner loop was *correctly compensating* for the extra heat loss. **Do not fix until confirmed on clean doors-closed data.**
 - `CurrentCompressorUtil` reads negative values (-29, -55, -89, -102). Unreliable register — do not use for control decisions.
 - DHW triggered by VRC 700 at HwcStorageTemp=34°C while T1=43.9°C in 13:00 Cosy window. Data input for DHW plan — not necessarily wrong (bottom zone cold, afternoon demand, cheap rate).
-- **Service hung ~12:46 UTC** during extended DHW charge (no outer/inner logs for >1h while process still running). Likely eBUS read or InfluxDB query timeout during DHW. Needs investigation — add timeouts to all blocking I/O.
+- **Service hung ~12:46 UTC** during extended DHW charge (no outer/inner logs for >1h while process still running). **Root cause: reqwest blocking Client had no default timeout.** Fixed: `Client::builder().timeout(10s).connect_timeout(5s)` covers all InfluxDB reads/writes. Outer cycle timing logged (warns if >120s). eBUS already had 3s timeouts.
 
 ## Key files
 
