@@ -83,6 +83,9 @@ struct Baseline {
 struct Topics {
     leather_temp: String,
     aldora_temp: String,
+    /// Multical T1: cylinder top / hot water outlet temperature
+    #[serde(default = "default_dhw_t1_topic")]
+    dhw_t1: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +160,7 @@ fn default_inner_loop_gain() -> f64 { 0.10 }
 fn default_inner_loop_deadband() -> f64 { 0.5 }
 fn default_inner_loop_max_step() -> f64 { 0.20 }
 fn default_geometry_path() -> PathBuf { PathBuf::from("data/canonical/thermal_geometry.json") }
+fn default_dhw_t1_topic() -> String { "emon/multical/dhw_t1".to_string() }
 fn default_forecast_url() -> String {
     "https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London".to_string()
 }
@@ -338,6 +342,8 @@ struct DecisionLog {
     aldora_temp_c: Option<f64>,
     outside_temp_c: Option<f64>,
     hwc_storage_temp_c: Option<f64>,
+    /// Multical T1: actual hot water outlet temperature at cylinder top
+    dhw_t1_c: Option<f64>,
     run_status: Option<String>,
     compressor_util: Option<f64>,
     elec_consumption_w: Option<f64>,
@@ -389,6 +395,7 @@ fn default_config() -> Config {
         topics: Topics {
             leather_temp: "emon/emonth2_23/temperature".to_string(),
             aldora_temp: "zigbee2mqtt/aldora_temp_humid".to_string(),
+            dhw_t1: default_dhw_t1_topic(),
         },
         dhw: DhwConfig {
             cosy_windows: vec![
@@ -519,6 +526,17 @@ fn query_latest_room_temp(client: &Client, config: &Config, topic: &str) -> Resu
     query_single_value(client, config, &token, &flux)
 }
 
+/// Query latest DHW T1 (cylinder top) from InfluxDB Multical data.
+/// Uses _field="value" (emon measurement format, not zigbee).
+fn query_latest_dhw_t1(client: &Client, config: &Config) -> Result<Option<f64>> {
+    let token = influx_token(&config.influx_token_env)?;
+    let flux = format!(
+        "from(bucket: \"{}\") |> range(start: -2h) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"value\") |> last() |> keep(columns: [\"_value\"])",
+        config.influx_bucket, config.topics.dhw_t1
+    );
+    query_single_value(client, config, &token, &flux)
+}
+
 fn query_single_value(
     client: &Client,
     config: &Config,
@@ -575,6 +593,7 @@ fn write_influx_decision(client: &Client, config: &Config, entry: &DecisionLog) 
         influx_field("aldora_temp_c", entry.aldora_temp_c),
         influx_field("outside_temp_c", entry.outside_temp_c),
         influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
+        influx_field("dhw_t1_c", entry.dhw_t1_c),
         influx_field("compressor_util", entry.compressor_util),
         influx_field("elec_consumption_w", entry.elec_consumption_w),
         influx_field("yield_power_kw", entry.yield_power_kw),
@@ -1050,6 +1069,7 @@ fn run_outer_cycle(
     let leather_temp = query_latest_room_temp(client, config, &config.topics.leather_temp).ok().flatten();
     let aldora_temp = query_latest_room_temp(client, config, &config.topics.aldora_temp).ok().flatten();
     let hwc_storage_temp = parse_f64(ebusd_read(config, "700", "HwcStorageTemp"));
+    let dhw_t1 = query_latest_dhw_t1(client, config).ok().flatten();
 
     let tariff_period = classify_tariff_period(now_time);
 
@@ -1293,6 +1313,7 @@ fn run_outer_cycle(
         aldora_temp_c: aldora_temp,
         outside_temp_c: outside_temp,
         hwc_storage_temp_c: hwc_storage_temp,
+        dhw_t1_c: dhw_t1,
         run_status: status,
         compressor_util,
         elec_consumption_w: elec_consumption,
