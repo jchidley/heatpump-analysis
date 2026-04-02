@@ -100,7 +100,7 @@ Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-lo
 
 3. **DHW steals preheat.** Night of 1-2 Apr: cylinder drifted to 39.5°C (barely below 40°C trigger), DHW charged for 1.5h during preheat, leather dropped from 20.1→19.9°C. By 07:15 leather was 19.9°C - below comfort band. **Not fixing in Phase 1b** - 40°C trigger is already marginal for morning hot water, and the Phase 2 overnight planner will schedule DHW and preheat sequentially.
 
-### Phase 1b: Bug fixes + live solver 🟡 IN PROGRESS
+### Phase 1b: Bug fixes + live solver ✅ DONE (2 Apr 2026)
 
 **Bug fixes: ✅ DONE (2 Apr 2026)**
 
@@ -125,6 +125,19 @@ Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-lo
 ### Phase 2: Overnight planner 🟡 DEPLOYED (2 Apr 2026, awaiting first overnight run)
 
 Replaced fixed `overnight_curve=0.10` and `preheat_hours=2.0` with adaptive overnight strategy.
+
+**Implementation (2 Apr 2026):**
+- Cooling simulation: exponential decay with τ=15h toward equilibrium (outside + 2.5°C internal gains)
+- Reheat rate: empirical 7500 W per °C/h from pilot data (surplus/7500 = °C/h)
+- Latest-start search: 30-min steps backward from 07:00, 30-min safety margin
+- Cold night override: below 2°C outside, maintain 19.5°C (don't coast)
+- Three actions: `overnight_coast` (curve 0.10), `overnight_preheat` (model curve + inner loop), `overnight_maintain` (cold nights)
+
+**Known limitations (to tune with more overnight data):**
+- Reheat rate calibrated from 2 data points only (1-2 Apr at 10°C, 25 Mar at 5-7°C)
+- Solar gain not included in reheat estimate (conservative — will overshoot on sunny mornings)
+- Uses average overnight outside temp for cooling sim (should use hourly forecast)
+- DHW scheduling still uses Phase 1a logic (HwcStorageTemp < 40°C in Cosy windows)
 
 **Key constraint**: reheat capacity. HP surplus = 5000W - 261×(20.5-outside). Analysis:
 
@@ -223,6 +236,19 @@ Open question: at what temperature does eco mode become cheaper *in total* (DHW 
 
 **HwcMode (eco/normal) control**: Currently read-only via `hmu HwcMode` - must be changed on the aroTHERM controller physically. Investigation needed: the VWZ AI (0x76) has extensive undecoded B512/B513 register traffic and its own control panel (manual p22). There may be a writable register on the VWZ AI or an undiscovered VRC 700 register that controls eco/normal. The SetMode message from VRC 700 → VWZ AI includes DHW mode bits - if we can decode these, we might be able to set HwcMode indirectly. Until then, the planner must detect the active mode from max flow temp (≥50°C = normal, <50°C = eco) and plan accordingly.
 
+### Phase 2b: DHW scheduling with T1 🔴 NEXT
+
+Replace Phase 1a DHW logic (HwcStorageTemp < 40°C in Cosy windows) with T1-based decisions:
+1. Add InfluxDB T1 query to controller (topic `emon/multical/dhw_t1`)
+2. At 22:00 Cosy window: if T1 < comfort_threshold (TBD, needs household experiment), trigger `HwcSFMode=load`
+3. Monitor charge completion from T1 ≥ 45°C (not VRC 700 timeout)
+4. At 04:00: top-up if T1 has decayed below threshold overnight
+5. During preheat: don't trigger DHW even if HwcStorageTemp < 40°C (T1 is more reliable)
+
+Prerequisites:
+- Household experiment: what's the minimum acceptable T1 for morning showers?
+- HwcMode investigation: can we control eco/normal via eBUS?
+
 ### Phase 3: Predictive DHW compensation
 
 15 min before predicted DHW charge, boost target_flow to pre-raise Leather by ~0.3°C. After DHW finishes, immediate outer-loop recalc.
@@ -247,7 +273,7 @@ Open question: at what temperature does eco mode become cheaper *in total* (DHW 
 |---|---|
 | `src/bin/adaptive-heating-mvp.rs` | Controller source (deployed as `src/main.rs` on pi5data) |
 | `model/adaptive-heating-mvp.toml` | Config |
-| `model/control-table.json` | MWT lookup (Phase 1 only, removed in 1b) |
+| `src/lib.rs` | Library crate exposing thermal solver for binary |
 | `src/thermal/display.rs` | `solve_equilibrium_temps()`, `bisect_mwt_for_room()` |
 | `src/thermal/physics.rs` | Energy balance, radiator output, thermal mass |
 | `data/canonical/thermal_geometry.json` | Room geometry (needed by solver in Phase 1b) |
