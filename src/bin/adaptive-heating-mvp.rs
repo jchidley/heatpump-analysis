@@ -1,4 +1,5 @@
 use std::fs::{self, OpenOptions};
+use std::sync::OnceLock;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -443,19 +444,49 @@ fn save_runtime_state(path: &Path, state: &RuntimeState) -> Result<()> {
     Ok(())
 }
 
+/// Cached InfluxDB token (resolved once, reused for all queries).
+static INFLUX_TOKEN_CACHE: OnceLock<String> = OnceLock::new();
+
+/// Get InfluxDB token (cached after first call).
+///
+/// Production (systemd): loaded from EnvironmentFile `/etc/adaptive-heating-mvp.env`
+/// which sets INFLUX_TOKEN. File is root:root 0600.
+///
+/// Development: falls back to `ak get influxdb` (GPG-encrypted keystore on dev machine).
+/// This fallback will fail on pi5data if ak is not installed — that's intentional.
 fn influx_token(env_name: &str) -> Result<String> {
+    if let Some(cached) = INFLUX_TOKEN_CACHE.get() {
+        return Ok(cached.clone());
+    }
+    let token = resolve_influx_token(env_name)?;
+    let _ = INFLUX_TOKEN_CACHE.set(token.clone());
+    Ok(token)
+}
+
+fn resolve_influx_token(env_name: &str) -> Result<String> {
+    // Primary: environment variable (set by systemd EnvironmentFile)
     if let Ok(v) = std::env::var(env_name) {
         if !v.trim().is_empty() {
             return Ok(v);
         }
     }
+    // Fallback: ak keystore (development only)
+    warn!("{} not set in environment — falling back to 'ak get influxdb' (dev mode)", env_name);
     let output = Command::new("ak")
         .arg("get")
         .arg("influxdb")
         .output()
-        .context("failed to run 'ak get influxdb'")?;
+        .context(format!(
+            "{} not set and 'ak get influxdb' failed. \
+             Production: set {} in /etc/adaptive-heating-mvp.env",
+            env_name, env_name
+        ))?;
     if !output.status.success() {
-        return Err(anyhow!("'ak get influxdb' failed"));
+        return Err(anyhow!(
+            "{} not set and 'ak get influxdb' returned error. \
+             Production: set {} in /etc/adaptive-heating-mvp.env",
+            env_name, env_name
+        ));
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
