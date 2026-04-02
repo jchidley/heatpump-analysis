@@ -1,7 +1,7 @@
 # Repository Overview
 
 ```yaml
-commit: 296afce
+commit: 8d79935
 branch: main
 commit_date: 2026-04-02
 working_tree: clean
@@ -17,7 +17,7 @@ Three main functions:
 
 2. **Thermal model** — 13-room thermal network calibrated from Zigbee temperature sensors and InfluxDB data. Includes equilibrium solver, MWT bisection for control, and DHW session analysis. Calibration, validation, operational analysis, and reproducibility snapshots.
 
-3. **Adaptive heating V2** — live model-predictive controller on `pi5data`. Two-loop architecture: outer loop (15 min) uses forecast + thermal model → target flow temp; inner loop (60s) nudges VRC 700 heat curve until `Hc1ActualFlowTempDesired` matches target. Reads eBUS + InfluxDB, writes to VRC 700 via eBUS, logs to InfluxDB and JSONL. Mobile controls via z2m-hub.
+3. **Adaptive heating V2** — live model-predictive controller on `pi5data`. Two-loop architecture: outer loop (15 min) uses forecast + **live thermal solver** (`bisect_mwt_for_room`) → target flow temp; inner loop (60s) nudges VRC 700 heat curve until `Hc1ActualFlowTempDesired` matches target. Reads eBUS + InfluxDB, writes to VRC 700 via eBUS, logs to InfluxDB and JSONL. Mobile controls via z2m-hub.
 
 Beyond this repo:
 - **z2m-hub** (`~/github/z2m-hub/`) — Zigbee automations, DHW tracking/boost, mobile dashboard, and heating mode control proxy
@@ -50,7 +50,8 @@ Complete rewrite from V1 bang-bang to V2 model-predictive control:
 - **Z1OpMode=night on startup** (SP=19): eliminates VRC 700 Optimum Start, day/night transitions, and timer interference. Clean restore on shutdown (`Z1OpMode=auto`, `Hc1HeatCurve=0.55`).
 - **Removed flow_offset and room_offset EMAs** — inner loop replaces both. room_offset ran away to +2.18°C overnight.
 - **Phase 1b bug fixes deployed**: inner loop floor guard (halve gain below curve 0.25), ΔT stabilisation (use default ΔT when compressor not actively heating).
-- Source grew from 900 to 1428 lines.
+- **Phase 1b live solver deployed**: replaced `ControlTable` (104-point JSON bilinear interpolation) with direct `bisect_mwt_for_room()` calls from the calibrated thermal physics model. Created `src/lib.rs` exposing thermal module as library crate. Solver matches old table exactly (29.1°C at 5°C/0W).
+- Source grew from 900 to ~1350 lines (net reduction from removing ControlTable).
 
 ### VRC 700 curve resolution discovery (2026-04-02)
 
@@ -72,7 +73,11 @@ Rust replacement for `scripts/dhw-inflection-detector.py`. Raw 10s data for even
 
 ### Thermal display.rs expanded (78 → 993 lines)
 
-Added `solve_equilibrium_temps()`, `bisect_mwt_for_room()`, `generate_control_table()` — the solver functions that Phase 1b live solver will call from the adaptive controller.
+Added `solve_equilibrium_temps()`, `bisect_mwt_for_room()`, `generate_control_table()` — solver functions now called directly by the adaptive controller (Phase 1b complete).
+
+### src/lib.rs created (2 lines)
+
+Exposes `pub mod thermal` as library crate. Enables `adaptive-heating-mvp` binary to call thermal solver functions via `heatpump_analysis::thermal::bisect_mwt_for_room()`.
 
 ### Heat curve exponent updated
 
@@ -90,5 +95,5 @@ Best fit 1.25 (was 1.27) from expanded 17-point pilot data. VRC 700 formula: `fl
 | Code-truth docs (`docs/code-truth/`) | 5 |
 | Config files | 4 (config.toml, thermal-config.toml, adaptive-heating-mvp.toml, regression-thresholds.toml) |
 | Deploy files | 1 (adaptive-heating-mvp.service) |
-| Canonical data | 2 (thermal_geometry.json, control-table.json) |
+| Canonical data | 1 (thermal_geometry.json) — control-table.json is legacy, no longer loaded |
 | Git submodules | 6 |

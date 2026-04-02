@@ -1,4 +1,4 @@
-<!-- code-truth: 296afce -->
+<!-- code-truth: 8d79935 -->
 
 # Decisions
 
@@ -40,7 +40,7 @@
 
 **Why**: Different runtime model (long-lived service vs short-lived CLI), different deployment (pi5data vs dev machine), different dependency profile (async vs blocking).
 
-**Evolution**: Phase 1b will create `src/lib.rs` to share the thermal solver (`bisect_mwt_for_room`) with the adaptive controller. The binary remains separate but gains a code dependency on the thermal module.
+**Evolution**: Phase 1b created `src/lib.rs` to share the thermal solver (`bisect_mwt_for_room`) with the adaptive controller. The binary remains separate but depends on the thermal module. On pi5data, the Cargo.toml uses `[lib] name = "heatpump_analysis"` so the import path matches. Thermal source files + `thermal_geometry.json` are synced to pi5data for compilation.
 
 ### D6: VRC 700 as steerable state machine, not replaced
 

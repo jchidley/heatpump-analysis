@@ -1,4 +1,4 @@
-<!-- code-truth: 296afce -->
+<!-- code-truth: 8d79935 -->
 
 # Repository Map
 
@@ -48,9 +48,13 @@ Reads from `~/github/octopus/data/`. Gas-vs-HP comparison, baseload analysis.
 
 Backtest model for overnight heating strategies.
 
-### `src/thermal.rs` — Thin facade (30 lines)
+### `src/lib.rs` — Library crate entry (2 lines)
 
-Re-exports public entry points from 16 submodules. All implementation is in `src/thermal/`.
+Exposes `pub mod thermal` so standalone binaries (`adaptive-heating-mvp`) can call solver functions via `heatpump_analysis::thermal::bisect_mwt_for_room()`.
+
+### `src/thermal.rs` — Thin facade (34 lines)
+
+Re-exports public entry points from 16 submodules. Solver re-exports: `bisect_mwt_for_room`, `solve_equilibrium_temps`, `ThermalError`, `ThermalResult`.
 
 ### `src/thermal/` — Thermal model submodules (~5,500 lines total)
 
@@ -81,12 +85,12 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 
 Live V2 adaptive heating controller. Two-loop architecture:
 
-**Outer loop** (every 900s): Open-Meteo forecast → thermal model control table → target flow temp → initial curve guess via heat curve formula.
+**Outer loop** (every 900s): Open-Meteo forecast → live thermal solver (`bisect_mwt_for_room`) → target flow temp → initial curve guess via heat curve formula.
 
 **Inner loop** (every 60s): proportional feedback on `Hc1ActualFlowTempDesired` toward target flow. Gain 0.05, deadband 0.5°C, max step 0.20. Floor guard: halve gain + double deadband when curve < 0.25.
 
 Key components:
-- `calculate_required_curve()` — forecast + control table → MWT → flow → curve. Uses default ΔT when compressor not actively heating (ΔT stabilisation fix).
+- `calculate_required_curve()` — forecast + live solver → MWT → flow → curve. Uses default ΔT when compressor not actively heating (ΔT stabilisation fix).
 - `run_outer_cycle()` — full sensor sweep, mode-specific control logic, writes initial curve
 - `run_inner_cycle()` — light eBUS reads, proportional curve adjustment
 - `restore_baseline()` — write `Hc1HeatCurve=0.55` + `Z1OpMode=auto` on shutdown
@@ -110,7 +114,7 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | `config.toml` | `src/main.rs`, `src/config.rs`, most modules | Domain constants, thresholds, feed IDs |
 | `model/thermal-config.toml` | `src/thermal/config.rs` | InfluxDB, test nights, calibration bounds |
 | `model/adaptive-heating-mvp.toml` | `src/bin/adaptive-heating-mvp.rs` | eBUS host, InfluxDB, Cosy windows, baseline values, room topics, inner loop tuning |
-| `model/control-table.json` | `src/bin/adaptive-heating-mvp.rs` | MWT lookup table (Phase 1 only — Phase 1b replaces with live solver) |
+| `model/control-table.json` | **No longer loaded** | Legacy MWT lookup table (replaced by live solver in Phase 1b) |
 | `artifacts/thermal/regression-thresholds.toml` | `src/bin/thermal-regression-check.rs` | Regression gates |
 | `data/canonical/thermal_geometry.json` | `src/thermal/geometry.rs` | Room geometry single source of truth |
 
@@ -152,9 +156,8 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | Regression CI gates | `src/bin/thermal-regression-check.rs` + `artifacts/thermal/regression-thresholds.toml` |
 | **V2 control logic (outer loop)** | `src/bin/adaptive-heating-mvp.rs::run_outer_cycle()` |
 | **V2 control logic (inner loop)** | `src/bin/adaptive-heating-mvp.rs::run_inner_cycle()` |
-| **V2 forecast + model → curve** | `src/bin/adaptive-heating-mvp.rs::calculate_required_curve()` |
+| **V2 forecast + model → curve** | `src/bin/adaptive-heating-mvp.rs::calculate_required_curve()` → `heatpump_analysis::thermal::bisect_mwt_for_room()` |
 | **Adaptive heating config** | `model/adaptive-heating-mvp.toml` |
-| **Control table (Phase 1)** | `model/control-table.json` (Phase 1b replaces with live solver) |
 | **Adaptive heating modes/API** | `src/bin/adaptive-heating-mvp.rs` (HTTP handlers + Mode enum) |
 | **Adaptive heating baseline** | `model/adaptive-heating-mvp.toml` `[baseline]` + `restore_baseline()` |
 | **V2 design / phase plan** | `docs/adaptive-heating-v2-design.md` |

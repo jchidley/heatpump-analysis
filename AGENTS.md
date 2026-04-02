@@ -53,7 +53,8 @@ src/thermal/         → 16 submodules: config, geometry, physics, solar, wind, 
                        display, error, influx, report, dhw_sessions
 src/overnight.rs     → Overnight strategy backtest
 
-data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust + Python)
+src/lib.rs               → Library crate: exposes thermal solver for adaptive-heating-mvp
+data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust thermal solver + adaptive controller)
 model/thermal-config.toml → Thermal model config (InfluxDB, test nights, bounds)
 model/adaptive-heating-mvp.toml → Adaptive heating MVP config
 deploy/adaptive-heating-mvp.service → systemd unit for pi5data

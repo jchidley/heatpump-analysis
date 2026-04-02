@@ -1,4 +1,4 @@
-<!-- code-truth: 296afce -->
+<!-- code-truth: 8d79935 -->
 
 # Patterns
 
@@ -20,7 +20,7 @@ All domain constants live in `config.toml` and are accessed via `config::config(
 
 `adaptive-heating-mvp` loads its own `Config` from `model/adaptive-heating-mvp.toml`. Fully independent of both `config.rs` and `ThermalConfig`. Includes baseline values, eBUS host, InfluxDB connection, room topics, inner loop tuning parameters.
 
-**Cost to break**: None — this is intentionally standalone. Phase 1b will add a dependency on the thermal solver via `src/lib.rs`, but config remains separate.
+**Cost to break**: Config remains separate, but the binary now depends on the thermal solver via `src/lib.rs`. Changing thermal module APIs (especially `bisect_mwt_for_room` signature or `thermal_geometry.json` schema) requires updating both the analysis CLI and the adaptive controller.
 
 ## Two-Loop Control Architecture (V2)
 
