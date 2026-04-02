@@ -186,12 +186,14 @@ Normal mode by outside temp:
 
 The 22:00-00:00 Cosy window is preferred for DHW on cold nights. But T1 decays at **0.25°C/hour** (measured, 20 observations) — a 22:00 charge to 45.5°C delivers **~43.3°C by 07:00** (9h × 0.25 = 2.25°C drop). This is marginal for shower comfort (household prefers ≥43°C at the tap). Verified: 1 Apr charge peaked at 45.5°C at 14:00, decayed to 43.6°C by 22:00 (−1.9°C in 8h, no draws).
 
-Options to compensate:
-- Charge to 47-48°C instead of 45°C (costs ~5% more electricity, COP penalty small)
-- Use the 04:00-07:00 window instead (fresh charge, but competes with preheat)
-- Charge at 22:00 AND top-up at 04:00 if T1 < threshold (belt and braces, costs ~2kWh extra)
+**Minimum acceptable T1 for showers is TBD** — needs household experiment. 45°C is definitely fine; 43°C might be too. If 43°C is acceptable, a 22:00 charge to 45°C works. If not, charge to 47-48°C (small COP penalty) or top up at 04:00.
 
-A wasted 22:00 charge (no morning draw) costs ~9p. This frees the entire 04:00-07:00 window for preheat.
+**We have better data than the HP.** The VRC 700 decides DHW charges from HwcStorageTemp (VR10 NTC at 600mm, 0.5°C resolution, 30s updates, 5K hysteresis = triggers at 40°C). We have Multical T1 at the cylinder top (actual hot outlet temp, 0.01°C, 2s). The controller should make DHW decisions from T1, not from HwcStorageTemp. This means:
+- Trigger DHW from T1 threshold (e.g. T1 < 43°C) via `HwcSFMode=load`, not relying on the VRC 700's hysteresis
+- Monitor charge completion from T1 reaching target (e.g. T1 ≥ 45°C), not from VRC 700 timeout
+- Track overnight T1 decay and only top up if T1 is actually below comfort threshold by morning
+
+**Preferred strategy: charge at 22:00, monitor T1 overnight, top up at 04:00 only if needed.** A wasted 22:00 charge costs ~9p. This frees the 04:00-07:00 window for preheat on cold mornings.
 
 - Mild nights (>8°C): eco mode, charge in 04:00-07:00 window (~90 min budget). Morning preheat has surplus capacity.
 - Cool nights (2-8°C): eco mode in 22:00-00:00 window the night before. Morning 100% for preheat.
