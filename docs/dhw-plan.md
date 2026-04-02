@@ -126,12 +126,14 @@ Every charge has two phases, visible in sensor data:
 
 **Crossover = cylinder is full.** Confirmed across 32+ charge cycles (100%).
 
-### Charge duration
+### Charge duration and cost
 
-| Mode | Avg duration | 120-min timeout rate | Avg COP | Max flow temp |
-|---|---|---|---|---|
-| **Eco** | 102 min | 40% (nearly all below 5°C) | ~3.3 | <50°C |
-| **Normal** | 60 min | 2% | ~2.5 | ≥50°C |
+From 402 AM charges (emoncms, Oct 2024 – Mar 2026) + 436 cycles ≥30 min:
+
+| Mode | Avg duration | 120-min timeout rate | Electricity | COP | Max flow temp | House temp drop |
+|---|---|---|---|---|---|---|
+| **Eco** | 102 min | 40% (nearly all below 5°C) | 1.66 kWh | ~3.3 | <50°C | 0.5°C (cold), 0.2°C (mild) |
+| **Normal** | 60 min | 2% | 1.19 kWh | ~2.5 | ≥50°C | 0.2°C (cold), 0.1°C (mild) |
 
 Eco is cheaper per kWh (COP ~3.3 vs ~2.5) but takes longer and fails in cold weather. **Seasonal switch**: change to normal when mornings feel cold (typically Nov–Mar), back to eco when the house is warm through the morning. Cannot be automated — `hmu HwcMode` is read-only via eBUS. Investigation ongoing: VWZ AI B512/B513 registers may offer a writable path.
 
@@ -155,7 +157,7 @@ When a charge ends without crossover (HwcStorageTemp never reached T1), the cyli
 | <1.5°C | Dissolved (mixing) | Restored to full at lower temp |
 | 1.5–3°C | Intermediate | Interpolated. Diffuses over ~8h (√κt) |
 
-z2m-hub implements this gap-based model for remaining litres after partial charges.
+Thermal diffusion blurs the thermocline: diffusion length = √(κ × t) where κ = 0.15 mm²/s. After 6h: ~57mm. After 8h: ~66mm (fully diffused). z2m-hub models this as `effective_gap = gap × exp(-hours/8)`.
 
 ## Household usage
 
@@ -291,6 +293,14 @@ Strategy:
 - Autoloads `recommended_full_litres` from InfluxDB on startup
 - API: `GET /api/hot-water`, `GET /api/dhw/status`, `POST /api/dhw/boost`
 
+**Remaining-litres algorithm:**
+
+- **During charge** (bc_flow > 900): watch for HwcStorage ≥ T1_at_charge_start. On crossover: `remaining = full_litres`
+- **After charge (crossover)**: `remaining = full_litres`, `effective_temp = T1`
+- **After charge (no crossover)**: gap < 1.5°C → thermocline dissolved, `remaining = full_litres` at lower temp. Gap > 3.5°C → sharp thermocline, remaining unchanged. Gap 1.5–3.5°C → interpolate + diffusion model
+- **During draws**: subtract Multical volume. Overrides: HwcStorage crash >5°C → cap at 148L minus further draws. T1 drop >0.5°C → remaining ≤ 20L. T1 drop >1.5°C → remaining = 0
+- **Standby**: `effective_T1 = T1_at_charge - 0.25 × hours`. Below 38°C → remaining = 0. 38–42°C → linear scale
+
 ### dhw-sessions CLI (historical analysis)
 
 ```bash
@@ -323,6 +333,34 @@ Currently shows litres + simple status. Planned improvements:
 - **Empty** (T1 dropped >1°C during draw): red
 - During charge: "Heating below" / "Heating uniformly" (crossover)
 - Boost button: estimated time to crossover
+
+## Reference data
+
+### Morning charge trace (21 March 2026, eco mode, 05:10–07:05 UTC)
+
+| Time | HP FlowT | HP ReturnT | HP ΔT | Heat kW | Elec W | T1 | T2 |
+|------|----------|-----------|-------|---------|--------|-----|-----|
+| 05:10 (start) | 31°C | 30°C | 1°C | 2.0 | 780 | 42.0 | 23.3 |
+| 05:30 | 39°C | 37°C | 2°C | 3.1 | 921 | 42.3 | 24.3 |
+| 06:00 | 43°C | 41°C | 2°C | 3.0 | 993 | 42.6 | 26.6 |
+| 06:30 | 46°C | 44°C | 2°C | 3.0 | 1039 | 43.4 | 29.7 |
+| 07:00 | 48°C | 46°C | 2°C | 2.9 | 1069 | 44.9 | 32.2 |
+| 07:05 (end) | 48°C | 46°C | 2°C | 2.9 | 1072 | 45.2 | 32.4 |
+
+115 min, 1.3 m³/h, 5.75 kWh thermal, 1.92 kWh electrical. **COP 3.0**. Constant ~2°C primary ΔT throughout (eco mode).
+
+Heat exchanger approach: start −4.7°C (HP cooler than T1), mid +0.6°C (crossing over), end +3.2°C. Excellent for indirect coil-in-coil.
+
+### Energy accounting (21 March)
+
+| | Value |
+|---|---|
+| HP thermal input (morning charge) | 5.75 kWh |
+| Energy stored in usable hot zone (149L, 45−25°C) | 3.5 kWh |
+| Energy stored in warm zone (154L, 28−15°C) | 2.3 kWh |
+| Energy removed by showers (180L, 44.5−25°C) | 4.1 kWh |
+
+Showers removed 117% of usable hot energy — this is why the cylinder fully depleted.
 
 ## Next steps
 
