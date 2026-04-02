@@ -94,7 +94,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - **House**: HTC 261 W/K, 180m2, 1930s solid brick + 2010 loft. HP maxes out at ~2°C outside.
 - **Cosy tariff**: THREE windows (04:00-07:00, 13:00-16:00, 22:00-00:00). Battery effective rate 14.63p/kWh.
 - **Overnight**: 19°C setback 00:00-04:00. DHW windows: 05:30-07:00, 13:00-15:00, 22:00-00:00. See `docs/overnight-strategy-analysis.md`.
-- **DHW**: 300L Kingspan Albion, usable 177-183L from full charge (243L geometric max, ~75% plug flow efficiency), 45°C target, eco/normal manual seasonal switch. CylinderChargeHyst=5K (triggers at 40°C). HwcStorage crossover (≥ T1_pre) = definitive "full" signal. See `docs/dhw-cylinder-analysis.md`.
+- **DHW**: 300L Kingspan Albion, usable 177–183L from full charge (243L geometric max, ~75% plug flow efficiency), 45°C target, eco/normal manual seasonal switch. Eco charges avg 102 min (40% hit 120-min timeout, nearly all incomplete below 5°C). Normal charges avg 60 min (2% timeout). See `docs/adaptive-heating-v2-design.md` DHW duration model. CylinderChargeHyst=5K (triggers at 40°C). HwcStorage crossover (≥ T1_pre) = definitive "full" signal. See `docs/dhw-cylinder-analysis.md`.
 - **DHW cylinder sensors**: T1 (`emon/multical/dhw_t1`) = cylinder top / hot out. T2 (`emon/multical/dhw_t2`) = mains inlet / cold in. VR 10 NTC in dry pocket above bottom coil (`ebusd/poll/HwcStorageTemp`) = what VRC 700 uses for charging decisions. See `docs/dhw-fixes.md`.
 - **DHW system**: 3 eBUS devices - HMU (outdoor unit), VWZ AI (indoor unit, has SP1 cylinder sensor), VRC 700 (controller, scheduling brain). See `docs/vrc700-settings-audit.md`.
 - **⚠ eBUS timer encoding**: Never use `00:00` as a timer end time - use `-:-` instead. TTM byte `0x00` = start of day (not end). Byte `0x90` = `-:-` = "until end of day". A window with end < start is silently rejected by the VRC 700. `HwcSFMode` can get stuck on `load` after boost - monitor and reset to `auto`. See `docs/vrc700-settings-audit.md`.
@@ -129,10 +129,10 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy - do not deploy. DHW boost via z2m-hub.
 - **DHW inflection detector** (`scripts/dhw-inflection-detector.py`) deployed to pi5data `/usr/local/bin/`. Weekly cron (Sunday 3am) analyses draws at 2s resolution, writes inflection measurements to InfluxDB (`dhw_inflection`) and recommended capacity to `dhw_capacity`. z2m-hub v0.2.0 autoloads `recommended_full_litres` on startup. Run manually: `uv run --with requests python scripts/dhw-inflection-detector.py --days 14 --verbose`.
 - **Adaptive heating MVP** deployed on pi5data as systemd service. HTTP API on port 3031. Mobile controls proxied via z2m-hub (:3030). Config: `model/adaptive-heating-mvp.toml`. Spec: `docs/adaptive-heating-mvp.md`. Kill switch restores known-good baseline.
-- **V1 pilot findings** (31 Mar–1 Apr 2026): Bang-bang control (±0.10 curve every 15 min) ping-ponged 0.55→0.10→1.00. Leather τ=15h means 15-min adjustments are noise. VRC 700 curve floor is 0.10. Null-read bug fixed.
-- **Phase 1a deployed** (1–2 Apr 2026): Two-loop control. Outer (900s): forecast→model→target_flow. Inner (60s): proportional feedback on Hc1ActualFlowTempDesired. Converges in 1 tick. SP=19/Z1OpMode=night for zero overnight rad leakage. `room_offset` removed (EMA ran away overnight). `preheat_hours=2.0` (05:00 start; battery makes Cosy alignment irrelevant for heating).
-- **No heating above 17°C outside** — empirically, solar/internal gains sufficient. Curve formula compresses at SP=19 above 15°C but never hits ceiling in operating range.
-- **45°C max flow on heating** — emitter capacity and COP limit.
+- **V1 pilot findings** (31 Mar-1 Apr 2026): Bang-bang control (±0.10 curve every 15 min) ping-ponged 0.55→0.10→1.00. Leather τ=15h means 15-min adjustments are noise. VRC 700 curve floor is 0.10. Null-read bug fixed.
+- **Phase 1a deployed** (1-2 Apr 2026): Two-loop control. Outer (900s): forecast→model→target_flow. Inner (60s): proportional feedback on Hc1ActualFlowTempDesired. Converges in 1 tick. SP=19/Z1OpMode=night for zero overnight rad leakage. `room_offset` removed (EMA ran away overnight). `preheat_hours=2.0` (05:00 start; battery makes Cosy alignment irrelevant for heating).
+- **No heating above 17°C outside** - empirically, solar/internal gains sufficient. Curve formula compresses at SP=19 above 15°C but never hits ceiling in operating range.
+- **45°C max flow on heating** - emitter capacity and COP limit.
 - **Overnight not a free variable**: HP surplus = 5000W - 261×(20.5-outside). Below 2°C the HP is in deficit. Overnight planner (Phase 2) must raise curve at cold temps, not rely on fixed 0.10.
 - **Known Phase 1a issues** (to fix in 1b): ~~inner loop hunting~~ (FIXED: gain 0.10→0.05); outer/inner ΔT fight when compressor cycles; DHW stole 1.5h of preheat window.
 - **VRC 700 heat curve formula**: `flow = setpoint + curve × (setpoint - outside)^1.25` (RMSE 0.63°C from 70 pilot points, deduplicated daytime). Vaillant manual says 1.10 but underpredicts by 2.5-3.1°C at curves ≥0.50. **⚠ This is a rough actuator approximation** - VRC 700 has hidden adjustments (Optimum Start ramp ~3h before timer, `Hc1MinFlowTempDesired`=20°C, undocumented offsets). V2 inner feedback loop (curve nudge on `Hc1ActualFlowTempDesired` readback) replaces `flow_offset` EMA. All thermal model validation must use actual measured flow/return temps, never formula predictions.
@@ -158,7 +158,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - z2m-hub patched to proxy adaptive-heating-mvp mode controls. Phone dashboard at `http://pi5data:3030` has heating mode buttons.
 - `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
-- `scripts/dhw-inflection-detector.py` is retired — replaced by `dhw-sessions` subcommand in Rust. Python had 1-min averaging bugs on flow/T2 and no HWC tracking during draws.
+- `scripts/dhw-inflection-detector.py` is retired - replaced by `dhw-sessions` subcommand in Rust. Python had 1-min averaging bugs on flow/T2 and no HWC tracking during draws.
 
 ## Boundaries
 

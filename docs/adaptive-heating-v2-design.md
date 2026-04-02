@@ -146,10 +146,48 @@ Forward simulation: `overnight_plan(current_leather, forecast[], dhw_expected, t
 2. At each hour, check: can the HP reheat from here to 20.5°C by 07:00?
 3. Binary search on latest start time for Leather ≥ 20°C by 07:00
 4. If outside < 2°C: maintain minimum curve to prevent unrecoverable drop
-5. Account for DHW interruption - schedule DHW before or after preheat, not during
+5. Schedule DHW in the optimal Cosy window (see DHW duration model below)
 6. Battery handles cost, so preheat timing is purely thermal, not tariff-aligned
 
-Outputs: overnight curve profile (may vary hourly) + preheat start time.
+Outputs: overnight curve profile (may vary hourly) + preheat start time + DHW window.
+
+#### DHW duration model (prerequisite)
+
+From 402 AM DHW charges (Oct 2024 - Mar 2026 emoncms data), two populations:
+
+| Mode | n | Avg duration | Hit 120-min timeout | Avg max flow |
+|------|---|-------------|--------------------|--------------|
+| **Eco** (flow <50°C) | 280 | 102 min | 111 (40%) | 47.8°C |
+| **Normal** (flow ≥50°C) | 122 | 60 min | 2 (2%) | 52.6°C |
+
+Eco mode by outside temp:
+
+| Outside | n | Avg min | Hit timeout | Notes |
+|---------|---|---------|-------------|-------|
+| <2°C | 19 | 118 min | 95% | **Nearly all incomplete** |
+| 2-5°C | 38 | 119 min | 89% | Mostly incomplete |
+| 5-8°C | 55 | 111 min | 53% | Borderline |
+| 8-12°C | 88 | 101 min | 23% | Usually completes |
+| 12°C+ | 80 | 86 min | 13% | Fine |
+
+Normal mode by outside temp:
+
+| Outside | n | Avg min | Hit timeout | Notes |
+|---------|---|---------|-------------|-------|
+| <2°C | 8 | 81 min | 1 | Works but slow |
+| 2-5°C | 24 | 59 min | 1 | Good |
+| 5-8°C | 34 | 48 min | 0 | Fast |
+| 8-12°C | 31 | 57 min | 0 | Good |
+| 12°C+ | 25 | 73 min | 0 | Fine |
+
+**Eco mode is cheaper** (lower flow = better COP) but below ~8°C it takes so long that the heating steal becomes costly: 261 W/K × ΔT × extra_minutes of lost heating. At some crossover temperature, the total system cost (DHW energy + heating recovery) favours normal mode.
+
+**DHW scheduling decision** for the overnight planner:
+- Mild nights (>8°C): eco mode, charge in 04:00-07:00 Cosy window before preheat (~90 min budget)
+- Cold nights (2-8°C): eco mode if DHW can fit in 22:00-00:00 window the night before, freeing the morning for preheat. Or normal mode in the morning (~60 min).
+- Coldest nights (<2°C): normal mode mandatory (eco hits timeout and is incomplete). Schedule in 22:00-00:00 if cylinder needs it, to protect morning preheat. HP is at capacity — every minute matters.
+
+**HwcMode (eco/normal) control**: Currently read-only via `hmu HwcMode` — must be changed on the aroTHERM controller physically. Investigation needed: the VWZ AI (0x76) has extensive undecoded B512/B513 register traffic and its own control panel (manual p22). There may be a writable register on the VWZ AI or an undiscovered VRC 700 register that controls eco/normal. The SetMode message from VRC 700 → VWZ AI includes DHW mode bits — if we can decode these, we might be able to set HwcMode indirectly. Until then, the planner must detect the active mode from max flow temp (≥50°C = normal, <50°C = eco) and plan accordingly.
 
 ### Phase 3: Predictive DHW compensation
 
