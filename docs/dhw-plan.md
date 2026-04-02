@@ -2,6 +2,20 @@
 
 Domestic hot water management for 6 Rhodes Avenue. 300L Kingspan Albion cylinder, Vaillant Arotherm Plus 5kW, Multical 403 metering, z2m-hub real-time tracking.
 
+## Scope and related docs
+
+This document is the canonical reference for **DHW operating policy, cylinder behaviour, comfort/capacity model, and rationale**.
+
+Use other docs for adjacent needs:
+- **Current live deployment snapshot:** `docs/current-production-state.md`
+- **Historical evidence / reproducibility roadmap:** `docs/history-evidence-plan.md`
+- **Code locations / module structure in this repo:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
+- **Secrets / InfluxDB token handling:** `deploy/SECRETS.md`
+- **Agent-facing project memory / gotchas:** `AGENTS.md`
+- **Broader documentation guide:** `docs/README.md`
+
+`z2m-hub` is a separate repo/service; this document describes its role in the live DHW system, but not its full source layout.
+
 ## Objective
 
 **Reliable hot water for 5 people at minimum cost.** The household needs 2 showers between charges without running cold. Hygiene is monitored, not over-engineered.
@@ -303,7 +317,38 @@ Strategy:
 - **During draws**: subtract Multical volume. Overrides: HwcStorage crash >5°C → cap at 148L minus further draws. T1 drop >0.5°C → remaining ≤ 20L. T1 drop >1.5°C → remaining = 0
 - **Standby**: `effective_T1 = T1_at_charge - 0.25 × hours`. Below 38°C → remaining = 0. 38–42°C → linear scale
 
-### dhw-sessions CLI (historical analysis)
+### Historical evidence commands
+
+#### `dhw-history` (fused window reconstruction)
+
+```bash
+cargo run --bin heatpump-analysis -- dhw-history \
+  --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z
+cargo run --bin heatpump-analysis -- dhw-history \
+  --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z --human
+```
+
+`dhw-history` is the first-pass fused reproduction command for this plan. It combines Multical T1, eBUS `HwcStorageTemp`, z2m-hub remaining litres (when present), and charging-state reconstruction into one structured output.
+
+It currently reports:
+- time window
+- charges detected
+- `T1` start / peak / end across charge windows
+- `HwcStorageTemp` start / peak / end across charge windows
+- crossover yes / no
+- remaining litres start / end if present
+- `HwcSFMode` values if present in history
+- charging yes / no over the window
+- warnings for suspicious or incomplete evidence
+- detected no-crossover / low-`T1` / stuck-`load` / large-divergence events
+
+Use it for this plan's recurring questions:
+- did the charge actually complete?
+- how far apart were `T1` and `HwcStorageTemp`?
+- was the cylinder practically full?
+- did the controller trigger on a cold lower cylinder while top-of-cylinder comfort was still good?
+
+#### `dhw-sessions` CLI (capacity + inflection analysis)
 
 ```bash
 cargo run --bin heatpump-analysis -- dhw-sessions --days 14              # verbose (default)
@@ -317,6 +362,8 @@ cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't
 - Detects draws during HP charging
 - Writes `dhw_inflection` measurements + `dhw_capacity` recommended value to InfluxDB
 - Run periodically to keep capacity number fresh as seasonal mains temp changes
+
+Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan.
 
 ### InfluxDB measurements
 
@@ -335,6 +382,36 @@ Currently shows litres + simple status. Planned improvements:
 - **Empty** (T1 dropped >1°C during draw): red
 - During charge: "Heating below" / "Heating uniformly" (crossover)
 - Boost button: estimated time to crossover
+
+## Key files and operational dependencies
+
+| File / system | Purpose |
+|---|---|
+| `docs/dhw-plan.md` | DHW control and capacity strategy |
+| `deploy/SECRETS.md` | Secrets management: InfluxDB token setup, dev vs prod |
+| `src/thermal/dhw_sessions.rs` | Historical DHW session analysis CLI |
+| `~/github/z2m-hub/` | Live DHW tracking, dashboard, and boost endpoint on pi5data |
+
+## Deployment notes
+
+DHW operations span this repo and the separately deployed `z2m-hub` service on pi5data.
+
+| Component | Location |
+|---|---|
+| `dhw-sessions` CLI source | `src/thermal/dhw_sessions.rs` |
+| `z2m-hub` runtime | pi5data (`http://pi5data:3030`) |
+| InfluxDB | pi5data Docker (`influxdb`) |
+| Secrets (InfluxDB token) | `/etc/adaptive-heating-mvp.env` (root:root 0600) |
+
+The InfluxDB token is the same one Telegraf uses. See `deploy/SECRETS.md` for fresh-install setup, token sourcing, and dev-vs-prod rules.
+
+Development fallback: when `INFLUX_TOKEN` is not set locally, use `ak get influxdb`. Do not hardcode tokens in repo-tracked config.
+
+Run historical analysis from this repo:
+
+```bash
+cargo run --bin heatpump-analysis -- dhw-sessions --days 14
+```
 
 ## Reference data
 
@@ -366,12 +443,12 @@ Showers removed 117% of usable hot energy — this is why the cylinder fully dep
 
 ## Next steps
 
-1. **T1-based charge decisions** — trigger DHW from T1 < threshold via `HwcSFMode=load`, not VRC 700 hysteresis. Monitor completion from T1 ≥ 45°C. Blocked on: minimum acceptable T1 household experiment
-2. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions` monthly
+1. **T1-based charge decisions** — trigger DHW from T1 < threshold via `HwcSFMode=load`, not VRC 700 hysteresis. Monitor completion from T1 ≥ 45°C. Review representative windows with `dhw-history`. Blocked on: minimum acceptable T1 household experiment
+2. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions` monthly, then inspect representative charge windows with `dhw-history`
 3. **Legionella monitor** — track turnover + temperature history, alert on stagnation risk
 4. **SPA display improvements** — richer status on phone dashboard
-5. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan charge duration accordingly. Investigate if writable via eBUS (VWZ AI B512/B513 registers?)
-6. **Predictive DHW compensation** — 15 min before predicted charge, boost heating target_flow to pre-raise Leather ~0.3°C (cold days only)
+5. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan charge duration accordingly. Investigate if writable via eBUS (VWZ AI B512/B513 registers?) and validate against `dhw-history`
+6. **Predictive DHW compensation** — 15 min before predicted charge, boost heating target_flow to pre-raise Leather ~0.3°C (cold days only). Correlate `dhw-history` with `heating-history`
 
 ## Revert to autonomous VRC 700 DHW
 
