@@ -105,19 +105,13 @@ struct ModelConfig {
     /// Target leather temperature during waking hours
     #[serde(default = "default_target_leather")]
     target_leather_c: f64,
-    /// Day setpoint sent to VRC 700 (default 21)
+    /// VRC 700 setpoint — must match Z1NightTemp since we run in night mode
     #[serde(default = "default_setpoint")]
     setpoint_c: f64,
     /// Typical system ΔT (flow - return), used for MWT→flow conversion
     #[serde(default = "default_delta_t")]
     default_delta_t_c: f64,
-    /// Maximum allowed flow_offset correction (°C)
-    #[serde(default = "default_offset_clamp")]
-    offset_clamp_c: f64,
-    /// EMA alpha for flow offset learning
-    #[serde(default = "default_ema_alpha")]
-    ema_alpha: f64,
-    /// Minimum curve change before writing to eBUS
+    /// Minimum curve change before writing to eBUS (outer loop)
     #[serde(default = "default_curve_deadband")]
     curve_deadband: f64,
     /// Waking hours start (HH:MM)
@@ -132,6 +126,15 @@ struct ModelConfig {
     /// Hours before waking to start heating (Phase 1 fixed, Phase 2 will calculate)
     #[serde(default = "default_preheat_hours")]
     preheat_hours: f64,
+    /// Inner loop: proportional gain (curve units per °C error)
+    #[serde(default = "default_inner_loop_gain")]
+    inner_loop_gain: f64,
+    /// Inner loop: deadband — no adjustment if |error| < this (°C)
+    #[serde(default = "default_inner_loop_deadband")]
+    inner_loop_deadband_c: f64,
+    /// Inner loop: max curve step per tick
+    #[serde(default = "default_inner_loop_max_step")]
+    inner_loop_max_step: f64,
     /// Open-Meteo forecast URL
     #[serde(default = "default_forecast_url")]
     forecast_url: String,
@@ -142,15 +145,16 @@ struct ModelConfig {
 
 fn default_exponent() -> f64 { 1.25 }
 fn default_target_leather() -> f64 { 20.5 }
-fn default_setpoint() -> f64 { 21.0 }
+fn default_setpoint() -> f64 { 19.0 }  // Phase 1a: Z1NightTemp since Z1OpMode=night
 fn default_delta_t() -> f64 { 4.0 }
-fn default_offset_clamp() -> f64 { 3.0 }
-fn default_ema_alpha() -> f64 { 0.2 }
 fn default_curve_deadband() -> f64 { 0.05 }
 fn default_waking_start() -> String { "07:00".to_string() }
 fn default_waking_end() -> String { "23:00".to_string() }
 fn default_overnight_curve() -> f64 { 0.10 }
 fn default_preheat_hours() -> f64 { 3.0 }
+fn default_inner_loop_gain() -> f64 { 0.10 }
+fn default_inner_loop_deadband() -> f64 { 0.5 }
+fn default_inner_loop_max_step() -> f64 { 0.20 }
 fn default_forecast_url() -> String {
     "https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London".to_string()
 }
@@ -163,13 +167,14 @@ impl Default for ModelConfig {
             target_leather_c: default_target_leather(),
             setpoint_c: default_setpoint(),
             default_delta_t_c: default_delta_t(),
-            offset_clamp_c: default_offset_clamp(),
-            ema_alpha: default_ema_alpha(),
             curve_deadband: default_curve_deadband(),
             waking_start: default_waking_start(),
             waking_end: default_waking_end(),
             overnight_curve: default_overnight_curve(),
             preheat_hours: default_preheat_hours(),
+            inner_loop_gain: default_inner_loop_gain(),
+            inner_loop_deadband_c: default_inner_loop_deadband(),
+            inner_loop_max_step: default_inner_loop_max_step(),
             forecast_url: default_forecast_url(),
             forecast_cache_secs: default_forecast_cache_secs(),
         }
@@ -326,6 +331,8 @@ fn curve_for_flow(target_flow: f64, setpoint: f64, outside: f64, exponent: f64) 
 const CURVE_FLOOR: f64 = 0.10;
 /// VRC 700 maximum practical curve
 const CURVE_CEILING: f64 = 4.00;
+/// Warn if curve exceeds this
+const CURVE_WARN_THRESHOLD: f64 = 1.50;
 
 fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
@@ -355,21 +362,12 @@ struct RuntimeState {
     away_until: Option<DateTime<Utc>>,
     updated_at: DateTime<Utc>,
     last_reason: String,
-    /// Online flow temp error correction (EMA of predicted - actual flow)
+    /// Phase 1a: target flow temp set by outer loop, consumed by inner loop
     #[serde(default)]
-    flow_offset: f64,
-    /// Online room temp error correction (EMA of predicted - actual leather)
-    #[serde(default)]
-    room_offset: f64,
+    target_flow_c: Option<f64>,
     /// Last outside temp used for model calculation
     #[serde(default)]
     last_calc_outside_c: Option<f64>,
-    /// Last leather prediction from model
-    #[serde(default)]
-    last_leather_prediction_c: Option<f64>,
-    /// Timestamp when current curve was first applied (for stability check)
-    #[serde(default)]
-    curve_stable_since: Option<DateTime<Utc>>,
 }
 
 impl Default for RuntimeState {
@@ -379,11 +377,8 @@ impl Default for RuntimeState {
             away_until: None,
             updated_at: Utc::now(),
             last_reason: "default startup".to_string(),
-            flow_offset: 0.0,
-            room_offset: 0.0,
+            target_flow_c: None,
             last_calc_outside_c: None,
-            last_leather_prediction_c: None,
-            curve_stable_since: None,
         }
     }
 }
@@ -394,8 +389,7 @@ struct StatusResponse {
     away_until: Option<DateTime<Utc>>,
     updated_at: DateTime<Utc>,
     last_reason: String,
-    flow_offset: f64,
-    room_offset: f64,
+    target_flow_c: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -433,20 +427,13 @@ struct DecisionLog {
     return_actual_c: Option<f64>,
     curve_before: Option<f64>,
     curve_after: Option<f64>,
-    z1_day_before: Option<f64>,
-    z1_day_after: Option<f64>,
-    z1_night_before: Option<f64>,
-    z1_night_after: Option<f64>,
-    hwc_target_before: Option<f64>,
-    hwc_target_after: Option<f64>,
-    // V2 model fields
+    // V2 model fields (outer loop)
+    target_flow_c: Option<f64>,
     forecast_outside_c: Option<f64>,
     forecast_solar_w_m2: Option<f64>,
     model_required_mwt: Option<f64>,
     model_required_flow: Option<f64>,
     model_required_curve: Option<f64>,
-    flow_offset: f64,
-    room_offset: f64,
     action: String,
     reason: String,
     write_results: Vec<String>,
@@ -676,19 +663,12 @@ fn write_influx_decision(client: &Client, config: &Config, entry: &DecisionLog) 
         influx_field("return_actual_c", entry.return_actual_c),
         influx_field("curve_before", entry.curve_before),
         influx_field("curve_after", entry.curve_after),
-        influx_field("z1_day_before", entry.z1_day_before),
-        influx_field("z1_day_after", entry.z1_day_after),
-        influx_field("z1_night_before", entry.z1_night_before),
-        influx_field("z1_night_after", entry.z1_night_after),
-        influx_field("hwc_target_before", entry.hwc_target_before),
-        influx_field("hwc_target_after", entry.hwc_target_after),
+        influx_field("target_flow_c", entry.target_flow_c),
         influx_field("forecast_outside_c", entry.forecast_outside_c),
         influx_field("forecast_solar_w_m2", entry.forecast_solar_w_m2),
         influx_field("model_required_mwt", entry.model_required_mwt),
         influx_field("model_required_flow", entry.model_required_flow),
         influx_field("model_required_curve", entry.model_required_curve),
-        Some(format!("flow_offset={}", entry.flow_offset)),
-        Some(format!("room_offset={}", entry.room_offset)),
     ]
     .into_iter()
     .flatten()
@@ -789,7 +769,7 @@ fn classify_tariff_period(now: NaiveTime) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Baseline restore
+// Baseline restore (Phase 1a: only Z1OpMode + Hc1HeatCurve)
 // ---------------------------------------------------------------------------
 
 fn restore_baseline(config: &Config) -> Result<Vec<String>> {
@@ -800,29 +780,9 @@ fn restore_baseline(config: &Config) -> Result<Vec<String>> {
         ebusd_write(config, "700", "Hc1HeatCurve", &config.baseline.hc1_heat_curve.to_string())?
     ));
     results.push(format!(
-        "Z1DayTemp={} -> {}",
-        config.baseline.z1_day_temp,
-        ebusd_write(config, "700", "Z1DayTemp", &config.baseline.z1_day_temp.to_string())?
-    ));
-    results.push(format!(
-        "Z1NightTemp={} -> {}",
-        config.baseline.z1_night_temp,
-        ebusd_write(config, "700", "Z1NightTemp", &config.baseline.z1_night_temp.to_string())?
-    ));
-    results.push(format!(
-        "HwcTempDesired={} -> {}",
-        config.baseline.hwc_temp_desired,
-        ebusd_write(config, "700", "HwcTempDesired", &config.baseline.hwc_temp_desired.to_string())?
-    ));
-    results.push(format!(
         "Z1OpMode={} -> {}",
         config.baseline.z1_op_mode,
         ebusd_write(config, "700", "Z1OpMode", &config.baseline.z1_op_mode)?
-    ));
-    results.push(format!(
-        "HwcOpMode={} -> {}",
-        config.baseline.hwc_op_mode,
-        ebusd_write(config, "700", "HwcOpMode", &config.baseline.hwc_op_mode)?
     ));
     Ok(results)
 }
@@ -879,17 +839,15 @@ struct ModelCalculation {
     reason: String,
 }
 
-/// Core V2 calculation: forecast conditions → required curve value.
+/// Core V2 calculation: forecast conditions → required flow temp and initial curve.
 ///
 /// End-to-end: target_leather → required MWT (table) → required flow (MWT + ΔT/2)
-///             → required curve (heat curve formula)
+///             → required curve (heat curve formula, initial guess only)
 fn calculate_required_curve(
     config: &Config,
     table: &ControlTable,
     outside_temp: f64,
     live_delta_t: Option<f64>,
-    flow_offset: f64,
-    room_offset: f64,
     forecast: Option<&ForecastHour>,
 ) -> ModelCalculation {
     let model = &config.model;
@@ -900,8 +858,8 @@ fn calculate_required_curve(
         None => (outside_temp, 0.0, "live"),
     };
 
-    // Step 1: Lookup required MWT from table, applying room offset
-    let adjusted_target = model.target_leather_c - room_offset;
+    // Step 1: Lookup required MWT from table
+    let adjusted_target = model.target_leather_c;
     // The table was generated for target 20.5°C — scale linearly
     // MWT sensitivity is ~0.27°C MWT per 0.1°C leather (from table gradient)
     let mwt_base = table.interpolate_mwt(effective_outside, effective_solar);
@@ -914,23 +872,20 @@ fn calculate_required_curve(
     let delta_t = live_delta_t.unwrap_or(model.default_delta_t_c);
     let required_flow = required_mwt.map(|mwt| mwt + delta_t / 2.0);
 
-    // Step 3: flow → curve (applying flow offset correction)
+    // Step 3: flow → curve (initial guess via formula; inner loop will converge)
     let required_curve = required_flow.map(|flow| {
-        let adjusted_flow = flow - flow_offset;
-        let curve = curve_for_flow(adjusted_flow, model.setpoint_c, effective_outside, model.heat_curve_exponent);
+        let curve = curve_for_flow(flow, model.setpoint_c, effective_outside, model.heat_curve_exponent);
         round2(clamp_curve(curve))
     });
 
     let reason = format!(
-        "{} outside={:.1}°C solar={:.0}W/m² → MWT={} flow={} curve={} (flow_ofs={:.2} room_ofs={:.2})",
+        "{} outside={:.1}°C solar={:.0}W/m² → MWT={} flow={} curve={}",
         source,
         effective_outside,
         effective_solar,
         required_mwt.map(|v| format!("{:.1}", v)).unwrap_or("N/A".into()),
         required_flow.map(|v| format!("{:.1}", v)).unwrap_or("N/A".into()),
         required_curve.map(|v| format!("{:.2}", v)).unwrap_or("N/A".into()),
-        flow_offset,
-        room_offset,
     );
 
     ModelCalculation {
@@ -943,65 +898,11 @@ fn calculate_required_curve(
     }
 }
 
-/// Update flow_offset using exponential moving average.
-/// Compares what the formula predicted vs what VRC 700 actually produced.
-fn update_flow_offset(
-    config: &Config,
-    state: &mut RuntimeState,
-    curve_written: f64,
-    outside_temp: f64,
-    flow_desired_readback: f64,
-) {
-    let model = &config.model;
-    let predicted_flow = flow_for_curve(curve_written, model.setpoint_c, outside_temp, model.heat_curve_exponent);
-    let error = predicted_flow - flow_desired_readback;
-    let alpha = model.ema_alpha;
-    state.flow_offset = (alpha * error + (1.0 - alpha) * state.flow_offset)
-        .clamp(-model.offset_clamp_c, model.offset_clamp_c);
-}
-
-/// Update room_offset when conditions have been stable for >2 hours.
-/// Compares model prediction (what leather should be at current MWT) vs actual.
-fn update_room_offset(
-    config: &Config,
-    state: &mut RuntimeState,
-    outside_temp: f64,
-    flow_actual: f64,
-    return_actual: f64,
-    leather_actual: f64,
-    table: &ControlTable,
-) {
-    let model = &config.model;
-    // Check if curve has been stable long enough
-    let stable_enough = state.curve_stable_since
-        .map(|since| Utc::now().signed_duration_since(since).num_minutes() > 120)
-        .unwrap_or(false);
-
-    if !stable_enough {
-        return;
-    }
-
-    // Current MWT from live readings
-    let current_mwt = (flow_actual + return_actual) / 2.0;
-
-    // What would the model predict for leather at this MWT and outside temp?
-    // Use the table in reverse: at current outside temp and 0 solar, find what leather
-    // the model expects for the current MWT.
-    // Approximate: leather ≈ 20.5 + (current_mwt - table_mwt) / 2.7
-    if let Some(table_mwt) = table.interpolate_mwt(outside_temp, 0.0) {
-        let predicted_leather = 20.5 + (current_mwt - table_mwt) / 2.7;
-        let error = leather_actual - predicted_leather;
-        let alpha = model.ema_alpha;
-        state.room_offset = (alpha * error + (1.0 - alpha) * state.room_offset)
-            .clamp(-model.offset_clamp_c, model.offset_clamp_c);
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Control cycle
+// Outer loop: model-predictive control (every control_every_seconds = 900s)
 // ---------------------------------------------------------------------------
 
-fn run_control_cycle(
+fn run_outer_cycle(
     config: &Config,
     runtime: &Arc<Mutex<RuntimeState>>,
     client: &Client,
@@ -1013,7 +914,7 @@ fn run_control_cycle(
     let now_time = now_local.time();
     let current_hour = now_local.hour();
 
-    // Read all eBUS inputs
+    // Read all eBUS inputs (full sensor sweep)
     let status = ebusd_read(config, "hmu", "RunDataStatuscode").ok();
     let outside_temp = parse_f64(ebusd_read(config, "700", "DisplayedOutsideTemp"));
     let flow_desired = parse_f64(ebusd_read(config, "700", "Hc1ActualFlowTempDesired"));
@@ -1023,9 +924,6 @@ fn run_control_cycle(
     let elec_consumption = parse_f64(ebusd_read(config, "hmu", "RunDataElectricPowerConsumption"));
     let yield_power = parse_f64(ebusd_read(config, "hmu", "CurrentYieldPower"));
     let curve_before = parse_f64(ebusd_read(config, "700", "Hc1HeatCurve"));
-    let z1_day_before = parse_f64(ebusd_read(config, "700", "Z1DayTemp"));
-    let z1_night_before = parse_f64(ebusd_read(config, "700", "Z1NightTemp"));
-    let hwc_target_before = parse_f64(ebusd_read(config, "700", "HwcTempDesired"));
     let leather_temp = query_latest_room_temp(client, config, &config.topics.leather_temp).ok().flatten();
     let aldora_temp = query_latest_room_temp(client, config, &config.topics.aldora_temp).ok().flatten();
     let hwc_storage_temp = parse_f64(ebusd_read(config, "700", "HwcStorageTemp"));
@@ -1036,9 +934,6 @@ fn run_control_cycle(
     let mut reason = "no rule fired".to_string();
     let mut writes = Vec::new();
     let mut curve_after = curve_before;
-    let mut z1_day_after = z1_day_before;
-    let mut z1_night_after = z1_night_before;
-    let hwc_target_after = hwc_target_before;
 
     // Model calculation fields for logging
     let mut model_forecast_outside = None;
@@ -1051,7 +946,7 @@ fn run_control_cycle(
     let is_dhw = status.as_deref().unwrap_or_default().to_lowercase().contains("warm_water");
     let missing_core = leather_temp.is_none() || outside_temp.is_none() || curve_before.is_none();
 
-    // --- DHW service (unchanged from V1) ---
+    // --- DHW service ---
     if state.mode != Mode::Disabled && state.mode != Mode::MonitorOnly {
         let cosy_now = in_any_window(config, now_time);
         if cosy_now && !is_dhw {
@@ -1069,7 +964,7 @@ fn run_control_cycle(
         }
     }
 
-    // --- Heating control ---
+    // --- Heating control (outer loop: set target_flow_c + initial curve guess) ---
     if action == "hold"
         && state.mode != Mode::Disabled
         && state.mode != Mode::MonitorOnly
@@ -1096,7 +991,6 @@ fn run_control_cycle(
                     // --- Daytime / preheat: model-predictive control ---
                     let calc = calculate_required_curve(
                         config, table, outside, live_dt,
-                        state.flow_offset, state.room_offset,
                         forecast.as_ref(),
                     );
 
@@ -1106,40 +1000,41 @@ fn run_control_cycle(
                     model_required_flow = calc.required_flow;
                     model_required_curve = calc.required_curve;
 
-                    if let Some(target_curve) = calc.required_curve {
-                        let change = (target_curve - current_curve).abs();
-                        if change > config.model.curve_deadband {
-                            // Write the model-computed curve
-                            let res = ebusd_write(
-                                config, "700", "Hc1HeatCurve",
-                                &format!("{:.2}", target_curve),
-                            )?;
-                            writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
-                            curve_after = Some(target_curve);
-                            action = if preheating { "preheat_model".to_string() } else { "daytime_model".to_string() };
-                            reason = calc.reason;
+                    if let Some(target_flow) = calc.required_flow {
+                        // Store target_flow for inner loop
+                        state.target_flow_c = Some(target_flow);
 
-                            // Reset stability timer on curve change
-                            state.curve_stable_since = Some(Utc::now());
-                        } else {
-                            action = "hold".to_string();
-                            reason = format!("model curve {:.2} within deadband of current {:.2}: {}",
-                                target_curve, current_curve, calc.reason);
+                        if let Some(target_curve) = calc.required_curve {
+                            let change = (target_curve - current_curve).abs();
+                            if change > config.model.curve_deadband {
+                                // Write the initial curve guess
+                                let res = ebusd_write(
+                                    config, "700", "Hc1HeatCurve",
+                                    &format!("{:.2}", target_curve),
+                                )?;
+                                writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
+                                curve_after = Some(target_curve);
+                                action = if preheating { "preheat_model".to_string() } else { "daytime_model".to_string() };
+                                reason = format!("target_flow={:.1}°C: {}", target_flow, calc.reason);
+
+                                if target_curve > CURVE_WARN_THRESHOLD {
+                                    warn!("curve {:.2} exceeds warning threshold {:.2}", target_curve, CURVE_WARN_THRESHOLD);
+                                }
+
+
+                            } else {
+                                action = "hold".to_string();
+                                reason = format!("target_flow={:.1}°C, model curve {:.2} within deadband of current {:.2}: {}",
+                                    target_flow, target_curve, current_curve, calc.reason);
+                            }
                         }
                     } else {
                         action = "hold".to_string();
-                        reason = format!("model returned no curve: {}", calc.reason);
-                    }
-
-                    // Ensure day setpoint is at target
-                    let desired_day = config.model.setpoint_c;
-                    if (desired_day - z1_day_before.unwrap_or(desired_day)).abs() > 0.1 {
-                        let res = ebusd_write(config, "700", "Z1DayTemp", &format!("{:.1}", desired_day))?;
-                        writes.push(format!("Z1DayTemp={:.1} -> {}", desired_day, res));
-                        z1_day_after = Some(desired_day);
+                        reason = format!("model returned no target: {}", calc.reason);
                     }
                 } else {
                     // --- Overnight: let the house cool freely ---
+                    state.target_flow_c = None; // inner loop will not adjust
                     let overnight_curve = config.model.overnight_curve;
                     if (overnight_curve - current_curve).abs() > config.model.curve_deadband {
                         let res = ebusd_write(
@@ -1156,20 +1051,9 @@ fn run_control_cycle(
                     }
                 }
 
-                // --- Online error correction ---
-                // Flow offset: after any curve write, compare predicted vs actual flow
-                if let (Some(fd), Some(cb)) = (flow_desired, curve_before) {
-                    update_flow_offset(config, &mut state, cb, outside, fd);
-                }
-                // Room offset: when stable, compare predicted vs actual leather
-                if let (Some(fa), Some(ra), Some(lt)) = (flow_actual, return_actual, leather_temp) {
-                    update_room_offset(config, &mut state, outside, fa, ra, lt, table);
-                }
             }
             Mode::ShortAbsence => {
-                // Reduce to minimum — save energy
-                let desired_day = 19.0;
-                let desired_night = 19.0;
+                state.target_flow_c = None;
                 let desired_curve = round2((current_curve - 0.10).max(CURVE_FLOOR));
                 action = "short_absence_setback".to_string();
                 reason = "short absence cost bias".to_string();
@@ -1178,35 +1062,27 @@ fn run_control_cycle(
                     writes.push(format!("Hc1HeatCurve={:.2} -> {}", desired_curve, res));
                     curve_after = Some(desired_curve);
                 }
-                if (desired_day - z1_day_before.unwrap_or(desired_day)).abs() > f64::EPSILON {
-                    let res = ebusd_write(config, "700", "Z1DayTemp", &format!("{:.1}", desired_day))?;
-                    writes.push(format!("Z1DayTemp={:.1} -> {}", desired_day, res));
-                    z1_day_after = Some(desired_day);
-                }
-                if (desired_night - z1_night_before.unwrap_or(desired_night)).abs() > f64::EPSILON {
-                    let res = ebusd_write(config, "700", "Z1NightTemp", &format!("{:.1}", desired_night))?;
-                    writes.push(format!("Z1NightTemp={:.1} -> {}", desired_night, res));
-                    z1_night_after = Some(desired_night);
-                }
             }
             Mode::AwayUntil => {
                 let hours_to_return = state.away_until
                     .map(|t| (t - Utc::now()).num_minutes() as f64 / 60.0)
                     .unwrap_or(999.0);
-                let (desired_day, desired_curve, desc) = if hours_to_return > 20.0 {
-                    (15.0, 0.30, "deep away setback")
+                let (desired_curve, desc) = if hours_to_return > 20.0 {
+                    state.target_flow_c = None;
+                    (0.30, "deep away setback")
                 } else if hours_to_return > 6.0 {
-                    (18.0, 0.45, "away warm-up stage 1")
+                    state.target_flow_c = None;
+                    (0.45, "away warm-up stage 1")
                 } else {
                     // Use model for the final approach
                     let forecast = get_forecast_for_hour(client, config, forecast_cache, current_hour);
                     let calc = calculate_required_curve(
                         config, table, outside, live_dt,
-                        state.flow_offset, state.room_offset,
                         forecast.as_ref(),
                     );
                     let curve = calc.required_curve.unwrap_or(config.baseline.hc1_heat_curve);
-                    (config.model.setpoint_c, curve, "away warm-up model")
+                    state.target_flow_c = calc.required_flow;
+                    (curve, "away warm-up model")
                 };
                 action = "away_control".to_string();
                 reason = format!("{} ({:.1}h to return)", desc, hours_to_return);
@@ -1215,25 +1091,17 @@ fn run_control_cycle(
                     writes.push(format!("Hc1HeatCurve={:.2} -> {}", desired_curve, res));
                     curve_after = Some(desired_curve);
                 }
-                if (desired_day - z1_day_before.unwrap_or(desired_day)).abs() > f64::EPSILON {
-                    let res = ebusd_write(config, "700", "Z1DayTemp", &format!("{:.1}", desired_day))?;
-                    writes.push(format!("Z1DayTemp={:.1} -> {}", desired_day, res));
-                    z1_day_after = Some(desired_day);
-                }
             }
             Mode::Disabled | Mode::MonitorOnly => {}
         }
     }
 
-    // Save updated state (offsets etc.)
+    // Save updated state
     state.updated_at = Utc::now();
     {
         let mut guard = runtime.lock().unwrap();
-        guard.flow_offset = state.flow_offset;
-        guard.room_offset = state.room_offset;
-        guard.curve_stable_since = state.curve_stable_since;
+        guard.target_flow_c = state.target_flow_c;
         guard.last_calc_outside_c = model_forecast_outside;
-        guard.last_leather_prediction_c = model_required_mwt; // store for deviation detection
         save_runtime_state(&config.state_file, &guard)?;
     }
 
@@ -1254,19 +1122,12 @@ fn run_control_cycle(
         return_actual_c: return_actual,
         curve_before,
         curve_after,
-        z1_day_before,
-        z1_day_after,
-        z1_night_before,
-        z1_night_after,
-        hwc_target_before,
-        hwc_target_after,
+        target_flow_c: state.target_flow_c,
         forecast_outside_c: model_forecast_outside,
         forecast_solar_w_m2: model_forecast_solar,
         model_required_mwt,
         model_required_flow,
         model_required_curve,
-        flow_offset: state.flow_offset,
-        room_offset: state.room_offset,
         action,
         reason,
         write_results: writes,
@@ -1276,9 +1137,83 @@ fn run_control_cycle(
     if let Err(err) = write_influx_decision(client, config, &entry) {
         warn!("failed to write Influx decision log: {err}");
     }
-    info!("decision: {}", serde_json::to_string(&entry)?);
+    info!("outer: {}", serde_json::to_string(&entry)?);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Inner loop: closed-loop curve adjustment (every sample_every_seconds = 60s)
+// ---------------------------------------------------------------------------
+
+fn run_inner_cycle(
+    config: &Config,
+    runtime: &Arc<Mutex<RuntimeState>>,
+) -> Result<()> {
+    let state = runtime.lock().unwrap().clone();
+
+    // Only run if we have a target flow from the outer loop
+    let target_flow = match state.target_flow_c {
+        Some(tf) => tf,
+        None => return Ok(()), // overnight or no target yet
+    };
+
+    if state.mode == Mode::Disabled || state.mode == Mode::MonitorOnly {
+        return Ok(());
+    }
+
+    // Light eBUS reads — only what the inner loop needs
+    let status = ebusd_read(config, "hmu", "RunDataStatuscode").ok();
+    let flow_desired = parse_f64(ebusd_read(config, "700", "Hc1ActualFlowTempDesired"));
+    let curve_before = parse_f64(ebusd_read(config, "700", "Hc1HeatCurve"));
+
+    let is_defrost = status.as_deref().unwrap_or_default().to_lowercase().contains("defrost");
+    let is_dhw = status.as_deref().unwrap_or_default().to_lowercase().contains("warm_water");
+
+    // Don't adjust during DHW or defrost
+    if is_dhw || is_defrost {
+        return Ok(());
+    }
+
+    let (fd, cb) = match (flow_desired, curve_before) {
+        (Some(fd), Some(cb)) => (fd, cb),
+        _ => return Ok(()), // missing readings, skip
+    };
+
+    // Proportional feedback: error = target - actual
+    let error = target_flow - fd;
+    let model = &config.model;
+
+    if error.abs() <= model.inner_loop_deadband_c {
+        return Ok(()); // within deadband, no adjustment needed
+    }
+
+    // Compute adjustment: gain × error, clamped to max step
+    let raw_adjustment = model.inner_loop_gain * error;
+    let adjustment = raw_adjustment.clamp(-model.inner_loop_max_step, model.inner_loop_max_step);
+    let new_curve = round2(clamp_curve(cb + adjustment));
+
+    // Don't write if curve hasn't actually changed (rounding)
+    if (new_curve - cb).abs() < 0.005 {
+        return Ok(());
+    }
+
+    let res = ebusd_write(config, "700", "Hc1HeatCurve", &format!("{:.2}", new_curve))?;
+
+    if new_curve > CURVE_WARN_THRESHOLD {
+        warn!("inner loop: curve {:.2} exceeds warning threshold {:.2}", new_curve, CURVE_WARN_THRESHOLD);
+    }
+
+    info!(
+        "inner: target_flow={:.1} flow_desired={:.1} error={:.1} curve {:.2}->{:.2} ({})",
+        target_flow, fd, error, cb, new_curve, res
+    );
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Control loop (two-loop architecture)
+// ---------------------------------------------------------------------------
 
 fn control_loop(
     config: Config,
@@ -1288,18 +1223,36 @@ fn control_loop(
 ) {
     let client = Client::new();
     let start = Instant::now();
-    let mut last_decision = Instant::now() - Duration::from_secs(config.control_every_seconds);
+
+    // Phase 1a startup: force Z1OpMode=night to disable Optimum Start and day/night transitions.
+    // Night mode uses Z1NightTemp=19°C. Gives zero overnight rad output (cleanest "off").
+    // Curve runs 0.40-1.24 across -5 to 15°C operating range; inner loop converges regardless.
+    info!("startup: setting Z1OpMode=night");
+    match ebusd_write(&config, "700", "Z1OpMode", "night") {
+        Ok(res) => info!("startup: Z1OpMode=night -> {}", res),
+        Err(e) => error!("startup: failed to set Z1OpMode=night: {}", e),
+    }
+
+    let mut last_outer = Instant::now() - Duration::from_secs(config.control_every_seconds);
+
     loop {
         std::thread::sleep(Duration::from_secs(config.sample_every_seconds));
+
         if start.elapsed().as_secs() < config.startup_grace_seconds {
             continue;
         }
-        if last_decision.elapsed().as_secs() < config.control_every_seconds {
-            continue;
+
+        // Outer loop (every control_every_seconds = 900s)
+        if last_outer.elapsed().as_secs() >= config.control_every_seconds {
+            last_outer = Instant::now();
+            if let Err(err) = run_outer_cycle(&config, &runtime, &client, &table, &forecast_cache) {
+                error!("outer cycle failed: {err:#}");
+            }
         }
-        last_decision = Instant::now();
-        if let Err(err) = run_control_cycle(&config, &runtime, &client, &table, &forecast_cache) {
-            error!("control cycle failed: {err:#}");
+
+        // Inner loop (every tick = 60s)
+        if let Err(err) = run_inner_cycle(&config, &runtime) {
+            error!("inner cycle failed: {err:#}");
         }
     }
 }
@@ -1315,8 +1268,7 @@ async fn api_status(State(state): State<ServiceState>) -> Json<StatusResponse> {
         away_until: runtime.away_until,
         updated_at: runtime.updated_at,
         last_reason: runtime.last_reason,
-        flow_offset: runtime.flow_offset,
-        room_offset: runtime.room_offset,
+        target_flow_c: runtime.target_flow_c,
     })
 }
 

@@ -15,15 +15,16 @@ startup_grace_seconds = 120
 [model]
 heat_curve_exponent = 1.25
 target_leather_c = 20.5
-setpoint_c = 21.0
+setpoint_c = 19.0
 default_delta_t_c = 4.0
-offset_clamp_c = 3.0
-ema_alpha = 0.2
 curve_deadband = 0.05
 waking_start = "07:00"
 waking_end = "23:00"
 overnight_curve = 0.10
-preheat_hours = 3.0
+preheat_hours = 2.0
+inner_loop_gain = 0.05
+inner_loop_deadband_c = 0.5
+inner_loop_max_step = 0.20
 forecast_url = "https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London"
 forecast_cache_secs = 3600
 

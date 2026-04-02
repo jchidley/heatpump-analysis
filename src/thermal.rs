@@ -3,6 +3,7 @@
 mod artifact;
 mod calibration;
 mod config;
+mod dhw_sessions;
 mod diagnostics;
 mod display;
 mod error;
@@ -25,4 +26,5 @@ pub use display::{
 };
 pub use operational::operational_validate;
 pub use snapshot::{snapshot_export, snapshot_import};
+pub use dhw_sessions::{dhw_sessions, DhwSessionsOutput};
 pub use validation::validate;

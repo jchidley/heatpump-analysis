@@ -1,18 +1,31 @@
-# Adaptive Heating V2 — Model-Predictive Control
+# Adaptive Heating V2 - Model-Predictive Control
 
-Last updated: 1 April 2026
+Last updated: 2 April 2026
 
 ## Objective
 
-Leather room 20–21°C during waking hours (07:00–23:00) at minimum electricity cost, with reliable DHW.
+Leather room 20-21°C during waking hours (07:00-23:00) at minimum electricity cost, with reliable DHW.
 
-Constraints: HP maxes out below 6°C outside (accept 19.5–20°C). DHW steals HP for ~1h. Tariff optimisation not worth the complexity. Overnight temp is a free variable.
+Constraints:
+- HP maxes out below ~2°C outside (5kW vs 5.9kW heat loss at -2°C). Accept 19.5-20°C.
+- No heating above 17°C outside - empirically, solar/internal gains are sufficient.
+- 45°C max flow on heating - emitter capacity and COP limit. Above this, diminishing returns.
+- DHW steals HP for ~1-2h. A bath draw can empty the cylinder and require a full recharge.
+- Battery is fully charged overnight - tariff window alignment is irrelevant for heating cost. DHW should still target Cosy windows.
+- Overnight temp is **not** a free variable - constrained by HP reheat capacity. At -2°C the HP is in deficit and can barely drop 0.5°C. At 10°C, minimum floor is ~18.6°C for 3h reheat to 20.5°C by 07:00. See Phase 2.
 
 ## Architecture
 
 ### VRC 700 control
 
 On startup: `Z1OpMode=night` (value 3). VRC 700 uses `Z1NightTemp` (19°C) permanently. Disables CcTimer, Optimum Start, day/night transitions. Setpoint values are never modified.
+
+**Why SP=19 (night mode) not SP=21 (day mode)?** Three setpoints were analysed:
+- SP=21: curves 0.33-0.74 across -5 to 17°C (most headroom), but rads leak 56-155W overnight - unwanted heating when the overnight planner wants a clean "off".
+- SP=20: curves 0.37-1.32, zero overnight leakage, but no clear advantage over 19.
+- SP=19: curves 0.40-1.24 up to 15°C (under 1.50 warning), **zero overnight rad output** at curve=0.10, cleanest separation between "heating" and "not heating". Curves go to 1.67/2.61 at 16-17°C but no heating runs above 17°C anyway. Inner loop converges regardless of initial guess quality.
+
+SP=19 chosen because overnight planner (Phase 2) needs a setpoint where curve=0.10 means genuinely zero output, and any overnight heating is deliberate (raised curve), not formula leakage. At cold temps (<5°C) the HP must run overnight anyway - the planner will raise the curve, not rely on the setpoint.
 
 On shutdown: `Z1OpMode=auto`, `Hc1HeatCurve=0.55`. VRC 700 resumes timer control.
 
@@ -28,83 +41,80 @@ Outer loop (every 15 min):
 Inner loop (every ~1 min):
     error = target_flow - Hc1ActualFlowTempDesired
     if |error| > 0.5°C:
-        curve += 0.10 × error      (max step 0.20, clamp 0.10–4.00)
+        curve += 0.05 × error      (max step 0.20, clamp 0.10–4.00)
         write Hc1HeatCurve
 ```
 
-The outer loop uses the calibrated thermal physics model. The inner loop treats the VRC 700 as a black box — nudge curve until output matches target. The formula is only the initial guess; the inner loop converges in 2–3 minutes.
+The outer loop uses the calibrated thermal physics model via control table (Phase 1) or live solver (Phase 1b). The inner loop treats the VRC 700 as a black box - nudge curve until output matches target. The formula is only the initial guess; the inner loop converges in 1 tick (~60s).
 
-**Why not open-loop formula?** The VRC 700's internal computation is opaque — hidden Optimum Start, `Hc1MinFlowTempDesired`=20°C floor, undocumented offsets. See "Pilot data findings" below.
+**Why not open-loop formula?** The VRC 700's internal computation is opaque - hidden Optimum Start, `Hc1MinFlowTempDesired`=20°C floor, undocumented offsets. See "Pilot data findings" below.
 
 ### Error correction
 
-**Inner loop** replaces the old `flow_offset` EMA — closes directly on `Hc1ActualFlowTempDesired`.
+**Inner loop** is the only feedback mechanism. It closes directly on `Hc1ActualFlowTempDesired`. No EMA, no offset accumulation.
 
-**`room_offset`** (outer loop): after 2h+ at stable flow, compare equilibrium model prediction vs actual Leather. EMA α=0.2, clamped ±3°C. Applied: `bisect_mwt_for_room("leather", target - room_offset, ...)`.
+**`room_offset` was removed** (2 Apr 2026). The EMA ran away to +2.18°C overnight - it learned the overnight cooling as model error, then suppressed preheat target_flow by ~8°C (23.5 vs 31.2°C needed). The inner loop is sufficient: it converges in 1 tick regardless of model accuracy. If Phase 1b reveals systematic model bias, a static calibration offset would be better than a runtime EMA.
 
 ### DHW
 
-Cosy windows (04:00–07:00, 13:00–16:00, 22:00–23:59) + cylinder < 40°C → `HwcSFMode=load`.
+Cosy windows (04:00-07:00, 13:00-16:00, 22:00-23:59) + cylinder < 40°C → `HwcSFMode=load`.
+
+**Caution**: `HwcStorageTemp` reads the NTC in a dry pocket above the bottom coil. After a large draw (e.g. bath), it reads mains cold (~13°C) even with 60-70L of usable hot water above the thermocline. Do not trigger emergency DHW charges based solely on a low NTC reading - the stratification holds and the scheduled Cosy window charge is usually sufficient.
 
 ### Safety
 
 - Baseline restore on shutdown: `Z1OpMode=auto`, `Hc1HeatCurve=0.55`
 - Solver fails → hold last target_flow, inner loop maintains it
 - eBUS fails → hold, don't write
-- Inner loop: deadband 0.5°C, max step 0.20, curve 0.10–4.00
+- Inner loop: deadband 0.5°C, max step 0.20, curve 0.10-4.00
 - Warn if curve > 1.50
-- `room_offset` clamped ±3°C
 
 ## Implementation plan
 
-### Phase 1a: Inner feedback loop + fixed setpoint 🔴 NEXT
+### Phase 1a: Inner feedback loop ✅ DONE (1 Apr 2026)
 
-Fix the deployed Phase 1 code. Replace open-loop formula with closed-loop feedback.
+Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-loop architecture.
 
-**Config** (`model/adaptive-heating-mvp.toml`):
-- `model.setpoint_c` = **19.0** (was 21.0)
-- Add: `inner_loop_gain = 0.10`, `inner_loop_deadband_c = 0.5`, `inner_loop_max_step = 0.20`
+**Changes made:**
+- `model.setpoint_c` = **19.0**, `Z1OpMode=night` on startup
+- Added `inner_loop_gain=0.05`, `inner_loop_deadband_c=0.5`, `inner_loop_max_step=0.20`
+- Outer loop (900s): forecast → model → `target_flow_c` + initial curve guess
+- Inner loop (60s): proportional feedback on `Hc1ActualFlowTempDesired` toward `target_flow_c`
+- Removed `flow_offset` EMA (inner loop replaces it)
+- Removed `room_offset` EMA (ran away overnight, inner loop is sufficient)
+- `restore_baseline()` writes only `Hc1HeatCurve=0.55` + `Z1OpMode=auto`
+- `preheat_hours` = 2.0 (05:00 start). Battery handles cost; no need to align with Cosy window.
 
-**Code** (`src/bin/adaptive-heating-mvp.rs`):
+**Validation results** (1-2 Apr 2026):
+- Inner loop converges in **1 tick** - flow_desired within 0.3°C of target after single adjustment
+- Daytime (13-14°C outside): leather stable at 21.4-21.6°C, COP ~7.1, curve 0.76-1.06
+- Shutdown restores correctly: 2 writes only (Hc1HeatCurve, Z1OpMode)
 
-1. **Startup**: add `ebusd_write(config, "700", "Z1OpMode", "night")` before control loop.
+**Known issues to address in Phase 1b:**
 
-2. **Add `target_flow_c: Option<f64>`** to shared state between loops.
+1. ~~**Inner loop hunts near curve floor.**~~ **FIXED** (2 Apr): reduced `inner_loop_gain` from 0.10 to 0.05. Hunting was caused by gain too high at low curves — each 0.01 curve ≈ 0.18°C flow, so gain=0.10 with 0.9°C error made 1.6°C overshoots. At gain=0.05 the loop converges in 2 ticks. The 20°C floor (`Hc1MinFlowTempDesired`) was not the cause — it doesn’t bind at SP=19 with outside < 17°C.
 
-3. **Split control loop**:
-   - Outer (every 900s): `calculate_required_curve()` sets `target_flow_c` instead of writing curve directly. Provides initial curve guess via formula.
-   - Inner (every 60s): reads `Hc1ActualFlowTempDesired`, adjusts curve proportionally toward `target_flow_c`. Same guards (not DHW, not defrost, not missing sensors).
+2. **Outer/inner ΔT fight.** When compressor shuts down, live ΔT collapses (flow≈return), `target_flow = MWT + ΔT/2` drops, outer loop writes a lower curve, then inner loop adjusts. Wasted eBUS writes, not harmful. Fix: use `default_delta_t_c` when compressor is off.
 
-4. **Remove `flow_offset`** from `RuntimeState`, `calculate_required_curve()`, logging.
+3. **DHW steals preheat.** Night of 1-2 Apr: cylinder drifted to 39.5°C (barely below 40°C trigger), DHW charged for 1.5h during preheat, leather dropped from 20.1→19.9°C. By 07:15 leather was 19.9°C - below comfort band. Fix: Phase 2 planner should account for DHW interruption; consider raising trigger to 38°C or scheduling DHW before preheat.
 
-5. **Fix `curve_stable_since`**: init to `Some(Utc::now())` on startup.
+### Phase 1b: Bug fixes + live solver 🔴 NEXT
 
-6. **Fix `last_leather_prediction_c`**: store `target_leather_c - room_offset` (was storing MWT).
+Fix the three known issues from Phase 1a, then replace the control table with the live solver.
 
-7. **Add curve >1.50 warning**.
+**Bug fixes:**
 
-8. **Update `restore_baseline()`**: write `Z1OpMode=auto`, `Hc1HeatCurve=0.55`. Remove `Z1DayTemp`, `Z1NightTemp`, `HwcTempDesired` writes.
+1. **Inner loop floor guard**: when `curve_before < 0.25`, halve the gain (0.05 instead of 0.10) and double the deadband (1.0°C instead of 0.5°C). Prevents hunting near MinFlowTempDesired floor.
 
-9. **Update `StatusResponse`**: replace `flow_offset` with `target_flow_c`.
+2. **ΔT stabilisation**: in `calculate_required_curve()`, if `RunDataStatuscode` is not `Heating_Compressor_active`, use `default_delta_t_c` instead of live ΔT. Prevents outer loop target_flow oscillation on compressor cycling.
 
-**Deploy**:
-```bash
-scp src/bin/adaptive-heating-mvp.rs pi5data:~/adaptive-heating-mvp/src/main.rs
-scp model/adaptive-heating-mvp.toml pi5data:~/adaptive-heating-mvp/model/
-ssh pi5data "source ~/.cargo/env && cd ~/adaptive-heating-mvp && cargo build --release"
-ssh pi5data "sudo systemctl restart adaptive-heating-mvp"
-curl -s http://pi5data:3031/status | python3 -m json.tool
-```
+3. **DHW/preheat coordination**: during preheat window (05:00-07:00), raise DHW trigger from 40°C to 38°C to avoid borderline charges. Or: defer DHW to after 07:00 if leather < 20°C and cylinder > 35°C.
 
-**Validate**: `Z1OpMode` reads `night`. Inner loop converges within 3 cycles. No `flow_offset` in logs. Kill restores `Z1OpMode=auto`.
+**Live solver:**
 
-### Phase 1b: Library crate + live solver
+1. Create `src/lib.rs`, move `pub mod thermal` there. Widen visibility on: `geometry::*`, `physics::*`, `display::{solve_equilibrium_temps, bisect_mwt_for_room}`, `config::*`, `error::*`.
 
-Eliminate control table. Call equilibrium solver directly from binary.
-
-1. Create `src/lib.rs`, move `pub mod thermal` there. Widen `pub(crate)` → `pub` on: `geometry::{build_rooms, build_connections, build_doorways}`, `physics::{full_room_energy_balance_components, radiator_output, compute_thermal_masses}`, `display::{solve_equilibrium_temps, bisect_mwt_for_room}`, `config::*`, `error::*`.
-
-2. Replace `ControlTable` with `bisect_mwt_for_room("leather", target - room_offset, outside, solar, 0.0)`. Remove `control_table_path` config.
+2. Replace `ControlTable` with `bisect_mwt_for_room("leather", target_leather, outside, solar, wind)`. Remove `control_table_path` config.
 
 3. Deploy `data/canonical/thermal_geometry.json` + `model/thermal-config.toml` to pi5data. Benchmark solver on ARM (<1s).
 
@@ -114,7 +124,34 @@ Eliminate control table. Call equilibrium solver directly from binary.
 
 ### Phase 2: Overnight planner (requires 1b)
 
-Forward simulation: `overnight_start_time(current_leather, forecast[], dhw_expected, target, target_time)`. Simulate cooling with thermal mass + hourly forecast, heating with radiator output at calculated MWT. Binary search on latest start time for Leather ≥ 20°C by 07:00. Account for 1h DHW interruption. Replaces fixed `preheat_hours`.
+Replace fixed `overnight_curve=0.10` and `preheat_hours=2.0` with temperature-dependent overnight strategy.
+
+**Key constraint**: reheat capacity. HP surplus = 5000W - 261×(20.5-outside). Analysis:
+
+| Outside | Heat loss | HP surplus | 8h no-heat drop | Min floor (3h reheat) | Max free cooling |
+|---------|-----------|------------|------------------|-----------------------|------------------|
+| -2°C | 5872W | **-872W** (deficit) | 21→11.5°C | 20.5°C (can't cool) | 0.5°C |
+| 0°C | 5350W | **-350W** (deficit) | 21→12.3°C | 20.5°C (can't cool) | 0.5°C |
+| 2°C | 4828W | 172W | 21→13.1°C | 20.4°C | 0.6°C |
+| 5°C | 4046W | 954W | 21→14.4°C | 19.7°C | 1.3°C |
+| 8°C | 3262W | 1738W | 21→15.6°C | 19.0°C | 2.0°C |
+| 10°C | 2740W | 2260W | 21→16.5°C | 18.6°C | 2.4°C |
+| 12°C | 2218W | 2782W | 21→17.3°C | 18.1°C | 2.9°C |
+| 14°C | 1696W | 3304W | 21→18.1°C | 17.7°C | 3.3°C |
+
+**First overnight data** (1-2 Apr 2026, outside 10-12°C): leather dropped 20.6→20.2°C in 5h (23:00-04:00) with zero heating. Very mild. Then DHW stole 1.5h and leather hit 19.9°C by 07:15. The house barely cools at these temps - the problem was DHW timing, not insufficient preheat.
+
+**Implication**: below ~2°C outside, the HP must run nearly continuously overnight - the overnight curve must be *raised*, not held at 0.10. SP=19 with curve=0.10 gives zero rad output, so any overnight heating is a deliberate curve raise by the planner.
+
+Forward simulation: `overnight_plan(current_leather, forecast[], dhw_expected, target, target_time)`:
+1. Simulate cooling with thermal mass (τ=15h for leather) + hourly forecast
+2. At each hour, check: can the HP reheat from here to 20.5°C by 07:00?
+3. Binary search on latest start time for Leather ≥ 20°C by 07:00
+4. If outside < 2°C: maintain minimum curve to prevent unrecoverable drop
+5. Account for DHW interruption - schedule DHW before or after preheat, not during
+6. Battery handles cost, so preheat timing is purely thermal, not tariff-aligned
+
+Outputs: overnight curve profile (may vary hourly) + preheat start time.
 
 ### Phase 3: Predictive DHW compensation
 
@@ -122,9 +159,13 @@ Forward simulation: `overnight_start_time(current_leather, forecast[], dhw_expec
 
 ## Pilot data findings
 
-70 data points from V1 pilot (31 Mar – 1 Apr 2026), curves 0.10–1.00, outside 10.9–16.4°C.
+70 data points from V1 pilot (31 Mar - 1 Apr 2026), curves 0.10-1.00, outside 10.9-16.4°C.
 
-**Exponent**: Best fit 1.25–1.27 (RMSE 0.63°C deduplicated daytime). Vaillant manual says 1.10 — underpredicts by 2.5–3.1°C at curves ≥0.50. Correcting for actual VRC 700 setpoint per hour doesn't change the result.
+**V1 bang-bang failure mode** (31 Mar overnight): Leather 21.3°C at 23:00, `heating_coast` ratcheted curve 0.55→0.05 over 2h. House cooled to 19.8°C by 07:00. `heating_recovery` then ratcheted 0.10→1.00 over 2.5h (one step per 15 min). Took 2h22m to recover 19.8→20.0°C. Recovery massively overshot - curve 1.00 (flow ~33°C) when model only needs ~27°C. Phase 1a's inner loop eliminates this.
+
+**Phase 1a overnight** (1-2 Apr): Overnight coast worked well (20.6→20.2°C in 5h). But `room_offset` ran away to +2.18°C, suppressing preheat target_flow to 23.5°C when 31.2°C was needed. Inner loop hunting near curve floor (5 oscillations in 5 min at 0.11↔0.19). DHW at 05:09 stole 1.5h of preheat. Leather reached 19.9°C at 07:15 - below comfort. After removing room_offset and restarting, target_flow immediately corrected to 31.2°C.
+
+**Exponent**: Best fit 1.25-1.27 (RMSE 0.63°C deduplicated daytime). Vaillant manual says 1.10 - underpredicts by 2.5-3.1°C at curves ≥0.50. Correcting for actual VRC 700 setpoint per hour doesn't change the result.
 
 **Optimum Start**: At 03:00 (3h before 06:00 day timer), `Hc1ActualFlowTempDesired` jumped 21.0→22.3°C with curve at 0.10. VRC 700 silently ramps effective setpoint. No register to disable. `Z1OpMode=night` eliminates it.
 
@@ -149,13 +190,13 @@ Writes to circuit `700`. TCP `localhost:8888` on pi5data.
 | Register | R/W | Notes |
 |---|---|---|
 | `Z1OpMode` | RW | 0=off, 1=auto, 2=day, **3=night** |
-| `Hc1HeatCurve` | RW | 0.10–4.00 |
+| `Hc1HeatCurve` | RW | 0.10-4.00 |
 | `Hc1ActualFlowTempDesired` | R | **Inner loop feedback** |
 | `DisplayedOutsideTemp` | R | Filtered outside temp |
-| `HwcStorageTemp` | R | Cylinder NTC |
+| `HwcStorageTemp` | R | Cylinder NTC (reads cold after draws - see DHW section) |
 | `HwcSFMode` | RW | auto / load |
 | `RunDataStatuscode` | R (hmu) | HP state (Heating/Warm_Water/Standby/etc) |
 | `RunDataFlowTemp` | R (hmu) | Actual flow |
 | `RunDataReturnTemp` | R (hmu) | Actual return |
 | `CurrentCompressorUtil` | R (hmu) | HP load % |
-| `Hc1MinFlowTempDesired` | RW | Currently 20°C (VRC 700 floor) |
+| `Hc1MinFlowTempDesired` | RW | Currently 20°C (VRC 700 floor). Never binds with SP=19 since formula always outputs ≥19°C. Rads produce 0W at flow ≤22°C with room at 20°C. |

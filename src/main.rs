@@ -195,6 +195,21 @@ enum Commands {
         #[command(subcommand)]
         action: ThermalSnapshotCommands,
     },
+    /// DHW session analysis — draws, charges, inflection detection, HWC tracking
+    DhwSessions {
+        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+        /// Days of history to analyse
+        #[arg(long, default_value = "12")]
+        days: u32,
+        /// Output format: human, verbose, or json
+        #[arg(long, default_value = "verbose")]
+        format: String,
+        /// Don't write results to InfluxDB
+        #[arg(long)]
+        no_write: bool,
+    },
 }
 
 impl Cli {
@@ -621,6 +636,20 @@ fn main() -> Result<()> {
                 println!("Imported thermal snapshot from manifest: {}", manifest);
             }
         },
+
+        Commands::DhwSessions {
+            ref config,
+            days,
+            ref format,
+            no_write,
+        } => {
+            let output = match format.as_str() {
+                "json" => thermal::DhwSessionsOutput::Json,
+                "human" => thermal::DhwSessionsOutput::Human,
+                _ => thermal::DhwSessionsOutput::Verbose,
+            };
+            thermal::dhw_sessions(config, days, output, no_write)?;
+        }
     }
 
     Ok(())

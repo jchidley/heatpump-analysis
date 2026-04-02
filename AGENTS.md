@@ -32,6 +32,9 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 | Adaptive heating MVP | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml run` |
 | Adaptive heating status | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status` |
 | Adaptive heating restore | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml restore-baseline` |
+| DHW sessions | `cargo run --bin heatpump-analysis -- dhw-sessions --days 7` |
+| DHW sessions (verbose) | `cargo run --bin heatpump-analysis -- dhw-sessions --days 12 --no-write` |
+| DHW sessions (JSON) | `cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json` |
 
 
 `--apikey` only needed for `feeds` and `sync`. Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands. Three binaries total: `adaptive-heating-mvp` is the live pilot controller.
@@ -126,9 +129,14 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy - do not deploy. DHW boost via z2m-hub.
 - **DHW inflection detector** (`scripts/dhw-inflection-detector.py`) deployed to pi5data `/usr/local/bin/`. Weekly cron (Sunday 3am) analyses draws at 2s resolution, writes inflection measurements to InfluxDB (`dhw_inflection`) and recommended capacity to `dhw_capacity`. z2m-hub v0.2.0 autoloads `recommended_full_litres` on startup. Run manually: `uv run --with requests python scripts/dhw-inflection-detector.py --days 14 --verbose`.
 - **Adaptive heating MVP** deployed on pi5data as systemd service. HTTP API on port 3031. Mobile controls proxied via z2m-hub (:3030). Config: `model/adaptive-heating-mvp.toml`. Spec: `docs/adaptive-heating-mvp.md`. Kill switch restores known-good baseline.
-- **V1 pilot findings** (31 Mar-1 Apr 2026): Bang-bang control (±0.10 curve every 15 min) ping-ponged 0.55→0.10→1.00. Leather τ=15h means 15-min adjustments are noise. VRC 700 curve floor is 0.10. Null-read bug fixed.
+- **V1 pilot findings** (31 Mar–1 Apr 2026): Bang-bang control (±0.10 curve every 15 min) ping-ponged 0.55→0.10→1.00. Leather τ=15h means 15-min adjustments are noise. VRC 700 curve floor is 0.10. Null-read bug fixed.
+- **Phase 1a deployed** (1–2 Apr 2026): Two-loop control. Outer (900s): forecast→model→target_flow. Inner (60s): proportional feedback on Hc1ActualFlowTempDesired. Converges in 1 tick. SP=19/Z1OpMode=night for zero overnight rad leakage. `room_offset` removed (EMA ran away overnight). `preheat_hours=2.0` (05:00 start; battery makes Cosy alignment irrelevant for heating).
+- **No heating above 17°C outside** — empirically, solar/internal gains sufficient. Curve formula compresses at SP=19 above 15°C but never hits ceiling in operating range.
+- **45°C max flow on heating** — emitter capacity and COP limit.
+- **Overnight not a free variable**: HP surplus = 5000W - 261×(20.5-outside). Below 2°C the HP is in deficit. Overnight planner (Phase 2) must raise curve at cold temps, not rely on fixed 0.10.
+- **Known Phase 1a issues** (to fix in 1b): ~~inner loop hunting~~ (FIXED: gain 0.10→0.05); outer/inner ΔT fight when compressor cycles; DHW stole 1.5h of preheat window.
 - **VRC 700 heat curve formula**: `flow = setpoint + curve × (setpoint - outside)^1.25` (RMSE 0.63°C from 70 pilot points, deduplicated daytime). Vaillant manual says 1.10 but underpredicts by 2.5-3.1°C at curves ≥0.50. **⚠ This is a rough actuator approximation** - VRC 700 has hidden adjustments (Optimum Start ramp ~3h before timer, `Hc1MinFlowTempDesired`=20°C, undocumented offsets). V2 inner feedback loop (curve nudge on `Hc1ActualFlowTempDesired` readback) replaces `flow_offset` EMA. All thermal model validation must use actual measured flow/return temps, never formula predictions.
-- **V2 design** (`docs/adaptive-heating-v2-design.md`): Model-predictive control. Outer loop (15 min): thermal equilibrium solver + Open-Meteo forecast → target flow temp. Inner loop (1 min): nudge curve until `Hc1ActualFlowTempDesired` matches target — VRC 700 treated as black box. `Z1OpMode=night` on startup (flat 19°C setpoint, no timer/Optimum Start). Restore `Z1OpMode=auto` on shutdown. Overnight planner (Phase 2) calculates latest heating start time for 20°C by 07:00.
+- **V2 design** (`docs/adaptive-heating-v2-design.md`): Model-predictive control. Outer loop (15 min): thermal equilibrium solver + Open-Meteo forecast → target flow temp. Inner loop (1 min): nudge curve until `Hc1ActualFlowTempDesired` matches target - VRC 700 treated as black box. `Z1OpMode=night` on startup (flat 19°C setpoint, no timer/Optimum Start). Restore `Z1OpMode=auto` on shutdown. Overnight planner (Phase 2) calculates latest heating start time for 20°C by 07:00.
 - **Real control objective**: Leather 20-21°C during waking hours (07:00-23:00) at minimum cost. Overnight temp is a free variable. DHW charges only during Cosy windows when cylinder needs it.
 - **VRC 700 architecture**: All inputs (curve, setpoint, limits) produce one output: `Hc1ActualFlowTempDesired`. This goes directly to the HMU via decoded SetMode (D1C encoding). VWZ AI is hydraulic only (valve/pump), not in the flow temp control path.
 - **eBUS coverage**: 247 read + 216 write defs for VRC 700, 117 read + 14 passive for HMU, zero decoded for VWZ AI (raw bytes in grab buffer only). ebusd `--enablehex` and `--enabledefine` are on. `grab result all` shows all raw bus traffic including undecoded VWZ AI messages.
@@ -150,6 +158,7 @@ Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.
 - z2m-hub patched to proxy adaptive-heating-mvp mode controls. Phone dashboard at `http://pi5data:3030` has heating mode buttons.
 - `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
+- `scripts/dhw-inflection-detector.py` is retired — replaced by `dhw-sessions` subcommand in Rust. Python had 1-min averaging bugs on flow/T2 and no HWC tracking during draws.
 
 ## Boundaries
 
