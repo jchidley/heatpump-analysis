@@ -333,17 +333,36 @@ pub fn solve_equilibrium_temps(
                 let mid = (lo + hi) / 2.0;
                 temps.insert(name.clone(), mid);
                 let bal = full_room_energy_balance_components(
-                    room, mid, outside_temp, &temps, &connections, &doorways,
-                    doorway_cd, wind_multiplier, mwt, sleeping, irr_sw, irr_ne, ne_horiz,
+                    room,
+                    mid,
+                    outside_temp,
+                    &temps,
+                    &connections,
+                    &doorways,
+                    doorway_cd,
+                    wind_multiplier,
+                    mwt,
+                    sleeping,
+                    irr_sw,
+                    irr_ne,
+                    ne_horiz,
                 );
-                if bal.total > 0.0 { lo = mid; } else { hi = mid; }
-                if (hi - lo) < tol * 0.01 { break; }
+                if bal.total > 0.0 {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+                if (hi - lo) < tol * 0.01 {
+                    break;
+                }
             }
             let new_t = (lo + hi) / 2.0;
             let old_t = temps.insert(name.clone(), new_t).unwrap_or(new_t);
             max_change = max_change.max((new_t - old_t).abs());
         }
-        if max_change < tol { break; }
+        if max_change < tol {
+            break;
+        }
     }
 
     Ok(temps.into_iter().collect())
@@ -392,7 +411,9 @@ pub fn bisect_mwt_for_room(
         } else {
             return Ok(None);
         }
-        if (hi - lo) < 0.05 { break; }
+        if (hi - lo) < 0.05 {
+            break;
+        }
     }
     Ok(Some((lo + hi) / 2.0))
 }
@@ -401,9 +422,7 @@ pub fn bisect_mwt_for_room(
 ///
 /// Grid: outside temps from -5 to 20°C (1°C steps), solar 0/100/300/500 W/m².
 /// For each point, bisects MWT to find Leather = 20.5°C.
-pub fn generate_control_table(
-    config_path: &Path,
-) -> ThermalResult<()> {
+pub fn generate_control_table(config_path: &Path) -> ThermalResult<()> {
     let _ = load_thermal_config(config_path)?; // validate config exists
 
     let target_leather = 20.5;
@@ -420,15 +439,15 @@ pub fn generate_control_table(
     let mut table = Vec::new();
     for &outside in &outside_range {
         for &solar in &solar_levels {
-            let mwt = bisect_mwt_for_room(
-                "leather", target_leather, outside as f64, solar, 0.0,
-            )?;
+            let mwt = bisect_mwt_for_room("leather", target_leather, outside as f64, solar, 0.0)?;
             table.push(ControlPoint {
                 outside_c: outside as f64,
                 solar_w_m2: solar,
                 required_mwt: mwt,
             });
-            let mwt_str = mwt.map(|v| format!("{:.1}", v)).unwrap_or("N/A".to_string());
+            let mwt_str = mwt
+                .map(|v| format!("{:.1}", v))
+                .unwrap_or("N/A".to_string());
             println!(
                 "outside={:>3}°C  solar={:>3}W/m²  → MWT={}",
                 outside, solar as i32, mwt_str
@@ -436,14 +455,16 @@ pub fn generate_control_table(
         }
     }
 
-    let out_path = config_path.parent().unwrap_or(Path::new(".")).join("control-table.json");
+    let out_path = config_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("control-table.json");
     let json = serde_json::to_string_pretty(&table)
         .map_err(|e| super::error::ThermalError::ArtifactSerialize(e))?;
-    std::fs::write(&out_path, &json)
-        .map_err(|e| super::error::ThermalError::ArtifactWrite {
-            path: out_path.display().to_string(),
-            source: e,
-        })?;
+    std::fs::write(&out_path, &json).map_err(|e| super::error::ThermalError::ArtifactWrite {
+        path: out_path.display().to_string(),
+        source: e,
+    })?;
     println!("\nWritten to {}", out_path.display());
     Ok(())
 }

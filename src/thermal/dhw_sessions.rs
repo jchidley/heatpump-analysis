@@ -42,7 +42,6 @@ const ROLLING_WINDOW: f64 = 10.0;
 /// T2 above this = WWHR active (warmer inlet from drain heat exchanger)
 const WWHR_T2_THRESHOLD: f64 = 20.0;
 
-
 // ── Data types ──────────────────────────────────────────────────────────────
 
 type TsVal = Vec<(DateTime<FixedOffset>, f64)>;
@@ -176,9 +175,7 @@ fn parse_ts_val(rows: &[HashMap<String, String>]) -> TsVal {
                 // Parse ISO timestamp
                 if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
                     out.push((dt, v));
-                } else if let Ok(dt) =
-                    DateTime::parse_from_rfc3339(&ts.replace("Z", "+00:00"))
-                {
+                } else if let Ok(dt) = DateTime::parse_from_rfc3339(&ts.replace("Z", "+00:00")) {
                     out.push((dt, v));
                 } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(
                     &ts[..19.min(ts.len())],
@@ -193,19 +190,17 @@ fn parse_ts_val(rows: &[HashMap<String, String>]) -> TsVal {
     out
 }
 
-fn query_ts(
-    url: &str,
-    org: &str,
-    token: &str,
-    flux: &str,
-) -> ThermalResult<TsVal> {
+fn query_ts(url: &str, org: &str, token: &str, flux: &str) -> ThermalResult<TsVal> {
     let rows = query_flux_csv_pub(url, org, token, flux)?;
     Ok(parse_ts_val(&rows))
 }
 
 /// Convert time series to sorted vec of (epoch, value) for last-known-value lookup.
 fn to_sorted(data: &TsVal) -> Vec<(i64, f64)> {
-    let mut v: Vec<(i64, f64)> = data.iter().map(|(ts, val)| (ts.timestamp(), *val)).collect();
+    let mut v: Vec<(i64, f64)> = data
+        .iter()
+        .map(|(ts, val)| (ts.timestamp(), *val))
+        .collect();
     v.sort_by_key(|(t, _)| *t);
     v.dedup_by_key(|(t, _)| *t);
     v
@@ -257,40 +252,65 @@ fn find_events(
     eprintln!("Finding events in last {days} days...");
 
     // Query at 10s resolution (raw for eBUS ~30s, 10s aggregate for 2s Multical)
-    let flow_data = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let flow_data = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: -{days}d)
   |> filter(fn: (r) => r._measurement == "emon" and r._field == "value" and r.field == "dhw_flow")
   |> aggregateWindow(every: 10s, fn: max, createEmpty: false)"#
-    ))?;
+        ),
+    )?;
 
-    let vol_data = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let vol_data = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: -{days}d)
   |> filter(fn: (r) => r._measurement == "emon" and r._field == "value" and r.field == "dhw_volume_V1")
   |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-    ))?;
+        ),
+    )?;
 
-    let bc_data = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let bc_data = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: -{days}d)
   |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "BuildingCircuitFlow")
   |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-    ))?;
+        ),
+    )?;
 
-    let t1_data = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let t1_data = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: -{days}d)
   |> filter(fn: (r) => r._measurement == "emon" and r._field == "value" and r.field == "dhw_t1")
   |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-    ))?;
+        ),
+    )?;
 
-    let hwc_data = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let hwc_data = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: -{days}d)
   |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "HwcStorageTemp")
   |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-    ))?;
+        ),
+    )?;
 
     let flow = to_sorted(&flow_data);
     let vol = to_sorted(&vol_data);
@@ -404,10 +424,7 @@ fn find_events(
                     .filter(|c| c.end.timestamp() <= draw_start)
                     .max_by_key(|c| c.end.timestamp())
                     .cloned();
-                let charge_vol = preceding
-                    .as_ref()
-                    .map(|c| c.volume_at_end)
-                    .unwrap_or(0.0);
+                let charge_vol = preceding.as_ref().map(|c| c.volume_at_end).unwrap_or(0.0);
                 let gap_hours = prev_draw_end
                     .map(|pe| (draw_start - pe) as f64 / 3600.0)
                     .unwrap_or(999.0);
@@ -453,33 +470,53 @@ fn analyse_draw(
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
 
-    let t1_raw = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let t1_raw = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: {start_iso}, stop: {end_iso})
   |> filter(fn: (r) => r._measurement == "emon" and r.field == "dhw_t1")"#
-    ))?;
+        ),
+    )?;
 
-    let flow_raw = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let flow_raw = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: {start_iso}, stop: {end_iso})
   |> filter(fn: (r) => r._measurement == "emon" and r.field == "dhw_flow")"#
-    ))?;
+        ),
+    )?;
 
-    let t2_raw = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let t2_raw = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: {start_iso}, stop: {end_iso})
   |> filter(fn: (r) => r._measurement == "emon" and r.field == "dhw_t2")"#
-    ))?;
+        ),
+    )?;
 
     // Also fetch HwcStorageTemp — extend window to +5 min to catch post-draw settling
     let hwc_end_iso = (draw.end + TimeDelta::minutes(5))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
-    let hwc_raw = query_ts(url, org, token, &format!(
-        r#"from(bucket: "{bucket}")
+    let hwc_raw = query_ts(
+        url,
+        org,
+        token,
+        &format!(
+            r#"from(bucket: "{bucket}")
   |> range(start: {start_iso}, stop: {hwc_end_iso})
   |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "HwcStorageTemp")"#
-    ))?;
+        ),
+    )?;
 
     if t1_raw.len() < 10 || flow_raw.len() < 10 {
         return Ok(None);
@@ -489,9 +526,7 @@ fn analyse_draw(
     let mut cumul = 0.0f64;
     let mut fi: Vec<(f64, f64)> = Vec::new(); // (epoch, cumulative_litres)
     for i in 1..flow_raw.len() {
-        let dt = (flow_raw[i].0 - flow_raw[i - 1].0)
-            .num_milliseconds() as f64
-            / 1000.0;
+        let dt = (flow_raw[i].0 - flow_raw[i - 1].0).num_milliseconds() as f64 / 1000.0;
         let avg_lph = (flow_raw[i].1 + flow_raw[i - 1].1) / 2.0;
         cumul += avg_lph * dt / 3600.0;
         fi.push((flow_raw[i].0.timestamp() as f64, cumul));
@@ -622,9 +657,9 @@ fn settled_mains_temp(t2_raw: &TsVal, flow_raw: &TsVal) -> f64 {
     for (ts, val) in t2_raw {
         let e = ts.timestamp() as f64;
         // Check if flow was active at this timestamp (within 2s)
-        let flowing = flow_epochs.iter().any(|(fe, fv)| {
-            (e - fe).abs() < 3.0 && *fv > DRAW_FLOW_MIN
-        });
+        let flowing = flow_epochs
+            .iter()
+            .any(|(fe, fv)| (e - fe).abs() < 3.0 && *fv > DRAW_FLOW_MIN);
         if flowing {
             t2_during_flow.push(*val);
         }
@@ -699,10 +734,7 @@ fn compute_recommended_capacity(capacity: &[&InflectionResult]) -> CapacityRecom
         if var_t2 > 0.1 {
             let slope = cov / var_t2;
             let best_cold_vol = vols.iter().fold(0.0f64, |a, &b| a.max(b));
-            let best_cold_t2 = cold
-                .iter()
-                .map(|r| r.mains_temp)
-                .fold(0.0f64, f64::max);
+            let best_cold_t2 = cold.iter().map(|r| r.mains_temp).fold(0.0f64, f64::max);
             let wwhr_estimate = best_cold_vol + slope * (25.0 - best_cold_t2);
             let min_vol = vols.iter().fold(f64::INFINITY, |a, &b| a.min(b));
             return CapacityRecommendation {
@@ -830,9 +862,18 @@ fn output_json(results: &[InflectionResult]) {
         .map(|r| r.best_volume())
         .fold(f64::NEG_INFINITY, f64::max);
 
-    let baths = results.iter().filter(|r| r.draw_type() == DrawType::Bath).count();
-    let showers = results.iter().filter(|r| r.draw_type() == DrawType::Shower).count();
-    let taps = results.iter().filter(|r| r.draw_type() == DrawType::Tap).count();
+    let baths = results
+        .iter()
+        .filter(|r| r.draw_type() == DrawType::Bath)
+        .count();
+    let showers = results
+        .iter()
+        .filter(|r| r.draw_type() == DrawType::Shower)
+        .count();
+    let taps = results
+        .iter()
+        .filter(|r| r.draw_type() == DrawType::Tap)
+        .count();
 
     let rec = compute_recommended_capacity(&capacity);
 
@@ -865,16 +906,28 @@ fn output_human(results: &[InflectionResult], days: u32, verbose: bool) {
         .filter(|r| r.inflection_category() == InflectionCategory::Partial)
         .collect();
 
-    let baths: Vec<_> = results.iter().filter(|r| r.draw_type() == DrawType::Bath).collect();
-    let showers: Vec<_> = results.iter().filter(|r| r.draw_type() == DrawType::Shower).collect();
-    let taps: Vec<_> = results.iter().filter(|r| r.draw_type() == DrawType::Tap).collect();
+    let baths: Vec<_> = results
+        .iter()
+        .filter(|r| r.draw_type() == DrawType::Bath)
+        .collect();
+    let showers: Vec<_> = results
+        .iter()
+        .filter(|r| r.draw_type() == DrawType::Shower)
+        .collect();
+    let taps: Vec<_> = results
+        .iter()
+        .filter(|r| r.draw_type() == DrawType::Tap)
+        .collect();
 
     if verbose {
         println!();
         println!("{}", "=".repeat(140));
         println!(
             "ALL DRAWS — {} at 2-second resolution ({} baths, {} showers, {} taps)",
-            results.len(), baths.len(), showers.len(), taps.len()
+            results.len(),
+            baths.len(),
+            showers.len(),
+            taps.len()
         );
         println!("{}", "=".repeat(140));
         println!(
@@ -902,7 +955,11 @@ fn output_human(results: &[InflectionResult], days: u32, verbose: bool) {
                 Some(c) => format!("✗ gap {:.0}°", c.t1_pre - c.hwc_end),
                 None => "?".into(),
             };
-            let type_str = format!("{}{}", r.draw_type(), if d.during_charge { "*" } else { "" });
+            let type_str = format!(
+                "{}{}",
+                r.draw_type(),
+                if d.during_charge { "*" } else { "" }
+            );
 
             println!(
                 "{:>20} │ {:>7} {:3.0}L {:5.0}L {:4.1}h │ {:>7} {:>7} │ {:4.1}° {:4.1}° {:4.0} │ {:4.1}° {:4.1}° {:4.1}° │ {:>10} │ {}",
@@ -931,7 +988,10 @@ fn output_human(results: &[InflectionResult], days: u32, verbose: bool) {
     println!();
     println!(
         "DHW SESSIONS — {} draws over {days} days ({} baths, {} showers, {} taps)",
-        results.len(), baths.len(), showers.len(), taps.len()
+        results.len(),
+        baths.len(),
+        showers.len(),
+        taps.len()
     );
     println!("{}", "=".repeat(70));
 
@@ -943,7 +1003,11 @@ fn output_human(results: &[InflectionResult], days: u32, verbose: bool) {
         println!();
         println!("  {label} ({}, {total_vol:.0}L total):", draws.len());
         for r in draws {
-            let charge_flag = if r.draw.during_charge { " [during charge]" } else { "" };
+            let charge_flag = if r.draw.during_charge {
+                " [during charge]"
+            } else {
+                ""
+            };
             println!(
                 "    {}: {:3.0}L  {:.0} L/h  T1={:.1}°  HWC {:.0}→{:.0}° (Δ{:.0}°){}",
                 r.draw.start.format("%d/%m %H:%M"),
@@ -1021,7 +1085,10 @@ fn output_human(results: &[InflectionResult], days: u32, verbose: bool) {
     let rec = compute_recommended_capacity(&cap_refs);
     if let Some(val) = rec.recommended_full_litres {
         println!();
-        println!("  Recommended full_litres for z2m-hub: {val:.0}L ({})", rec.method);
+        println!(
+            "  Recommended full_litres for z2m-hub: {val:.0}L ({})",
+            rec.method
+        );
     }
 }
 
