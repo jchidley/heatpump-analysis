@@ -24,7 +24,7 @@ See [`adaptive-heating-control.md`](adaptive-heating-control.md) for the strateg
 | 🔵 | Derive Aldora proxy band from historical data | Future |
 | 🔵 | DHW hygiene / legionella risk monitoring | Future |
 
-Real objective: Leather at 20–21°C during waking hours at minimum cost, with reliable DHW during Cosy windows. Overnight temperature is a free variable, not a target.
+Real objective: Leather at 20–21°C during waking hours at minimum cost, with reliable DHW. DHW prefers Cosy windows to reduce battery pressure, but overnight timing is flexible. Overnight temperature is constrained by HP reheat capacity, not a free variable.
 
 ## Pico W eBUS Adapter
 

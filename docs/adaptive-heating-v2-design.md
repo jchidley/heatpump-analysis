@@ -11,7 +11,7 @@ Constraints:
 - No heating above 17°C outside - empirically, solar/internal gains are sufficient.
 - 45°C max flow on heating - emitter capacity and COP limit. Above this, diminishing returns.
 - DHW steals HP for ~1-2h. A bath draw can empty the cylinder and require a full recharge.
-- Battery is fully charged overnight - tariff window alignment is irrelevant for heating cost. DHW should still target Cosy windows.
+- Battery is fully charged overnight - tariff window alignment is irrelevant for heating cost. DHW should target Cosy windows where possible to reduce battery pressure on cold days, but overnight timing is flexible (see Phase 2 DHW strategy).
 - Overnight temp is **not** a free variable - constrained by HP reheat capacity. At -2°C the HP is in deficit and can barely drop 0.5°C. At 10°C, minimum floor is ~18.6°C for 3h reheat to 20.5°C by 07:00. See Phase 2.
 
 ## Architecture
@@ -55,11 +55,13 @@ The outer loop uses the calibrated thermal physics model via control table (Phas
 
 **`room_offset` was removed** (2 Apr 2026). The EMA ran away to +2.18°C overnight - it learned the overnight cooling as model error, then suppressed preheat target_flow by ~8°C (23.5 vs 31.2°C needed). The inner loop is sufficient: it converges in 1 tick regardless of model accuracy. If Phase 1b reveals systematic model bias, a static calibration offset would be better than a runtime EMA.
 
-### DHW
+### DHW (Phase 1a: simple, Phase 2 replaces)
 
-Cosy windows (04:00-07:00, 13:00-16:00, 22:00-23:59) + cylinder < 40°C → `HwcSFMode=load`.
+Phase 1a: Cosy windows (04:00-07:00, 13:00-16:00, 22:00-23:59) + HwcStorageTemp < 40°C → `HwcSFMode=load`.
 
-**Caution**: `HwcStorageTemp` reads the NTC in a dry pocket above the bottom coil. After a large draw (e.g. bath), it reads mains cold (~13°C) even with 60-70L of usable hot water above the thermocline. Do not trigger emergency DHW charges based solely on a low NTC reading - the stratification holds and the scheduled Cosy window charge is usually sufficient.
+Phase 2 will replace this with T1-based decisions (see Phase 2 DHW strategy below): charge at 22:00 Cosy window, monitor Multical T1 overnight, top up at 04:00 Cosy only if T1 drops below comfort threshold.
+
+**Caution**: `HwcStorageTemp` reads the NTC in a dry pocket above the bottom coil (0.5°C resolution, 30s). After a large draw (e.g. bath), it reads mains cold (~13°C) even with 60-70L of usable hot water above the thermocline. Multical T1 (0.01°C, 2s) at the actual hot outlet is far more reliable for DHW decisions.
 
 ### Safety
 

@@ -4,7 +4,7 @@ Date: 31 March 2026 (updated 1 April 2026)
 
 ## Status
 
-- **V1 MVP**: Deployed on `pi5data` 31 March 2026. Bang-bang curve adjustment (±0.10 every 15 min). Proved eBUS writes work but revealed fundamental control problems — see [`adaptive-heating-mvp.md`](adaptive-heating-mvp.md).
+- **V1 MVP**: Deployed on `pi5data` 31 March 2026. Bang-bang curve adjustment (±0.10 every 15 min). Proved eBUS writes work but revealed fundamental control problems - see [`adaptive-heating-mvp.md`](adaptive-heating-mvp.md).
 - **V1 pilot findings**: Curve ping-ponged 0.55→0.10→1.00 in one overnight cycle. 15-minute adjustments are meaningless against Leather's 15-hour thermal time constant. The controller had no model of the house.
 - **V2 design**: Model-predictive control using the calibrated thermal model + reverse-engineered VRC 700 heat curve formula. See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md).
 - **VRC 700 heat curve formula**: `flow = setpoint + curve × (setpoint - outside)^1.27` (fitted from Vaillant manual + empirical pilot data, RMSE 0.74°C).
@@ -15,7 +15,7 @@ The VRC 700 controls the heat pump using weather compensation: it takes a curve 
 
 We have 13 room sensors, a calibrated thermal model (261 W/K HTC, per-room radiator outputs, time constants), eBUS read/write access, and the reverse-engineered heat curve formula. The controller uses the thermal model to calculate the right flow temperature, converts that to a curve value, and writes it. Room temperature feedback is a slow trim, not the primary control loop.
 
-The real control objective is not a fixed temperature band. It is: **Leather at 20–21°C during waking hours (07:00–23:00) at minimum cost, with reliable DHW.** How cold the house gets at 3am is irrelevant provided we can recover in time. DHW charges only during Cosy windows when the cylinder needs it.
+The real control objective is not a fixed temperature band. It is: **Leather at 20-21°C during waking hours (07:00-23:00) at minimum cost, with reliable DHW.** How cold the house gets at 3am is constrained by HP reheat capacity (not a free variable - below 2°C the HP is in deficit). DHW prefers Cosy windows to reduce battery pressure, but overnight timing (22:00-07:00) is flexible. Phase 2 uses Multical T1 for DHW decisions, not VRC 700 hysteresis.
 
 ## What we can observe
 
@@ -62,7 +62,7 @@ The real control objective is not a fixed temperature band. It is: **Leather at 
 
 ## What we can control
 
-All the VRC 700's inputs ultimately produce one output: `Hc1ActualFlowTempDesired` — the target flow temperature sent to the HMU. The curve, setpoint, min/max limits, and outside temp are all just inputs to the algorithm that produces that one number.
+All the VRC 700's inputs ultimately produce one output: `Hc1ActualFlowTempDesired` - the target flow temperature sent to the HMU. The curve, setpoint, min/max limits, and outside temp are all just inputs to the algorithm that produces that one number.
 
 The VRC 700 heat curve formula (reverse-engineered from manual + pilot data):
 ```
@@ -113,8 +113,8 @@ This turns occupancy into the top-level mode selector. The same outside temperat
 
 The controller should not treat all rooms equally.
 
-- **Primary target room: Leather room** — measured by the emonth2. This is the most important comfort reference and should be treated as the main room-level target when the room is thermally independent.
-- **Secondary target room: Aldora** — this should act as the second comfort anchor, especially when Leather is satisfied but the rest of the occupied house is not.
+- **Primary target room: Leather room** - measured by the emonth2. This is the most important comfort reference and should be treated as the main room-level target when the room is thermally independent.
+- **Secondary target room: Aldora** - this should act as the second comfort anchor, especially when Leather is satisfied but the rest of the occupied house is not.
 - **All other rooms** modify the control decision rather than define it. They matter as constraints, context, and evidence of distribution problems.
 - **Conservatory** should be treated as a **heat sink / boundary room**, not a room to optimise for directly. It largely follows outdoor conditions, strongly modified by solar gain, and can distort whole-house optimisation if treated as a normal target room.
 
@@ -280,31 +280,31 @@ Because the house has a 26-hour time constant, each experiment takes 1-2 hours t
 - **Status:** largely completed enough to begin the live pilot. Many key writable levers have now been confirmed by direct write + readback on the real VRC 700, and `Hc1HeatCurve` has been shown to change `Hc1ActualFlowTempDesired` on the live system.
 
 **Phase 2: Curve + setpoint control**
-- Layers 0–2: occupancy mode, away mode, comfort guard, COP gradient-following
+- Layers 0-2: occupancy mode, away mode, comfort guard, COP gradient-following
 - Writes `Hc1HeatCurve` and `Z1DayTemp`/`Z1NightTemp` every 15 min when adjustment needed
 - Tariff-aware: bank heat during Cosy windows, coast during expensive periods
 - Away mode: API endpoint or config to set return time → automatic warm-up ramp
 - Log every decision with before/after COP, room temps, outside temp to InfluxDB
-- Every write is an experiment — the dataset grows with each cycle
+- Every write is an experiment - the dataset grows with each cycle
 - **Status:** MVP implemented in Rust, installed on `pi5data`, and running as a systemd service. See `docs/adaptive-heating-mvp.md` for the frozen MVP spec and current deployment details.
 
 **Phase 3: Context and DHW policy**
 - Door sensors → know which rooms are coupled
 - Leather door sensors first → gate whether Leather is allowed to dominate optimisation
 - Occupancy from motion sensors → prioritise occupied rooms
-- Weather forecast → anticipate conditions, don’t just react
+- Weather forecast → anticipate conditions, don't just react
 - Pre-DHW banking when compressor has headroom
 - Add DHW turnover / hygiene-risk monitoring with targeted hygiene cycles only when due
 - **Status:** still outstanding. This remains the next major refinement layer after the initial pilot has produced useful live data.
 
 ## 24-hour operation
 
-The real objective is **Leather at 20–21°C by 07:00 and throughout waking hours, at minimum cost**. The overnight temperature is not a target — it’s a free variable the controller uses to minimise cost.
+The real objective is **Leather at 20–21°C by 07:00 and throughout waking hours, at minimum cost**. The overnight temperature is not a target — but it's constrained by HP reheat capacity (below 2°C the HP is in deficit and can barely cool at all). The controller optimises within those constraints.
 
 The controller calculates:
-- **Overnight**: given forecast (temperature + solar), thermal model, and the morning DHW charge that will steal the HP at ~05:30, what’s the latest heating start time that achieves 20°C in Leather by 07:00? Let the house cool freely until then.
+- **Overnight**: given forecast (temperature + solar), thermal model, and the morning DHW charge that will steal the HP at ~05:30, what's the latest heating start time that achieves 20°C in Leather by 07:00? Let the house cool freely until then.
 - **Daytime**: the controller follows the hourly forecast trajectory (temperature + solar radiation), calculating the required curve for each hour. On a sunny afternoon the equilibrium solver calculates a lower MWT because solar gain through the conservatory and south-facing windows does some of the heating. The curve profile naturally rises in the morning, falls through midday, and rises again in the evening.
-- **DHW**: charge only during Cosy windows (05:30–07:00, 13:00–15:00, 22:00–00:00), only when cylinder is below trigger threshold. Independent of heating strategy.
+- **DHW**: prefer Cosy windows (22:00-00:00, 04:00-07:00, 13:00-15:00) to reduce battery pressure, but overnight timing is flexible. Phase 2: charge at 22:00 Cosy, monitor T1, top up at 04:00 Cosy if needed. Independent of heating strategy.
 
 Predictable events (DHW charges, outside temp trends, solar gain) are planned for in advance using the forecast, not reacted to after the fact. See [`adaptive-heating-v2-design.md`](adaptive-heating-v2-design.md) for the full V2 control design.
 
@@ -325,16 +325,16 @@ When the house is empty for an extended period:
 5. **DHW policy during absence:** minimise DHW maintenance, but continue monitoring turnover and temperature history. If low use / stagnation means hygiene risk rises, schedule a targeted high-temperature hygiene cycle rather than holding DHW hot continuously.
 6. **Cost during absence:** At Tout 7°C, maintaining 15°C costs ~£0.50/day vs ~£2.50/day at 21°C. A week away saves ~£14.
 
-The warm-up ramp timing comes from the calibrated cooling model (k=0.039/hr, capacity 6,723 Wh/°C). The controller doesn't guess — it computes the required lead time from the current house temperature and forecast outside temp.
+The warm-up ramp timing comes from the calibrated cooling model (k=0.039/hr, capacity 6,723 Wh/°C). The controller doesn't guess - it computes the required lead time from the current house temperature and forecast outside temp.
 
 ## Experimental method: write, observe, classify
 
 For each candidate VRC 700 register, the controller test harness should classify it in four stages:
 
-1. **Write accepted** — returns `done`/`empty`
-2. **Readback changed** — the register stores the new value
-3. **VRC 700 state changed** — derived values or outbound control messages change
-4. **Plant changed** — VWZ AI / HMU behaviour changes in a measurable way
+1. **Write accepted** - returns `done`/`empty`
+2. **Readback changed** - the register stores the new value
+3. **VRC 700 state changed** - derived values or outbound control messages change
+4. **Plant changed** - VWZ AI / HMU behaviour changes in a measurable way
 
 The key observation is not just readback. It is what the VRC 700 then sends downstream to the indoor unit and heat pump. The VRC 700 behaves as a steerable state machine: we change its inputs, it recomputes its policy, and it emits repeating downstream control messages (especially `SetMode`) roughly every 10 seconds.
 
