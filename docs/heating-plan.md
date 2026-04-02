@@ -18,7 +18,7 @@ Nobody cares what temperature the house reaches at 3am. The overnight temperatur
 | No heating needed above | 17°C outside | Empirical — solar/internal gains sufficient |
 | Max useful flow temp | 45°C | Emitter capacity + COP limit |
 | House time constant | 26h (Leather ~15h) | Calibrated from 27k DHW minutes |
-| Cooling rate (k) | 0.039/hr per °C ΔT | Calibrated from DHW events (genuine no-heating) |
+| Cooling rate (k) | 0.039/hr per °C ΔT | Calibrated from 27k DHW minutes (genuine no-heating). **Not** the idle-cycle rate (k=0.014) which is 3× too slow because surrounding rooms stay warm from recent heating |
 | Thermal capacity | 6,723 Wh/°C (τ = 25.8h) | Derived from k and HTC |
 | DHW steals HP for | 50–100 min per charge | eco ~100 min, normal ~60 min |
 | Emitters | 15 radiators (no TRVs), Sterling off | No per-room flow control |
@@ -49,7 +49,7 @@ Octopus Cosy, three windows:
 | **Peak** | 42.97p/kWh | 16:00–19:00 |
 | **Battery effective** | 14.63p/kWh | Powerwall covers ~95% of non-Cosy usage |
 
-The battery already captures most tariff arbitrage. Total scheduling optimisation yields £15–40/year. Cost difference between Cosy and battery-effective is 0.58p/kWh — negligible for heating. The real value of Cosy alignment is **protecting the battery for peak hours on cold days** when the HP runs flat out.
+The battery already captures most tariff arbitrage. From 512 days of data: effective cost £912 vs £1596 naive (no battery). Total scheduling optimisation yields £15–40/year. Cost difference between Cosy and battery-effective is 0.58p/kWh — negligible for heating. The real value of Cosy alignment is **protecting the battery for peak hours on cold days** when the HP runs flat out.
 
 ## Control surface
 
@@ -77,6 +77,8 @@ Three setpoints analysed. SP=19 chosen because:
 - Any overnight heating is a deliberate curve raise, not accidental
 - Curves stay under 1.50 warning up to 15°C outside
 - No heating runs above 17°C anyway
+
+**Why not Z1OpMode=auto?** The VRC 700 has undocumented Optimum Start: at 03:00 (3h before 06:00 day timer), `Hc1ActualFlowTempDesired` jumped from 21.0°C to 22.3°C with curve at 0.10. No register to disable it. Night mode eliminates Optimum Start, CcTimer transitions, and day/night setpoint switches — giving the controller full authority.
 
 On shutdown: `Z1OpMode=auto`, `Hc1HeatCurve=0.55`. VRC 700 resumes autonomous control.
 
