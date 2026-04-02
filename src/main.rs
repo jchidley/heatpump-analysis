@@ -9,10 +9,12 @@ mod thermal;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use polars::prelude::SerWriter;
+use reqwest::blocking::Client;
+use serde_json::Value;
 
 #[derive(Parser)]
 #[command(name = "heatpump-analysis")]
@@ -209,6 +211,45 @@ enum Commands {
         /// Don't write results to InfluxDB
         #[arg(long)]
         no_write: bool,
+    },
+    /// Query live DHW state from z2m-hub (JSON by default; use --human for operator view)
+    DhwLiveStatus {
+        /// z2m-hub base URL
+        #[arg(long, default_value = "http://pi5data:3030")]
+        base_url: String,
+        /// Human-oriented summary output
+        #[arg(long)]
+        human: bool,
+    },
+    /// Reconstruct a fused heating-history window from InfluxDB evidence
+    HeatingHistory {
+        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+        /// Inclusive start of window (RFC3339, e.g. 2026-04-02T00:00:00Z)
+        #[arg(long)]
+        since: String,
+        /// Exclusive end of window (RFC3339, e.g. 2026-04-02T09:00:00Z)
+        #[arg(long)]
+        until: String,
+        /// Human-oriented summary output
+        #[arg(long)]
+        human: bool,
+    },
+    /// Reconstruct a fused DHW-history window from InfluxDB evidence
+    DhwHistory {
+        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+        /// Inclusive start of window (RFC3339, e.g. 2026-03-21T05:00:00Z)
+        #[arg(long)]
+        since: String,
+        /// Exclusive end of window (RFC3339, e.g. 2026-03-21T08:00:00Z)
+        #[arg(long)]
+        until: String,
+        /// Human-oriented summary output
+        #[arg(long)]
+        human: bool,
     },
 }
 
@@ -650,6 +691,31 @@ fn main() -> Result<()> {
             };
             thermal::dhw_sessions(config, days, output, no_write)?;
         }
+
+        Commands::DhwLiveStatus {
+            ref base_url,
+            human,
+        } => {
+            print_dhw_live_status(base_url, human)?;
+        }
+
+        Commands::HeatingHistory {
+            ref config,
+            ref since,
+            ref until,
+            human,
+        } => {
+            thermal::heating_history(std::path::Path::new(config), since, until, human)?;
+        }
+
+        Commands::DhwHistory {
+            ref config,
+            ref since,
+            ref until,
+            human,
+        } => {
+            thermal::dhw_history(std::path::Path::new(config), since, until, human)?;
+        }
     }
 
     Ok(())
@@ -668,6 +734,151 @@ fn load_dataframe(cli: &Cli, start: i64, end: i64) -> Result<polars::prelude::Da
 }
 
 /// Parse --from/--to dates, --all-data, or fall back to --days.
+#[derive(Debug, serde::Serialize)]
+struct DhwLiveSummary {
+    charge_state: Option<String>,
+    crossover_achieved: Option<bool>,
+    remaining_litres: Option<f64>,
+    full_litres: Option<f64>,
+    effective_t1_c: Option<f64>,
+    t1_c: Option<f64>,
+    hwc_storage_c: Option<f64>,
+    target_c: Option<f64>,
+    sfmode: Option<String>,
+    charging: Option<bool>,
+    safe_for_two_showers: Option<bool>,
+    warnings: Vec<String>,
+}
+
+fn get_json(client: &Client, url: &str) -> Result<Value> {
+    let resp = client
+        .get(url)
+        .send()
+        .with_context(|| format!("GET {url}"))?;
+    let resp = resp
+        .error_for_status()
+        .with_context(|| format!("GET {url}"))?;
+    Ok(resp
+        .json()
+        .with_context(|| format!("parse JSON from {url}"))?)
+}
+
+fn as_f64(v: &Value, key: &str) -> Option<f64> {
+    v.get(key)?.as_f64()
+}
+
+fn as_bool(v: &Value, key: &str) -> Option<bool> {
+    v.get(key)?.as_bool()
+}
+
+fn as_string(v: &Value, key: &str) -> Option<String> {
+    v.get(key)?.as_str().map(ToString::to_string)
+}
+
+fn print_dhw_live_status(base_url: &str, human: bool) -> Result<()> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    let hot_water = get_json(&client, &format!("{base_url}/api/hot-water"))?;
+    let dhw_status = get_json(&client, &format!("{base_url}/api/dhw/status"))?;
+
+    let remaining_litres = as_f64(&hot_water, "remaining_litres");
+    let full_litres = as_f64(&hot_water, "full_litres");
+    let effective_t1_c = as_f64(&hot_water, "effective_t1");
+    let t1_c = as_f64(&hot_water, "t1").or_else(|| as_f64(&dhw_status, "t1_hot"));
+    let hwc_storage_c =
+        as_f64(&hot_water, "hwc_storage").or_else(|| as_f64(&dhw_status, "cylinder_temp"));
+    let target_c = as_f64(&dhw_status, "target_temp");
+    let charge_state = as_string(&hot_water, "charge_state");
+    let crossover_achieved = as_bool(&hot_water, "crossover_achieved");
+    let sfmode = as_string(&dhw_status, "sfmode");
+    let charging = as_bool(&dhw_status, "charging");
+
+    let safe_for_two_showers = remaining_litres.map(|l| l >= 140.0);
+    let mut warnings = Vec::new();
+    if t1_c.is_none() {
+        warnings.push("T1 unavailable".to_string());
+    }
+    if remaining_litres.is_none() {
+        warnings.push("remaining litres unavailable".to_string());
+    }
+    if matches!(sfmode.as_deref(), Some("load")) && charging != Some(true) {
+        warnings.push("HwcSFMode is load while charging=false".to_string());
+    }
+    if let Some(t1) = t1_c {
+        if t1 < 42.0 {
+            warnings.push(format!("T1 is low at {:.1}°C", t1));
+        }
+    }
+
+    let summary = DhwLiveSummary {
+        charge_state,
+        crossover_achieved,
+        remaining_litres,
+        full_litres,
+        effective_t1_c,
+        t1_c,
+        hwc_storage_c,
+        target_c,
+        sfmode,
+        charging,
+        safe_for_two_showers,
+        warnings,
+    };
+
+    if !human {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!("DHW live status");
+        println!("--------------");
+        if let Some(ref s) = summary.charge_state {
+            println!("charge_state: {s}");
+        }
+        if let Some(v) = summary.crossover_achieved {
+            println!("crossover_achieved: {v}");
+        }
+        if let Some(v) = summary.remaining_litres {
+            println!("remaining_litres: {:.1}", v);
+        }
+        if let Some(v) = summary.full_litres {
+            println!("full_litres: {:.1}", v);
+        }
+        if let Some(v) = summary.effective_t1_c {
+            println!("effective_t1_c: {:.1}", v);
+        }
+        if let Some(v) = summary.t1_c {
+            println!("t1_c: {:.1}", v);
+        }
+        if let Some(v) = summary.hwc_storage_c {
+            println!("hwc_storage_c: {:.1}", v);
+        }
+        if let Some(v) = summary.target_c {
+            println!("target_c: {:.1}", v);
+        }
+        if let Some(ref v) = summary.sfmode {
+            println!("sfmode: {v}");
+        }
+        if let Some(v) = summary.charging {
+            println!("charging: {v}");
+        }
+        if let Some(v) = summary.safe_for_two_showers {
+            println!("safe_for_two_showers: {v}");
+        }
+        if summary.warnings.is_empty() {
+            println!("warnings: none");
+        } else {
+            println!("warnings:");
+            for warning in &summary.warnings {
+                println!("- {warning}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn resolve_time_range(cli: &Cli) -> Result<(i64, i64)> {
     let end = match &cli.to {
         Some(s) => {

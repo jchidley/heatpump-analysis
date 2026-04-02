@@ -61,6 +61,8 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `thermal-snapshot` | Export/import reproducibility snapshots (human-gated) |
 | `thermal-control-table` | Generate MWT control table for adaptive heating |
 | `dhw-sessions` | Analyse DHW draw/charge sessions from InfluxDB |
+| `heating-history` | Reconstruct fused heating-history evidence for a chosen window |
+| `dhw-history` | Reconstruct fused DHW-history evidence for a chosen window |
 
 ### Options
 
@@ -81,6 +83,14 @@ cargo run -- --from 2024-12-01 --to 2025-02-28 summary
 
 # Export January data to CSV for spreadsheet analysis
 cargo run -- --from 2025-01-01 --to 2025-01-31 export -o january.csv
+
+# Reconstruct an overnight heating window
+cargo run --bin heatpump-analysis -- heating-history \
+  --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z
+
+# Reconstruct a morning DHW charge window
+cargo run --bin heatpump-analysis -- dhw-history \
+  --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z
 
 # All data with gap-filled samples
 cargo run -- --all-data --include-simulated all

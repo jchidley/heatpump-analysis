@@ -8,6 +8,7 @@ mod diagnostics;
 mod display;
 mod error;
 mod geometry;
+mod history;
 mod influx;
 mod operational;
 mod physics;
@@ -19,14 +20,15 @@ mod wind;
 
 // Re-export the public entry points consumed by main.rs
 pub use calibration::calibrate;
+pub use dhw_sessions::{dhw_sessions, DhwSessionsOutput};
 pub use diagnostics::fit_diagnostics;
 pub use display::{
-    generate_control_table, print_analyse, print_connections, print_equilibrium,
-    print_moisture, print_rooms,
+    generate_control_table, print_analyse, print_connections, print_equilibrium, print_moisture,
+    print_rooms,
 };
+pub use history::{dhw_history, heating_history};
 pub use operational::operational_validate;
 pub use snapshot::{snapshot_export, snapshot_import};
-pub use dhw_sessions::{dhw_sessions, DhwSessionsOutput};
 pub use validation::validate;
 
 // Re-export solver entry points for adaptive-heating-mvp binary
