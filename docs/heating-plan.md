@@ -284,12 +284,13 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 11. **Direct flow temp control** — `SetModeOverride` to HMU, bypassing VRC 700 entirely
 12. **Defrost analysis** — eBUS provides definitive defrost status (code 516) vs current inference from negative DT/heat
 
-### Observations (2 Apr 2026 daytime — conservatory door open all morning)
+### Observations (2 Apr 2026 daytime — conservatory door open ~07:00–13:30)
 
 - Leather stuck at 19.6–19.9°C for 6h. **Fully explained by conservatory door open** (~1,500W cold air load halves HP surplus). Model MWT≈28.3°C is correct for door-closed conditions.
 - Outer/inner loop sawtooth: outer resets curve every 15 min (model guess 0.51–0.57), inner overrides to 0.59–0.68. With door open, the inner loop was *correctly compensating* for the extra heat loss. **Do not fix until confirmed on clean doors-closed data.**
 - `CurrentCompressorUtil` reads negative values (-29, -55, -89, -102). Unreliable register — do not use for control decisions.
 - DHW triggered by VRC 700 at HwcStorageTemp=34°C while T1=43.9°C in 13:00 Cosy window. Data input for DHW plan — not necessarily wrong (bottom zone cold, afternoon demand, cheap rate).
+- **Service hung ~12:46 UTC** during extended DHW charge (no outer/inner logs for >1h while process still running). Likely eBUS read or InfluxDB query timeout during DHW. Needs investigation — add timeouts to all blocking I/O.
 
 ## Key files
 
