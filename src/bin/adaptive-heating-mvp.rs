@@ -1,9 +1,9 @@
 use std::fs::{self, OpenOptions};
-use std::sync::OnceLock;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -38,8 +38,12 @@ enum Commands {
     Run,
     /// Restore the known-good baseline immediately
     RestoreBaseline,
-    /// Print current persisted runtime state
-    Status,
+    /// Print current runtime snapshot (structured by default; use --human for operator view)
+    Status {
+        /// Human-oriented summary output
+        #[arg(long)]
+        human: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -148,24 +152,54 @@ struct ModelConfig {
     forecast_cache_secs: u64,
 }
 
-fn default_exponent() -> f64 { 1.25 }
-fn default_target_leather() -> f64 { 20.5 }
-fn default_setpoint() -> f64 { 19.0 }  // Phase 1a: Z1NightTemp since Z1OpMode=night
-fn default_delta_t() -> f64 { 4.0 }
-fn default_curve_deadband() -> f64 { 0.05 }
-fn default_waking_start() -> String { "07:00".to_string() }
-fn default_waking_end() -> String { "23:00".to_string() }
-fn default_overnight_curve() -> f64 { 0.10 }
-fn default_preheat_hours() -> f64 { 3.0 }
-fn default_inner_loop_gain() -> f64 { 0.10 }
-fn default_inner_loop_deadband() -> f64 { 0.5 }
-fn default_inner_loop_max_step() -> f64 { 0.20 }
-fn default_geometry_path() -> PathBuf { PathBuf::from("data/canonical/thermal_geometry.json") }
-fn default_dhw_t1_topic() -> String { "emon/multical/dhw_t1".to_string() }
+fn default_exponent() -> f64 {
+    1.25
+}
+fn default_target_leather() -> f64 {
+    20.5
+}
+fn default_setpoint() -> f64 {
+    19.0
+} // Phase 1a: Z1NightTemp since Z1OpMode=night
+fn default_delta_t() -> f64 {
+    4.0
+}
+fn default_curve_deadband() -> f64 {
+    0.05
+}
+fn default_waking_start() -> String {
+    "07:00".to_string()
+}
+fn default_waking_end() -> String {
+    "23:00".to_string()
+}
+fn default_overnight_curve() -> f64 {
+    0.10
+}
+fn default_preheat_hours() -> f64 {
+    3.0
+}
+fn default_inner_loop_gain() -> f64 {
+    0.10
+}
+fn default_inner_loop_deadband() -> f64 {
+    0.5
+}
+fn default_inner_loop_max_step() -> f64 {
+    0.20
+}
+fn default_geometry_path() -> PathBuf {
+    PathBuf::from("data/canonical/thermal_geometry.json")
+}
+fn default_dhw_t1_topic() -> String {
+    "emon/multical/dhw_t1".to_string()
+}
 fn default_forecast_url() -> String {
     "https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London".to_string()
 }
-fn default_forecast_cache_secs() -> u64 { 3600 }
+fn default_forecast_cache_secs() -> u64 {
+    3600
+}
 
 impl Default for ModelConfig {
     fn default() -> Self {
@@ -210,15 +244,26 @@ struct ForecastCache {
 fn fetch_forecast(client: &Client, url: &str) -> Result<Vec<ForecastHour>> {
     let resp = client.get(url).timeout(Duration::from_secs(10)).send()?;
     let body: serde_json::Value = resp.json()?;
-    let times = body["hourly"]["time"].as_array().context("no hourly.time")?;
-    let temps = body["hourly"]["temperature_2m"].as_array().context("no temperature_2m")?;
-    let rhs = body["hourly"]["relative_humidity_2m"].as_array().context("no humidity")?;
-    let rads = body["hourly"]["direct_radiation"].as_array().context("no radiation")?;
+    let times = body["hourly"]["time"]
+        .as_array()
+        .context("no hourly.time")?;
+    let temps = body["hourly"]["temperature_2m"]
+        .as_array()
+        .context("no temperature_2m")?;
+    let rhs = body["hourly"]["relative_humidity_2m"]
+        .as_array()
+        .context("no humidity")?;
+    let rads = body["hourly"]["direct_radiation"]
+        .as_array()
+        .context("no radiation")?;
 
     let mut hours = Vec::new();
     for i in 0..times.len() {
         let time_str = times[i].as_str().unwrap_or_default().to_string();
-        let hour: u32 = time_str.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let hour: u32 = time_str
+            .get(11..13)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         hours.push(ForecastHour {
             time: time_str,
             hour,
@@ -318,6 +363,44 @@ struct StatusResponse {
     target_flow_c: Option<f64>,
 }
 
+#[derive(Debug, Serialize)]
+struct StatusSnapshot {
+    runtime: RuntimeState,
+    service: StatusService,
+    heating: StatusHeating,
+    dhw: StatusDhw,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct StatusService {
+    state_file: String,
+    jsonl_log_file: String,
+    runtime_age_minutes: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct StatusHeating {
+    current_curve: Option<f64>,
+    target_flow_c: Option<f64>,
+    actual_flow_desired_c: Option<f64>,
+    actual_flow_c: Option<f64>,
+    return_c: Option<f64>,
+    outside_c: Option<f64>,
+    leather_c: Option<f64>,
+    aldora_c: Option<f64>,
+    run_status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct StatusDhw {
+    t1_c: Option<f64>,
+    hwc_storage_c: Option<f64>,
+    target_c: f64,
+    trigger_c: f64,
+    likely_active: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct AwayRequest {
     return_at: DateTime<Utc>,
@@ -400,9 +483,18 @@ fn default_config() -> Config {
         },
         dhw: DhwConfig {
             cosy_windows: vec![
-                TimeWindow { start: "04:00".to_string(), end: "07:00".to_string() },
-                TimeWindow { start: "13:00".to_string(), end: "16:00".to_string() },
-                TimeWindow { start: "22:00".to_string(), end: "23:59".to_string() },
+                TimeWindow {
+                    start: "04:00".to_string(),
+                    end: "07:00".to_string(),
+                },
+                TimeWindow {
+                    start: "13:00".to_string(),
+                    end: "16:00".to_string(),
+                },
+                TimeWindow {
+                    start: "22:00".to_string(),
+                    end: "23:59".to_string(),
+                },
             ],
             charge_trigger_c: 40.0,
             target_c: 45.0,
@@ -471,7 +563,10 @@ fn resolve_influx_token(env_name: &str) -> Result<String> {
         }
     }
     // Fallback: ak keystore (development only)
-    warn!("{} not set in environment — falling back to 'ak get influxdb' (dev mode)", env_name);
+    warn!(
+        "{} not set in environment — falling back to 'ak get influxdb' (dev mode)",
+        env_name
+    );
     let output = Command::new("ak")
         .arg("get")
         .arg("influxdb")
@@ -485,7 +580,8 @@ fn resolve_influx_token(env_name: &str) -> Result<String> {
         return Err(anyhow!(
             "{} not set and 'ak get influxdb' returned error. \
              Production: set {} in /etc/adaptive-heating-mvp.env",
-            env_name, env_name
+            env_name,
+            env_name
         ));
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
@@ -685,11 +781,18 @@ fn within_window(now: NaiveTime, window: &TimeWindow) -> bool {
 }
 
 fn in_any_window(config: &Config, now: NaiveTime) -> bool {
-    config.dhw.cosy_windows.iter().any(|w| within_window(now, w))
+    config
+        .dhw
+        .cosy_windows
+        .iter()
+        .any(|w| within_window(now, w))
 }
 
 fn is_waking_hours(model: &ModelConfig, now: NaiveTime) -> bool {
-    match (parse_time(&model.waking_start), parse_time(&model.waking_end)) {
+    match (
+        parse_time(&model.waking_start),
+        parse_time(&model.waking_end),
+    ) {
         (Some(s), Some(e)) => now >= s && now < e,
         _ => true, // default to always waking if parse fails
     }
@@ -706,11 +809,9 @@ fn is_preheat_time(model: &ModelConfig, now: NaiveTime) -> bool {
         } else {
             1440 + waking_mins - preheat_mins
         };
-        let preheat_start = NaiveTime::from_hms_opt(
-            (preheat_start_mins / 60) % 24,
-            preheat_start_mins % 60,
-            0,
-        ).unwrap_or(waking);
+        let preheat_start =
+            NaiveTime::from_hms_opt((preheat_start_mins / 60) % 24, preheat_start_mins % 60, 0)
+                .unwrap_or(waking);
 
         if preheat_start <= waking {
             now >= preheat_start && now < waking
@@ -747,7 +848,12 @@ fn restore_baseline(config: &Config) -> Result<Vec<String>> {
     results.push(format!(
         "Hc1HeatCurve={} -> {}",
         config.baseline.hc1_heat_curve,
-        ebusd_write(config, "700", "Hc1HeatCurve", &config.baseline.hc1_heat_curve.to_string())?
+        ebusd_write(
+            config,
+            "700",
+            "Hc1HeatCurve",
+            &config.baseline.hc1_heat_curve.to_string()
+        )?
     ));
     results.push(format!(
         "Z1OpMode={} -> {}",
@@ -791,9 +897,9 @@ fn get_forecast_for_hour(
         }
     }
 
-    guard.as_ref().and_then(|fc| {
-        fc.hours.iter().find(|h| h.hour == target_hour).cloned()
-    })
+    guard
+        .as_ref()
+        .and_then(|fc| fc.hours.iter().find(|h| h.hour == target_hour).cloned())
 }
 
 // ---------------------------------------------------------------------------
@@ -823,7 +929,11 @@ fn calculate_required_curve(
 
     // Use forecast if available, else fall back to live outside temp
     let (effective_outside, effective_solar, source) = match forecast {
-        Some(fh) => (fh.temperature_c, horizontal_to_sw_vertical(fh.direct_radiation_w_m2), "forecast"),
+        Some(fh) => (
+            fh.temperature_c,
+            horizontal_to_sw_vertical(fh.direct_radiation_w_m2),
+            "forecast",
+        ),
         None => (outside_temp, 0.0, "live"),
     };
 
@@ -832,8 +942,8 @@ fn calculate_required_curve(
         "leather",
         model.target_leather_c,
         effective_outside,
-        effective_solar,  // irr_sw
-        0.0,              // irr_ne (not available from forecast)
+        effective_solar, // irr_sw
+        0.0,             // irr_ne (not available from forecast)
     ) {
         Ok(mwt) => mwt,
         Err(e) => {
@@ -848,7 +958,12 @@ fn calculate_required_curve(
 
     // Step 3: flow → curve (initial guess via formula; inner loop will converge)
     let required_curve = required_flow.map(|flow| {
-        let curve = curve_for_flow(flow, model.setpoint_c, effective_outside, model.heat_curve_exponent);
+        let curve = curve_for_flow(
+            flow,
+            model.setpoint_c,
+            effective_outside,
+            model.heat_curve_exponent,
+        );
         round2(clamp_curve(curve))
     });
 
@@ -857,9 +972,15 @@ fn calculate_required_curve(
         source,
         effective_outside,
         effective_solar,
-        required_mwt.map(|v| format!("{:.1}", v)).unwrap_or("N/A".into()),
-        required_flow.map(|v| format!("{:.1}", v)).unwrap_or("N/A".into()),
-        required_curve.map(|v| format!("{:.2}", v)).unwrap_or("N/A".into()),
+        required_mwt
+            .map(|v| format!("{:.1}", v))
+            .unwrap_or("N/A".into()),
+        required_flow
+            .map(|v| format!("{:.1}", v))
+            .unwrap_or("N/A".into()),
+        required_curve
+            .map(|v| format!("{:.2}", v))
+            .unwrap_or("N/A".into()),
     );
 
     ModelCalculation {
@@ -981,20 +1102,35 @@ fn plan_overnight(
     };
 
     // Minimum overnight outside temp (worst case for reheat)
-    let min_outside = forecast.iter().map(|f| f.temperature_c)
-        .min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(avg_outside);
+    let min_outside = forecast
+        .iter()
+        .map(|f| f.temperature_c)
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap_or(avg_outside);
 
     // --- Cold night: HP can't recover, must maintain heating ---
     if min_outside < 2.0 {
         // Solve for the MWT needed to maintain ~19.5°C at this outside temp
         let maintain_target = target - 1.0; // 19.5°C — don't fight for full 20.5
         let mwt = heatpump_analysis::thermal::bisect_mwt_for_room(
-            "leather", maintain_target, min_outside, 0.0, 0.0,
-        ).ok().flatten().unwrap_or(30.0);
+            "leather",
+            maintain_target,
+            min_outside,
+            0.0,
+            0.0,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or(30.0);
 
         let delta_t = config.default_delta_t_c;
         let flow = mwt + delta_t / 2.0;
-        let curve = curve_for_flow(flow, config.setpoint_c, min_outside, config.heat_curve_exponent);
+        let curve = curve_for_flow(
+            flow,
+            config.setpoint_c,
+            min_outside,
+            config.heat_curve_exponent,
+        );
         let curve = round2(clamp_curve(curve));
 
         return OvernightPlan {
@@ -1041,11 +1177,23 @@ fn plan_overnight(
     // Calculate the preheat curve for the start conditions
     let preheat_outside = min_outside; // conservative
     let mwt = heatpump_analysis::thermal::bisect_mwt_for_room(
-        "leather", target, preheat_outside, 0.0, 0.0,
-    ).ok().flatten().unwrap_or(30.0);
+        "leather",
+        target,
+        preheat_outside,
+        0.0,
+        0.0,
+    )
+    .ok()
+    .flatten()
+    .unwrap_or(30.0);
     let delta_t = config.default_delta_t_c;
     let flow = mwt + delta_t / 2.0;
-    let curve = curve_for_flow(flow, config.setpoint_c, preheat_outside, config.heat_curve_exponent);
+    let curve = curve_for_flow(
+        flow,
+        config.setpoint_c,
+        preheat_outside,
+        config.heat_curve_exponent,
+    );
     let curve = round2(clamp_curve(curve));
 
     let preheat_time_str = {
@@ -1065,8 +1213,13 @@ fn plan_overnight(
         reason: format!(
             "coast {:.1}h to {:.1}°C, preheat at {} (MWT {:.1}°C curve {:.2}), \
              avg outside {:.1}°C min {:.1}°C, {:.1}h to reheat",
-            best_start, best_projected, preheat_time_str, mwt, curve,
-            avg_outside, min_outside,
+            best_start,
+            best_projected,
+            preheat_time_str,
+            mwt,
+            curve,
+            avg_outside,
+            min_outside,
             estimate_reheat_hours(best_projected, target, reheat_outside).unwrap_or(99.0),
         ),
     }
@@ -1097,8 +1250,12 @@ fn run_outer_cycle(
     let elec_consumption = parse_f64(ebusd_read(config, "hmu", "RunDataElectricPowerConsumption"));
     let yield_power = parse_f64(ebusd_read(config, "hmu", "CurrentYieldPower"));
     let curve_before = parse_f64(ebusd_read(config, "700", "Hc1HeatCurve"));
-    let leather_temp = query_latest_room_temp(client, config, &config.topics.leather_temp).ok().flatten();
-    let aldora_temp = query_latest_room_temp(client, config, &config.topics.aldora_temp).ok().flatten();
+    let leather_temp = query_latest_room_temp(client, config, &config.topics.leather_temp)
+        .ok()
+        .flatten();
+    let aldora_temp = query_latest_room_temp(client, config, &config.topics.aldora_temp)
+        .ok()
+        .flatten();
     let hwc_storage_temp = parse_f64(ebusd_read(config, "700", "HwcStorageTemp"));
     let dhw_t1 = query_latest_dhw_t1(client, config).ok().flatten();
 
@@ -1116,8 +1273,16 @@ fn run_outer_cycle(
     let mut model_required_flow = None;
     let mut model_required_curve = None;
 
-    let is_defrost = status.as_deref().unwrap_or_default().to_lowercase().contains("defrost");
-    let is_dhw = status.as_deref().unwrap_or_default().to_lowercase().contains("warm_water");
+    let is_defrost = status
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase()
+        .contains("defrost");
+    let is_dhw = status
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase()
+        .contains("warm_water");
     let missing_core = leather_temp.is_none() || outside_temp.is_none() || curve_before.is_none();
 
     // --- DHW service ---
@@ -1152,8 +1317,11 @@ fn run_outer_cycle(
         // Phase 1b: ΔT stabilisation — only use live ΔT when compressor is actively
         // heating. When compressor cycles off, flow≈return and live ΔT collapses,
         // causing target_flow to oscillate. Use default_delta_t_c instead.
-        let compressor_heating = status.as_deref()
-            .map(|s| s.to_lowercase().contains("heating") && s.to_lowercase().contains("compressor"))
+        let compressor_heating = status
+            .as_deref()
+            .map(|s| {
+                s.to_lowercase().contains("heating") && s.to_lowercase().contains("compressor")
+            })
             .unwrap_or(false);
         let live_dt = if compressor_heating {
             match (flow_actual, return_actual) {
@@ -1174,10 +1342,8 @@ fn run_outer_cycle(
 
                 if waking || preheating {
                     // --- Daytime / preheat: model-predictive control ---
-                    let calc = calculate_required_curve(
-                        config, outside, live_dt,
-                        forecast.as_ref(),
-                    );
+                    let calc =
+                        calculate_required_curve(config, outside, live_dt, forecast.as_ref());
 
                     model_forecast_outside = calc.forecast_outside_c;
                     model_forecast_solar = calc.forecast_solar_w_m2;
@@ -1194,19 +1360,27 @@ fn run_outer_cycle(
                             if change > config.model.curve_deadband {
                                 // Write the initial curve guess
                                 let res = ebusd_write(
-                                    config, "700", "Hc1HeatCurve",
+                                    config,
+                                    "700",
+                                    "Hc1HeatCurve",
                                     &format!("{:.2}", target_curve),
                                 )?;
                                 writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
                                 curve_after = Some(target_curve);
-                                action = if preheating { "preheat_model".to_string() } else { "daytime_model".to_string() };
-                                reason = format!("target_flow={:.1}°C: {}", target_flow, calc.reason);
+                                action = if preheating {
+                                    "preheat_model".to_string()
+                                } else {
+                                    "daytime_model".to_string()
+                                };
+                                reason =
+                                    format!("target_flow={:.1}°C: {}", target_flow, calc.reason);
 
                                 if target_curve > CURVE_WARN_THRESHOLD {
-                                    warn!("curve {:.2} exceeds warning threshold {:.2}", target_curve, CURVE_WARN_THRESHOLD);
+                                    warn!(
+                                        "curve {:.2} exceeds warning threshold {:.2}",
+                                        target_curve, CURVE_WARN_THRESHOLD
+                                    );
                                 }
-
-
                             } else {
                                 action = "hold".to_string();
                                 reason = format!("target_flow={:.1}°C, model curve {:.2} within deadband of current {:.2}: {}",
@@ -1225,15 +1399,28 @@ fn run_outer_cycle(
                     // Get overnight forecast hours
                     let overnight_forecast: Vec<ForecastHour> = (0..24)
                         .filter_map(|h| {
-                            let fh = get_forecast_for_hour(client, config, forecast_cache, (current_hour + h) % 24);
+                            let fh = get_forecast_for_hour(
+                                client,
+                                config,
+                                forecast_cache,
+                                (current_hour + h) % 24,
+                            );
                             // Only include hours until waking
-                            if h as f64 <= 12.0 { fh } else { None }
+                            if h as f64 <= 12.0 {
+                                fh
+                            } else {
+                                None
+                            }
                         })
                         .collect();
 
                     let leather = leather_temp.unwrap_or(20.0);
                     let plan = plan_overnight(
-                        leather, &overnight_forecast, now_time, waking, &config.model,
+                        leather,
+                        &overnight_forecast,
+                        now_time,
+                        waking,
+                        &config.model,
                     );
 
                     if plan.maintain_heating {
@@ -1242,7 +1429,9 @@ fn run_outer_cycle(
                         let target_curve = plan.overnight_heating_curve;
                         if (target_curve - current_curve).abs() > config.model.curve_deadband {
                             let res = ebusd_write(
-                                config, "700", "Hc1HeatCurve",
+                                config,
+                                "700",
+                                "Hc1HeatCurve",
                                 &format!("{:.2}", target_curve),
                             )?;
                             writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
@@ -1256,7 +1445,9 @@ fn run_outer_cycle(
                         let target_curve = plan.preheat_curve;
                         if (target_curve - current_curve).abs() > config.model.curve_deadband {
                             let res = ebusd_write(
-                                config, "700", "Hc1HeatCurve",
+                                config,
+                                "700",
+                                "Hc1HeatCurve",
                                 &format!("{:.2}", target_curve),
                             )?;
                             writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
@@ -1270,18 +1461,21 @@ fn run_outer_cycle(
                         let coast_curve = config.model.overnight_curve;
                         if (coast_curve - current_curve).abs() > config.model.curve_deadband {
                             let res = ebusd_write(
-                                config, "700", "Hc1HeatCurve",
+                                config,
+                                "700",
+                                "Hc1HeatCurve",
                                 &format!("{:.2}", coast_curve),
                             )?;
                             writes.push(format!("Hc1HeatCurve={:.2} -> {}", coast_curve, res));
                             curve_after = Some(coast_curve);
                         }
                         action = "overnight_coast".to_string();
-                        reason = format!("coast {:.1}h then preheat: {}",
-                            plan.preheat_start_hours_from_now, plan.reason);
+                        reason = format!(
+                            "coast {:.1}h then preheat: {}",
+                            plan.preheat_start_hours_from_now, plan.reason
+                        );
                     }
                 }
-
             }
             Mode::ShortAbsence => {
                 state.target_flow_c = None;
@@ -1289,13 +1483,19 @@ fn run_outer_cycle(
                 action = "short_absence_setback".to_string();
                 reason = "short absence cost bias".to_string();
                 if (desired_curve - current_curve).abs() > f64::EPSILON {
-                    let res = ebusd_write(config, "700", "Hc1HeatCurve", &format!("{:.2}", desired_curve))?;
+                    let res = ebusd_write(
+                        config,
+                        "700",
+                        "Hc1HeatCurve",
+                        &format!("{:.2}", desired_curve),
+                    )?;
                     writes.push(format!("Hc1HeatCurve={:.2} -> {}", desired_curve, res));
                     curve_after = Some(desired_curve);
                 }
             }
             Mode::AwayUntil => {
-                let hours_to_return = state.away_until
+                let hours_to_return = state
+                    .away_until
                     .map(|t| (t - Utc::now()).num_minutes() as f64 / 60.0)
                     .unwrap_or(999.0);
                 let (desired_curve, desc) = if hours_to_return > 20.0 {
@@ -1306,19 +1506,25 @@ fn run_outer_cycle(
                     (0.45, "away warm-up stage 1")
                 } else {
                     // Use model for the final approach
-                    let forecast = get_forecast_for_hour(client, config, forecast_cache, current_hour);
-                    let calc = calculate_required_curve(
-                        config, outside, live_dt,
-                        forecast.as_ref(),
-                    );
-                    let curve = calc.required_curve.unwrap_or(config.baseline.hc1_heat_curve);
+                    let forecast =
+                        get_forecast_for_hour(client, config, forecast_cache, current_hour);
+                    let calc =
+                        calculate_required_curve(config, outside, live_dt, forecast.as_ref());
+                    let curve = calc
+                        .required_curve
+                        .unwrap_or(config.baseline.hc1_heat_curve);
                     state.target_flow_c = calc.required_flow;
                     (curve, "away warm-up model")
                 };
                 action = "away_control".to_string();
                 reason = format!("{} ({:.1}h to return)", desc, hours_to_return);
                 if (desired_curve - current_curve).abs() > f64::EPSILON {
-                    let res = ebusd_write(config, "700", "Hc1HeatCurve", &format!("{:.2}", desired_curve))?;
+                    let res = ebusd_write(
+                        config,
+                        "700",
+                        "Hc1HeatCurve",
+                        &format!("{:.2}", desired_curve),
+                    )?;
                     writes.push(format!("Hc1HeatCurve={:.2} -> {}", desired_curve, res));
                     curve_after = Some(desired_curve);
                 }
@@ -1377,10 +1583,7 @@ fn run_outer_cycle(
 // Inner loop: closed-loop curve adjustment (every sample_every_seconds = 60s)
 // ---------------------------------------------------------------------------
 
-fn run_inner_cycle(
-    config: &Config,
-    runtime: &Arc<Mutex<RuntimeState>>,
-) -> Result<()> {
+fn run_inner_cycle(config: &Config, runtime: &Arc<Mutex<RuntimeState>>) -> Result<()> {
     let state = runtime.lock().unwrap().clone();
 
     // Only run if we have a target flow from the outer loop
@@ -1398,8 +1601,16 @@ fn run_inner_cycle(
     let flow_desired = parse_f64(ebusd_read(config, "700", "Hc1ActualFlowTempDesired"));
     let curve_before = parse_f64(ebusd_read(config, "700", "Hc1HeatCurve"));
 
-    let is_defrost = status.as_deref().unwrap_or_default().to_lowercase().contains("defrost");
-    let is_dhw = status.as_deref().unwrap_or_default().to_lowercase().contains("warm_water");
+    let is_defrost = status
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase()
+        .contains("defrost");
+    let is_dhw = status
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase()
+        .contains("warm_water");
 
     // Don't adjust during DHW or defrost
     if is_dhw || is_defrost {
@@ -1418,7 +1629,10 @@ fn run_inner_cycle(
     // Phase 1b: floor guard — near the curve floor, reduce gain and widen deadband
     // to prevent hunting where each 0.01 curve ≈ 0.20°C flow change
     let (effective_gain, effective_deadband) = if cb < 0.25 {
-        (model.inner_loop_gain * 0.5, model.inner_loop_deadband_c * 2.0)
+        (
+            model.inner_loop_gain * 0.5,
+            model.inner_loop_deadband_c * 2.0,
+        )
     } else {
         (model.inner_loop_gain, model.inner_loop_deadband_c)
     };
@@ -1440,7 +1654,10 @@ fn run_inner_cycle(
     let res = ebusd_write(config, "700", "Hc1HeatCurve", &format!("{:.2}", new_curve))?;
 
     if new_curve > CURVE_WARN_THRESHOLD {
-        warn!("inner loop: curve {:.2} exceeds warning threshold {:.2}", new_curve, CURVE_WARN_THRESHOLD);
+        warn!(
+            "inner loop: curve {:.2} exceeds warning threshold {:.2}",
+            new_curve, CURVE_WARN_THRESHOLD
+        );
     }
 
     info!(
@@ -1494,7 +1711,10 @@ fn control_loop(
             }
             let outer_elapsed = outer_start.elapsed();
             if outer_elapsed.as_secs() > 120 {
-                warn!("outer cycle took {:.0}s (>120s) — possible I/O hang", outer_elapsed.as_secs_f64());
+                warn!(
+                    "outer cycle took {:.0}s (>120s) — possible I/O hang",
+                    outer_elapsed.as_secs_f64()
+                );
             }
         }
 
@@ -1508,6 +1728,83 @@ fn control_loop(
 // ---------------------------------------------------------------------------
 // HTTP API
 // ---------------------------------------------------------------------------
+
+fn build_status_snapshot(config: &Config, runtime: RuntimeState) -> StatusSnapshot {
+    let target_flow_c = runtime.target_flow_c;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .expect("status client");
+
+    let current_curve = parse_f64(ebusd_read(config, "700", "Hc1HeatCurve"));
+    let actual_flow_desired_c = parse_f64(ebusd_read(config, "700", "Hc1ActualFlowTempDesired"));
+    let actual_flow_c = parse_f64(ebusd_read(config, "hmu", "RunDataFlowTemp"));
+    let return_c = parse_f64(ebusd_read(config, "hmu", "RunDataReturnTemp"));
+    let outside_c = parse_f64(ebusd_read(config, "700", "DisplayedOutsideTemp"));
+    let hwc_storage_c = parse_f64(ebusd_read(config, "700", "HwcStorageTemp"));
+    let run_status = ebusd_read(config, "hmu", "RunDataStatuscode").ok();
+
+    let leather_c = query_latest_room_temp(&client, config, &config.topics.leather_temp)
+        .ok()
+        .flatten();
+    let aldora_c = query_latest_room_temp(&client, config, &config.topics.aldora_temp)
+        .ok()
+        .flatten();
+    let t1_c = query_latest_dhw_t1(&client, config).ok().flatten();
+
+    let likely_active = run_status
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase()
+        .contains("warm_water");
+
+    let runtime_age_minutes = (Utc::now() - runtime.updated_at).num_minutes();
+    let mut warnings = Vec::new();
+    if runtime_age_minutes > 60 {
+        warnings.push(format!(
+            "runtime state is {} minutes old",
+            runtime_age_minutes
+        ));
+    }
+    if leather_c.is_none() {
+        warnings.push("leather temperature unavailable".to_string());
+    }
+    if t1_c.is_none() {
+        warnings.push("DHW T1 unavailable".to_string());
+    }
+    if current_curve.is_none() {
+        warnings.push("current heat curve unavailable from eBUS".to_string());
+    }
+
+    StatusSnapshot {
+        runtime,
+        service: StatusService {
+            state_file: config.state_file.display().to_string(),
+            jsonl_log_file: config.jsonl_log_file.display().to_string(),
+            runtime_age_minutes,
+        },
+        heating: StatusHeating {
+            current_curve,
+            target_flow_c,
+            actual_flow_desired_c,
+            actual_flow_c,
+            return_c,
+            outside_c,
+            leather_c,
+            aldora_c,
+            run_status,
+        },
+        dhw: StatusDhw {
+            t1_c,
+            hwc_storage_c,
+            target_c: config.dhw.target_c,
+            trigger_c: config.dhw.charge_trigger_c,
+            likely_active,
+        },
+        warnings,
+    }
+}
 
 async fn api_status(State(state): State<ServiceState>) -> Json<StatusResponse> {
     let runtime = state.runtime.lock().unwrap().clone();
@@ -1559,8 +1856,16 @@ async fn api_mode_away(
     State(state): State<ServiceState>,
     Json(body): Json<AwayRequest>,
 ) -> Json<serde_json::Value> {
-    let result = set_mode(&state, Mode::AwayUntil, Some(body.return_at), "HTTP away_until").await;
-    Json(serde_json::json!({"ok": result.is_ok(), "mode": "away_until", "return_at": body.return_at}))
+    let result = set_mode(
+        &state,
+        Mode::AwayUntil,
+        Some(body.return_at),
+        "HTTP away_until",
+    )
+    .await;
+    Json(
+        serde_json::json!({"ok": result.is_ok(), "mode": "away_until", "return_at": body.return_at}),
+    )
 }
 
 async fn api_kill(State(state): State<ServiceState>) -> Json<serde_json::Value> {
@@ -1597,9 +1902,66 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Commands::Status => {
+        Commands::Status { human } => {
             let state = load_runtime_state(&config.state_file)?;
-            println!("{}", toml::to_string_pretty(&state)?);
+            let config_clone = config.clone();
+            let snapshot = std::thread::spawn(move || build_status_snapshot(&config_clone, state))
+                .join()
+                .map_err(|_| anyhow!("status snapshot thread panicked"))?;
+            if human {
+                println!("Adaptive heating status");
+                println!("-----------------------");
+                println!("mode: {:?}", snapshot.runtime.mode);
+                println!("updated_at: {}", snapshot.runtime.updated_at);
+                println!("last_reason: {}", snapshot.runtime.last_reason);
+                if let Some(v) = snapshot.heating.current_curve {
+                    println!("current_curve: {:.2}", v);
+                }
+                if let Some(v) = snapshot.heating.target_flow_c {
+                    println!("target_flow_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.heating.actual_flow_desired_c {
+                    println!("actual_flow_desired_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.heating.actual_flow_c {
+                    println!("actual_flow_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.heating.return_c {
+                    println!("return_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.heating.outside_c {
+                    println!("outside_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.heating.leather_c {
+                    println!("leather_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.heating.aldora_c {
+                    println!("aldora_c: {:.1}", v);
+                }
+                if let Some(ref v) = snapshot.heating.run_status {
+                    println!("run_status: {v}");
+                }
+                if let Some(v) = snapshot.dhw.t1_c {
+                    println!("dhw_t1_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.dhw.hwc_storage_c {
+                    println!("hwc_storage_c: {:.1}", v);
+                }
+                println!(
+                    "runtime_age_minutes: {}",
+                    snapshot.service.runtime_age_minutes
+                );
+                if snapshot.warnings.is_empty() {
+                    println!("warnings: none");
+                } else {
+                    println!("warnings:");
+                    for warning in &snapshot.warnings {
+                        println!("- {warning}");
+                    }
+                }
+            } else {
+                println!("{}", toml::to_string_pretty(&snapshot)?);
+            }
             return Ok(());
         }
         Commands::Run => {}
@@ -1607,7 +1969,10 @@ async fn main() -> Result<()> {
 
     // Validate thermal solver is working (geometry loads OK)
     match heatpump_analysis::thermal::bisect_mwt_for_room("leather", 20.5, 5.0, 0.0, 0.0) {
-        Ok(Some(mwt)) => info!("thermal solver OK: leather 20.5°C at 5°C outside → MWT {:.1}°C", mwt),
+        Ok(Some(mwt)) => info!(
+            "thermal solver OK: leather 20.5°C at 5°C outside → MWT {:.1}°C",
+            mwt
+        ),
         Ok(None) => warn!("thermal solver: leather 20.5°C not achievable at 5°C (unexpected)"),
         Err(e) => anyhow::bail!("thermal solver failed to load geometry: {}", e),
     }
@@ -1640,7 +2005,10 @@ async fn main() -> Result<()> {
         .with_state(service_state);
 
     let listener = tokio::net::TcpListener::bind(&config.http_bind).await?;
-    info!("adaptive-heating-mvp V2 HTTP listening on {}", config.http_bind);
+    info!(
+        "adaptive-heating-mvp V2 HTTP listening on {}",
+        config.http_bind
+    );
 
     let shutdown_config = config.clone();
     tokio::spawn(async move {

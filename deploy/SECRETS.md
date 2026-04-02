@@ -1,5 +1,7 @@
 # Secrets Management — adaptive-heating-mvp
 
+Referenced by `docs/heating-plan.md` and `docs/dhw-plan.md` for production and development InfluxDB token handling.
+
 ## Production (pi5data systemd service)
 
 The only secret is the InfluxDB API token (for reading sensor data and writing decisions).

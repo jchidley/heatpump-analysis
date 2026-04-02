@@ -1,5 +1,7 @@
 # Repository Overview
 
+> Scope: implementation overview derived from source. For operating policy and deployment truth, see `../heating-plan.md`, `../dhw-plan.md`, `../../deploy/SECRETS.md`, and `../../AGENTS.md`.
+
 ```yaml
 commit: 8d79935
 branch: main
