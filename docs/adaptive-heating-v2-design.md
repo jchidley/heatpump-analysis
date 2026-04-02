@@ -193,11 +193,13 @@ The 22:00-00:00 Cosy window is preferred for DHW on cold nights. But T1 decays a
 - Monitor charge completion from T1 reaching target (e.g. T1 ≥ 45°C), not from VRC 700 timeout
 - Track overnight T1 decay and only top up if T1 is actually below comfort threshold by morning
 
-**Cosy window constraint is artificial.** The Powerwall (13.5 kWh) covers ~95% of non-Cosy usage. Overnight the battery is full — a 2 kWh DHW charge at 02:00 costs ~14.63p/kWh (battery effective rate) vs 14.05p/kWh in a Cosy window. The extra cost is **~1p per charge** — essentially nothing. But the battery never depletes overnight, so DHW can happen at any time from 22:00 to 07:00 without affecting afternoon peak coverage. The only real constraint is thermal: charge at the time that gives the best T1 by morning use AND least interference with heating preheat.
+**Cosy windows are always preferred** — 14.05p/kWh vs 28.65p mid-peak. The battery effective rate (14.63p) is close to Cosy, but on the coldest days the HP runs flat out and the battery can deplete during afternoon mid-peak/peak (28.65–42.97p). Every kWh shifted into a Cosy window reduces battery pressure on those hard days.
 
-**Preferred strategy: charge whenever is thermally optimal overnight, monitor T1, top up only if needed.** On cold nights, charge early (22:00–00:00) to free the morning for preheat. On mild nights, charge at 04:00–05:00 when it doesn't matter. Let the overnight planner decide based on forecast, not tariff windows.
+**But overnight DHW is flexible within the 22:00–07:00 block.** Three Cosy-rated sub-windows exist: 22:00–00:00 and 04:00–07:00. The 00:00–04:00 gap is mid-peak but battery is always full overnight — a top-up here costs ~1p extra and is acceptable if thermally needed.
 
-A wasted overnight charge costs ~29p (2 kWh × 14.63p). The Cosy vs non-Cosy premium is ~1p total — irrelevant.
+**The best case has no trade-off.** On cold nights, DHW at 22:00–00:00 is both Cosy-rated AND frees the 04:00–07:00 window for preheat. On mild nights, DHW at 04:00–05:00 is Cosy-rated and preheat has surplus capacity. The only non-Cosy scenario is a rare 02:00–04:00 top-up.
+
+**Preferred strategy: DHW at 22:00–00:00 (Cosy), monitor T1 overnight, top up at 04:00 (Cosy) only if T1 has dropped below comfort threshold.** This maximises Cosy usage, minimises battery pressure, and frees the morning for preheat on cold days.
 
 - Mild nights (>8°C): eco mode, charge in 04:00-07:00 window (~90 min budget). Morning preheat has surplus capacity.
 - Cool nights (2-8°C): eco mode in 22:00-00:00 window the night before. Morning 100% for preheat.
