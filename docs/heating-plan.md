@@ -254,7 +254,7 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 ## Next steps
 
 1. **🔴 Fix outer/inner loop fight** — outer loop should only update `target_flow_c`, not write curve when inner loop is active. Currently outer resets the inner loop's converged curve every 15 min, creating a sawtooth. The inner loop knows the right curve; the outer loop's model-based guess is consistently 0.05–0.10 too low. Fix: outer writes curve only on mode transitions (overnight→preheat, preheat→daytime); during steady state, inner loop has sole authority over curve writes.
-2. **T1-based DHW decisions** — stop the VRC 700 triggering wasteful DHW charges. 2 Apr 12:14: DHW triggered at HwcStorageTemp=34°C while T1=43.9°C. Blocked on: minimum acceptable T1 household experiment.
+2. **T1-based DHW decisions** — use T1 data to make smarter charge/defer decisions. 2 Apr 12:14: VRC 700 triggered DHW at HwcStorageTemp=34°C while T1=43.9°C — logging T1 alongside every charge decision to build the evidence base. Whether to suppress a charge depends on context (time of day, upcoming demand, tariff, heating contention). Blocked on: household experiment for minimum T1 + enough logged data to see the pattern.
 3. **More overnight data** — reheat rate calibrated from 2 points. Tonight's run (forecast ~5–7°C) gives a third. Need 10+ nights across 0–15°C range.
 4. **Investigate why leather stuck at 19.6–19.9°C** — 6h of continuous heating at 7–10°C outside didn't reach 20.5°C target. Likely τ=15h approach time (33% at 6h) but could also be model optimism on internal gains. Compare model equilibrium with actual settled temp over 24h.
 5. **Event-driven outer loop** — trigger on DHW→heating transition, Leather deviation >0.5°C for >15 min
@@ -269,7 +269,7 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 
 - Outer/inner loop fight: outer resets curve every 15 min (model guess 0.51–0.57), inner immediately overrides to 0.59–0.68. Wasteful eBUS writes, prevents steady-state convergence.
 - `CurrentCompressorUtil` reads negative values (-29, -55, -89, -102). Unreliable register — do not use for control decisions.
-- DHW triggered by VRC 700 at HwcStorageTemp=34°C while T1=43.9°C. Wasted charge confirmed by T1 data.
+- DHW triggered by VRC 700 at HwcStorageTemp=34°C while T1=43.9°C in 13:00 Cosy window. T1 data logged — feeds into DHW plan analysis. Not necessarily wrong: bottom zone genuinely cold, afternoon showers likely, Cosy rate + warm outside = cheap charge.
 
 ## Key files
 
