@@ -100,15 +100,13 @@ Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-lo
 
 3. **DHW steals preheat.** Night of 1-2 Apr: cylinder drifted to 39.5°C (barely below 40°C trigger), DHW charged for 1.5h during preheat, leather dropped from 20.1→19.9°C. By 07:15 leather was 19.9°C - below comfort band. **Not fixing in Phase 1b** — 40°C trigger is already marginal for morning hot water, and the Phase 2 overnight planner will schedule DHW and preheat sequentially.
 
-### Phase 1b: Bug fixes + live solver 🔴 NEXT
+### Phase 1b: Bug fixes + live solver 🟡 IN PROGRESS
 
-Fix the two known issues from Phase 1a, then replace the control table with the live solver.
+**Bug fixes: ✅ DONE (2 Apr 2026)**
 
-**Bug fixes:**
+1. ~~**Inner loop floor guard**~~: when `curve_before < 0.25`, gain halved to 0.025, deadband doubled to 1.0°C. Deployed and verified.
 
-1. **Inner loop floor guard**: when `curve_before < 0.25`, halve the gain (0.05 instead of 0.10) and double the deadband (1.0°C instead of 0.5°C). Prevents hunting near MinFlowTempDesired floor.
-
-2. **ΔT stabilisation**: in `calculate_required_curve()`, if `RunDataStatuscode` is not `Heating_Compressor_active`, use `default_delta_t_c` instead of live ΔT. Prevents outer loop target_flow oscillation on compressor cycling.
+2. ~~**ΔT stabilisation**~~: `calculate_required_curve()` only uses live ΔT when `RunDataStatuscode` contains "Heating" + "Compressor". Otherwise falls back to `default_delta_t_c` (4.0°C). Deployed and verified — outer loop correctly used live ΔT=3.94°C during compressor active.
 
 **Live solver:**
 
