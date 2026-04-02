@@ -33,7 +33,7 @@ The eBUS register values are correct. The VRC 700's internal scheduling engine i
 
 ## Known-good target configuration
 
-These are the settings derived from the overnight strategy analysis (`docs/overnight-strategy-analysis.md`). If the controller needs to be reset, re-enter these values.
+These are the settings derived from the heating and DHW plans (`docs/heating-plan.md`, `docs/dhw-plan.md`). If the controller needs to be reset, re-enter these values.
 
 ### Heating — Zone 1
 
@@ -52,7 +52,7 @@ These are the settings derived from the overnight strategy analysis (`docs/overn
 | Setting | Value | Notes |
 |---|---|---|
 | HwcOpMode | auto | Timer-driven |
-| HwcTempDesired | 45°C | Optimal per analysis (docs/dhw-cylinder-analysis.md) |
+| HwcTempDesired | 45°C | Optimal per analysis (docs/dhw-plan.md) |
 | HwcSFMode | auto | Must be auto for timer scheduling to work. Boost sets to `load`, should auto-revert after charge completes. |
 | HwcMode (hmu) | eco | Mild season. Manually switch to normal Nov–Mar on the Arotherm controller (not writable via eBUS). |
 | CylinderChargeHyst | 5K | Charge triggers when HwcStorageTemp < (45 − 5) = 40°C |

@@ -89,7 +89,7 @@ The outside temperature feed's lower resolution matters for gap-filling: the tem
 
 ### DHW scheduling
 
-DHW timer windows are set via eBUS on the VRC 700: **05:30–07:00, 13:00–15:00, 22:00–00:00** (aligned to Octopus Cosy tariff periods). Morning DHW starts at 05:30 to give the HP 1.5h of house heating first (04:00–05:30) at Cosy rate. DHW mode is eco (mild season) or normal (cold season, switched manually on the Arotherm controller). See `docs/overnight-strategy-analysis.md` for the full analysis behind these timings.
+DHW timer windows are set via eBUS on the VRC 700: **05:30–07:00, 13:00–15:00, 22:00–00:00** (aligned to Octopus Cosy tariff periods). Morning DHW starts at 05:30 to give the HP 1.5h of house heating first (04:00–05:30) at Cosy rate. DHW mode is eco (mild season) or normal (cold season, switched manually on the Arotherm controller). See `docs/dhw-plan.md` for the full DHW scheduling rationale.
 
 Previously (before 29 Mar 2026), DHW triggered at ~05:05 and ~13:05 daily under the old VRC 700 schedule.
 
@@ -101,7 +101,7 @@ In addition to the emonHP bundle, the system now has:
 - **eBUS adapter** — decodes internal HP communication (operating mode, compressor speed, target flow temp, cylinder temp, COP calculations). eBUS provides real-time HP state, but **`StatuscodeNum` is unreliable for DHW detection** — code 134 appears during both off/frost standby AND active DHW charging. The Rust thermal model uses `BuildingCircuitFlow` (L/h) instead: > 900 = DHW, 780–900 = heating, < 100 = off.
 - **Multical DHW meter** on emondhw — measures the secondary (tap water) side of the cylinder, giving T1 (hot out), T2 (cold in), flow rate, and thermal power. This enables end-to-end DHW efficiency tracking.
 
-Both feed into InfluxDB on pi5data via MQTT bridges. DHW remaining litres tracking is handled by z2m-hub (`~/github/z2m-hub/`), which polls ebusd directly via TCP, detects charge completion, and tracks usage via Multical volume register — writing `dhw.remaining_litres` to InfluxDB. See [dhw-cylinder-analysis.md](dhw-cylinder-analysis.md) for full details including cylinder specification, stratification model, temperature optimisation, and live monitoring setup.
+Both feed into InfluxDB on pi5data via MQTT bridges. DHW remaining litres tracking is handled by z2m-hub (`~/github/z2m-hub/`), which polls ebusd directly via TCP, detects charge completion, and tracks usage via Multical volume register — writing `dhw.remaining_litres` to InfluxDB. See [dhw-plan.md](dhw-plan.md) for full details including cylinder specification, stratification model, temperature optimisation, and live monitoring setup.
 
 ## Validation
 
