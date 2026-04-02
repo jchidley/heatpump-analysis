@@ -823,6 +823,206 @@ fn calculate_required_curve(
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2: Overnight planner
+// ---------------------------------------------------------------------------
+
+/// House effective thermal time constant for leather room (hours).
+/// Calibrated from Night 1/Night 2 (24-26 Mar 2026).
+const LEATHER_TAU_H: f64 = 15.0;
+
+/// HP max thermal output (W) — 5kW Arotherm Plus.
+const HP_MAX_OUTPUT_W: f64 = 5000.0;
+
+/// Whole-house HTC (W/K).
+const HOUSE_HTC_W_K: f64 = 261.0;
+
+/// Simulate leather temperature cooling from `start_temp` over `hours`,
+/// given a constant outside temperature. No heating applied.
+/// Uses exponential decay toward the no-heating equilibrium.
+fn simulate_cooling(start_temp: f64, outside_temp: f64, hours: f64) -> f64 {
+    // Equilibrium with no heating: leather tracks toward outside + internal gains
+    // Use the solver for accuracy, but as a fast approximation:
+    // leather_eq ≈ outside + 2.5°C (internal gains at ~650W, HTC 261)
+    // For accuracy we should use the solver, but that's expensive in a loop.
+    // Use the fast approximation; the solver is used for MWT calculation.
+    let internal_gain_offset = 2.5; // ~650W internal gains / 261 W/K
+    let equilibrium = outside_temp + internal_gain_offset;
+    equilibrium + (start_temp - equilibrium) * (-hours / LEATHER_TAU_H).exp()
+}
+
+/// Estimate hours needed to reheat leather from `start_temp` to `target_temp`
+/// at a given outside temperature. Returns None if HP is in deficit.
+fn estimate_reheat_hours(start_temp: f64, target_temp: f64, outside_temp: f64) -> Option<f64> {
+    if start_temp >= target_temp {
+        return Some(0.0);
+    }
+
+    // HP surplus at the midpoint temperature (average during reheat)
+    let mid_temp = (start_temp + target_temp) / 2.0;
+    let heat_loss_at_mid = HOUSE_HTC_W_K * (mid_temp - outside_temp).max(0.0);
+    let surplus_w = HP_MAX_OUTPUT_W - heat_loss_at_mid;
+
+    if surplus_w <= 50.0 {
+        return None; // HP can't effectively reheat
+    }
+
+    // Empirical reheat rate: leather rises at rate proportional to HP surplus.
+    // Calibrated from two data points:
+    //   1-2 Apr (outside 10°C): leather 19.9→20.5°C in 2h, surplus ~2260W → 0.3°C/h
+    //   Night 1 recovery (25 Mar, outside 5-7°C): leather 17.5→20°C in 6h, surplus ~1200W → 0.42°C/h
+    // Rate ≈ surplus/7500 °C/h (7500 W per °C/h, accounts for thermal lag + modulation)
+    let rate_c_per_h = surplus_w / 7500.0;
+    let delta_t = target_temp - start_temp;
+    let hours = delta_t / rate_c_per_h;
+    Some(hours)
+}
+
+/// Overnight plan result.
+#[derive(Debug, Clone)]
+struct OvernightPlan {
+    /// When to start preheat (hours from now, 0 = start immediately)
+    preheat_start_hours_from_now: f64,
+    /// Curve to use during preheat (from model)
+    preheat_curve: f64,
+    /// Target flow during preheat
+    preheat_target_flow: f64,
+    /// Whether to maintain heating overnight (cold nights)
+    maintain_heating: bool,
+    /// Overnight curve if maintaining heating
+    overnight_heating_curve: f64,
+    /// Projected leather temp at preheat start
+    projected_leather_at_start: f64,
+    /// Explanation
+    reason: String,
+}
+
+/// Plan the overnight heating strategy.
+///
+/// Inputs:
+///   - current_leather: current leather room temp
+///   - forecast: hourly forecast from now until 07:00
+///   - waking_time: NaiveTime for target (07:00)
+///   - config: model config for setpoint, exponent, etc.
+///
+/// Returns an OvernightPlan with preheat start time and curves.
+fn plan_overnight(
+    current_leather: f64,
+    forecast: &[ForecastHour],
+    now: NaiveTime,
+    waking_time: NaiveTime,
+    config: &ModelConfig,
+) -> OvernightPlan {
+    let target = config.target_leather_c; // 20.5°C
+
+    // Hours until waking
+    let now_mins = now.hour() as f64 * 60.0 + now.minute() as f64;
+    let wake_mins = waking_time.hour() as f64 * 60.0 + waking_time.minute() as f64;
+    let hours_until_wake = if wake_mins > now_mins {
+        (wake_mins - now_mins) / 60.0
+    } else {
+        (1440.0 - now_mins + wake_mins) / 60.0
+    };
+
+    // Get average overnight outside temp from forecast
+    let avg_outside = if forecast.is_empty() {
+        5.0 // conservative fallback
+    } else {
+        forecast.iter().map(|f| f.temperature_c).sum::<f64>() / forecast.len() as f64
+    };
+
+    // Minimum overnight outside temp (worst case for reheat)
+    let min_outside = forecast.iter().map(|f| f.temperature_c)
+        .min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(avg_outside);
+
+    // --- Cold night: HP can't recover, must maintain heating ---
+    if min_outside < 2.0 {
+        // Solve for the MWT needed to maintain ~19.5°C at this outside temp
+        let maintain_target = target - 1.0; // 19.5°C — don't fight for full 20.5
+        let mwt = heatpump_analysis::thermal::bisect_mwt_for_room(
+            "leather", maintain_target, min_outside, 0.0, 0.0,
+        ).ok().flatten().unwrap_or(30.0);
+
+        let delta_t = config.default_delta_t_c;
+        let flow = mwt + delta_t / 2.0;
+        let curve = curve_for_flow(flow, config.setpoint_c, min_outside, config.heat_curve_exponent);
+        let curve = round2(clamp_curve(curve));
+
+        return OvernightPlan {
+            preheat_start_hours_from_now: 0.0,
+            preheat_curve: curve,
+            preheat_target_flow: flow,
+            maintain_heating: true,
+            overnight_heating_curve: curve,
+            projected_leather_at_start: current_leather,
+            reason: format!(
+                "cold night (min {:.1}°C < 2°C): maintain heating at curve {:.2} (MWT {:.1}°C) for {:.1}°C",
+                min_outside, curve, mwt, maintain_target
+            ),
+        };
+    }
+
+    // --- Mild/cool night: find latest safe preheat start ---
+    // Scan backward from waking time in 30-min steps.
+    // At each candidate, simulate cooling to that point, then check reheat time.
+    let step_h = 0.5; // 30-min resolution
+    let mut best_start = 0.0; // default: start now
+    let mut best_projected = current_leather;
+
+    // Use the minimum forecast outside temp for reheat estimate (conservative)
+    let reheat_outside = min_outside;
+
+    let max_steps = (hours_until_wake / step_h) as usize;
+    for i in (0..=max_steps).rev() {
+        let coast_hours = i as f64 * step_h;
+        let projected = simulate_cooling(current_leather, avg_outside, coast_hours);
+        let remaining_hours = hours_until_wake - coast_hours;
+
+        // Can we reheat from projected temp to target in the remaining time?
+        if let Some(reheat_h) = estimate_reheat_hours(projected, target, reheat_outside) {
+            // Add 30-min safety margin
+            if reheat_h + 0.5 <= remaining_hours {
+                best_start = coast_hours;
+                best_projected = projected;
+            }
+        }
+        // If reheat not possible (deficit) or too slow, try earlier start
+    }
+
+    // Calculate the preheat curve for the start conditions
+    let preheat_outside = min_outside; // conservative
+    let mwt = heatpump_analysis::thermal::bisect_mwt_for_room(
+        "leather", target, preheat_outside, 0.0, 0.0,
+    ).ok().flatten().unwrap_or(30.0);
+    let delta_t = config.default_delta_t_c;
+    let flow = mwt + delta_t / 2.0;
+    let curve = curve_for_flow(flow, config.setpoint_c, preheat_outside, config.heat_curve_exponent);
+    let curve = round2(clamp_curve(curve));
+
+    let preheat_time_str = {
+        let start_mins = now_mins + best_start * 60.0;
+        let h = ((start_mins / 60.0) as u32) % 24;
+        let m = (start_mins % 60.0) as u32;
+        format!("{:02}:{:02}", h, m)
+    };
+
+    OvernightPlan {
+        preheat_start_hours_from_now: best_start,
+        preheat_curve: curve,
+        preheat_target_flow: flow,
+        maintain_heating: false,
+        overnight_heating_curve: CURVE_FLOOR, // 0.10 = no heating
+        projected_leather_at_start: best_projected,
+        reason: format!(
+            "coast {:.1}h to {:.1}°C, preheat at {} (MWT {:.1}°C curve {:.2}), \
+             avg outside {:.1}°C min {:.1}°C, {:.1}h to reheat",
+            best_start, best_projected, preheat_time_str, mwt, curve,
+            avg_outside, min_outside,
+            estimate_reheat_hours(best_projected, target, reheat_outside).unwrap_or(99.0),
+        ),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Outer loop: model-predictive control (every control_every_seconds = 900s)
 // ---------------------------------------------------------------------------
 
@@ -967,21 +1167,67 @@ fn run_outer_cycle(
                         reason = format!("model returned no target: {}", calc.reason);
                     }
                 } else {
-                    // --- Overnight: let the house cool freely ---
-                    state.target_flow_c = None; // inner loop will not adjust
-                    let overnight_curve = config.model.overnight_curve;
-                    if (overnight_curve - current_curve).abs() > config.model.curve_deadband {
-                        let res = ebusd_write(
-                            config, "700", "Hc1HeatCurve",
-                            &format!("{:.2}", overnight_curve),
-                        )?;
-                        writes.push(format!("Hc1HeatCurve={:.2} -> {}", overnight_curve, res));
-                        curve_after = Some(overnight_curve);
-                        action = "overnight_coast".to_string();
-                        reason = format!("overnight: set curve to minimum {:.2}", overnight_curve);
+                    // --- Overnight: Phase 2 planner ---
+                    let waking = parse_time(&config.model.waking_start)
+                        .unwrap_or(NaiveTime::from_hms_opt(7, 0, 0).unwrap());
+
+                    // Get overnight forecast hours
+                    let overnight_forecast: Vec<ForecastHour> = (0..24)
+                        .filter_map(|h| {
+                            let fh = get_forecast_for_hour(client, config, forecast_cache, (current_hour + h) % 24);
+                            // Only include hours until waking
+                            if h as f64 <= 12.0 { fh } else { None }
+                        })
+                        .collect();
+
+                    let leather = leather_temp.unwrap_or(20.0);
+                    let plan = plan_overnight(
+                        leather, &overnight_forecast, now_time, waking, &config.model,
+                    );
+
+                    if plan.maintain_heating {
+                        // Cold night: maintain heating, inner loop tracks
+                        state.target_flow_c = Some(plan.preheat_target_flow);
+                        let target_curve = plan.overnight_heating_curve;
+                        if (target_curve - current_curve).abs() > config.model.curve_deadband {
+                            let res = ebusd_write(
+                                config, "700", "Hc1HeatCurve",
+                                &format!("{:.2}", target_curve),
+                            )?;
+                            writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
+                            curve_after = Some(target_curve);
+                        }
+                        action = "overnight_maintain".to_string();
+                        reason = plan.reason;
+                    } else if plan.preheat_start_hours_from_now <= 0.25 {
+                        // Time to preheat: set target_flow, inner loop tracks
+                        state.target_flow_c = Some(plan.preheat_target_flow);
+                        let target_curve = plan.preheat_curve;
+                        if (target_curve - current_curve).abs() > config.model.curve_deadband {
+                            let res = ebusd_write(
+                                config, "700", "Hc1HeatCurve",
+                                &format!("{:.2}", target_curve),
+                            )?;
+                            writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
+                            curve_after = Some(target_curve);
+                        }
+                        action = "overnight_preheat".to_string();
+                        reason = plan.reason;
                     } else {
-                        action = "hold".to_string();
-                        reason = "overnight: curve already at minimum".to_string();
+                        // Coasting: no heating, inner loop idle
+                        state.target_flow_c = None;
+                        let coast_curve = config.model.overnight_curve;
+                        if (coast_curve - current_curve).abs() > config.model.curve_deadband {
+                            let res = ebusd_write(
+                                config, "700", "Hc1HeatCurve",
+                                &format!("{:.2}", coast_curve),
+                            )?;
+                            writes.push(format!("Hc1HeatCurve={:.2} -> {}", coast_curve, res));
+                            curve_after = Some(coast_curve);
+                        }
+                        action = "overnight_coast".to_string();
+                        reason = format!("coast {:.1}h then preheat: {}",
+                            plan.preheat_start_hours_from_now, plan.reason);
                     }
                 }
 
