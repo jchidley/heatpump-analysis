@@ -46,7 +46,7 @@ Beyond this repo:
 ### Adaptive heating V2 (2026-03-31 → 2026-04-02)
 
 Complete rewrite from V1 bang-bang to V2 model-predictive control:
-- **Two-loop architecture**: outer loop (900s) uses Open-Meteo forecast + thermal model control table → target flow temp + initial curve guess. Inner loop (60s) proportional feedback on `Hc1ActualFlowTempDesired`.
+- **Two-loop architecture**: outer loop (900s) uses Open-Meteo forecast + live thermal solver (`bisect_mwt_for_room`) → target flow temp + initial curve guess. Inner loop (60s) proportional feedback on `Hc1ActualFlowTempDesired`. Phase 2 overnight planner with cooling simulation and adaptive preheat timing.
 - **Z1OpMode=night on startup** (SP=19): eliminates VRC 700 Optimum Start, day/night transitions, and timer interference. Clean restore on shutdown (`Z1OpMode=auto`, `Hc1HeatCurve=0.55`).
 - **Removed flow_offset and room_offset EMAs** — inner loop replaces both. room_offset ran away to +2.18°C overnight.
 - **Phase 1b bug fixes deployed**: inner loop floor guard (halve gain below curve 0.25), ΔT stabilisation (use default ΔT when compressor not actively heating).
