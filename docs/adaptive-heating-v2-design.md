@@ -184,7 +184,14 @@ Normal mode by outside temp:
 
 **DHW scheduling decision** for the overnight planner:
 
-The 22:00-00:00 Cosy window is preferred for DHW on cold nights. Cylinder standing loss is only 13W — a 22:00 charge to 45°C delivers 44.7°C by morning (0.26°C drop over 7h). Charging to 46°C eliminates this at trivial cost. A wasted charge (no morning draw) costs ~9p. This frees the entire 04:00-07:00 window for preheat.
+The 22:00-00:00 Cosy window is preferred for DHW on cold nights. But T1 decays at **0.25°C/hour** (measured, 20 observations) — a 22:00 charge to 45.5°C delivers **~43.3°C by 07:00** (9h × 0.25 = 2.25°C drop). This is marginal for shower comfort (household prefers ≥43°C at the tap). Verified: 1 Apr charge peaked at 45.5°C at 14:00, decayed to 43.6°C by 22:00 (−1.9°C in 8h, no draws).
+
+Options to compensate:
+- Charge to 47-48°C instead of 45°C (costs ~5% more electricity, COP penalty small)
+- Use the 04:00-07:00 window instead (fresh charge, but competes with preheat)
+- Charge at 22:00 AND top-up at 04:00 if T1 < threshold (belt and braces, costs ~2kWh extra)
+
+A wasted 22:00 charge (no morning draw) costs ~9p. This frees the entire 04:00-07:00 window for preheat.
 
 - Mild nights (>8°C): eco mode, charge in 04:00-07:00 window (~90 min budget). Morning preheat has surplus capacity.
 - Cool nights (2-8°C): eco mode in 22:00-00:00 window the night before. Morning 100% for preheat.
