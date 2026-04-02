@@ -1429,7 +1429,11 @@ fn control_loop(
     runtime: Arc<Mutex<RuntimeState>>,
     forecast_cache: Arc<Mutex<Option<ForecastCache>>>,
 ) {
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .expect("failed to build HTTP client");
     let start = Instant::now();
 
     // Phase 1a startup: force Z1OpMode=night to disable Optimum Start and day/night transitions.
@@ -1453,8 +1457,13 @@ fn control_loop(
         // Outer loop (every control_every_seconds = 900s)
         if last_outer.elapsed().as_secs() >= config.control_every_seconds {
             last_outer = Instant::now();
+            let outer_start = Instant::now();
             if let Err(err) = run_outer_cycle(&config, &runtime, &client, &forecast_cache) {
                 error!("outer cycle failed: {err:#}");
+            }
+            let outer_elapsed = outer_start.elapsed();
+            if outer_elapsed.as_secs() > 120 {
+                warn!("outer cycle took {:.0}s (>120s) — possible I/O hang", outer_elapsed.as_secs_f64());
             }
         }
 
