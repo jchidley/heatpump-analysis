@@ -974,9 +974,20 @@ fn run_outer_cycle(
     {
         let outside = outside_temp.unwrap();
         let current_curve = curve_before.unwrap_or(config.baseline.hc1_heat_curve);
-        let live_dt = match (flow_actual, return_actual) {
-            (Some(f), Some(r)) if f > r => Some(f - r),
-            _ => None,
+
+        // Phase 1b: ΔT stabilisation — only use live ΔT when compressor is actively
+        // heating. When compressor cycles off, flow≈return and live ΔT collapses,
+        // causing target_flow to oscillate. Use default_delta_t_c instead.
+        let compressor_heating = status.as_deref()
+            .map(|s| s.to_lowercase().contains("heating") && s.to_lowercase().contains("compressor"))
+            .unwrap_or(false);
+        let live_dt = if compressor_heating {
+            match (flow_actual, return_actual) {
+                (Some(f), Some(r)) if f > r && (f - r) > 1.0 => Some(f - r),
+                _ => None,
+            }
+        } else {
+            None // will fall back to default_delta_t_c in calculate_required_curve
         };
 
         match state.mode {
@@ -1183,12 +1194,20 @@ fn run_inner_cycle(
     let error = target_flow - fd;
     let model = &config.model;
 
-    if error.abs() <= model.inner_loop_deadband_c {
+    // Phase 1b: floor guard — near the curve floor, reduce gain and widen deadband
+    // to prevent hunting where each 0.01 curve ≈ 0.18°C flow change
+    let (effective_gain, effective_deadband) = if cb < 0.25 {
+        (model.inner_loop_gain * 0.5, model.inner_loop_deadband_c * 2.0)
+    } else {
+        (model.inner_loop_gain, model.inner_loop_deadband_c)
+    };
+
+    if error.abs() <= effective_deadband {
         return Ok(()); // within deadband, no adjustment needed
     }
 
     // Compute adjustment: gain × error, clamped to max step
-    let raw_adjustment = model.inner_loop_gain * error;
+    let raw_adjustment = effective_gain * error;
     let adjustment = raw_adjustment.clamp(-model.inner_loop_max_step, model.inner_loop_max_step);
     let new_curve = round2(clamp_curve(cb + adjustment));
 
