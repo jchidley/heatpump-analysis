@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -57,7 +56,9 @@ struct Config {
     http_bind: String,
     state_file: PathBuf,
     jsonl_log_file: PathBuf,
-    control_table_path: PathBuf,
+    /// Path to thermal_geometry.json (for live solver)
+    #[serde(default = "default_geometry_path")]
+    geometry_path: PathBuf,
     control_every_seconds: u64,
     sample_every_seconds: u64,
     startup_grace_seconds: u64,
@@ -155,6 +156,7 @@ fn default_preheat_hours() -> f64 { 3.0 }
 fn default_inner_loop_gain() -> f64 { 0.10 }
 fn default_inner_loop_deadband() -> f64 { 0.5 }
 fn default_inner_loop_max_step() -> f64 { 0.20 }
+fn default_geometry_path() -> PathBuf { PathBuf::from("data/canonical/thermal_geometry.json") }
 fn default_forecast_url() -> String {
     "https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London".to_string()
 }
@@ -178,87 +180,6 @@ impl Default for ModelConfig {
             forecast_url: default_forecast_url(),
             forecast_cache_secs: default_forecast_cache_secs(),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Control table (pre-computed by thermal-control-table command)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Deserialize)]
-struct ControlPoint {
-    outside_c: f64,
-    solar_w_m2: f64,
-    required_mwt: Option<f64>,
-}
-
-#[derive(Debug, Clone)]
-struct ControlTable {
-    points: Vec<ControlPoint>,
-}
-
-impl ControlTable {
-    fn load(path: &Path) -> Result<Self> {
-        let raw = fs::read_to_string(path)
-            .with_context(|| format!("reading control table {}", path.display()))?;
-        let points: Vec<ControlPoint> = serde_json::from_str(&raw)?;
-        Ok(Self { points })
-    }
-
-    /// Bilinear interpolation: (outside_temp, solar) → required MWT
-    fn interpolate_mwt(&self, outside: f64, solar: f64) -> Option<f64> {
-        // Collect unique sorted outside temps and solar levels
-        let mut outside_vals: Vec<f64> = self.points.iter().map(|p| p.outside_c).collect();
-        outside_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        outside_vals.dedup();
-        let mut solar_vals: Vec<f64> = self.points.iter().map(|p| p.solar_w_m2).collect();
-        solar_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        solar_vals.dedup();
-
-        // Build lookup map
-        let mut map: HashMap<(i32, i32), f64> = HashMap::new();
-        for p in &self.points {
-            if let Some(mwt) = p.required_mwt {
-                map.insert((p.outside_c as i32, p.solar_w_m2 as i32), mwt);
-            }
-        }
-
-        // Find bracketing outside temps
-        let o_clamped = outside.clamp(outside_vals[0], *outside_vals.last().unwrap());
-        let s_clamped = solar.clamp(solar_vals[0], *solar_vals.last().unwrap());
-
-        let o_lo = outside_vals.iter().rev().find(|&&v| v <= o_clamped).copied()?;
-        let o_hi = outside_vals.iter().find(|&&v| v >= o_clamped).copied()?;
-        let s_lo = solar_vals.iter().rev().find(|&&v| v <= s_clamped).copied()?;
-        let s_hi = solar_vals.iter().find(|&&v| v >= s_clamped).copied()?;
-
-        let get = |o: f64, s: f64| -> Option<f64> {
-            map.get(&(o as i32, s as i32)).copied()
-        };
-
-        let q11 = get(o_lo, s_lo)?;
-        let q12 = get(o_lo, s_hi)?;
-        let q21 = get(o_hi, s_lo)?;
-        let q22 = get(o_hi, s_hi)?;
-
-        // Bilinear interpolation
-        if (o_hi - o_lo).abs() < 0.01 && (s_hi - s_lo).abs() < 0.01 {
-            return Some(q11);
-        }
-        if (o_hi - o_lo).abs() < 0.01 {
-            let t = (s_clamped - s_lo) / (s_hi - s_lo);
-            return Some(q11 + t * (q12 - q11));
-        }
-        if (s_hi - s_lo).abs() < 0.01 {
-            let t = (o_clamped - o_lo) / (o_hi - o_lo);
-            return Some(q11 + t * (q21 - q11));
-        }
-
-        let t_o = (o_clamped - o_lo) / (o_hi - o_lo);
-        let t_s = (s_clamped - s_lo) / (s_hi - s_lo);
-        let r1 = q11 + t_s * (q12 - q11);
-        let r2 = q21 + t_s * (q22 - q21);
-        Some(r1 + t_o * (r2 - r1))
     }
 }
 
@@ -401,7 +322,6 @@ struct AwayRequest {
 struct ServiceState {
     config: Config,
     runtime: Arc<Mutex<RuntimeState>>,
-    control_table: Arc<ControlTable>,
     forecast_cache: Arc<Mutex<Option<ForecastCache>>>,
 }
 
@@ -454,7 +374,7 @@ fn default_config() -> Config {
         http_bind: "0.0.0.0:3031".to_string(),
         state_file: PathBuf::from("/home/jack/.local/state/adaptive-heating-mvp/state.toml"),
         jsonl_log_file: PathBuf::from("/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl"),
-        control_table_path: PathBuf::from("model/control-table.json"),
+        geometry_path: default_geometry_path(),
         control_every_seconds: 900,
         sample_every_seconds: 60,
         startup_grace_seconds: 120,
@@ -841,11 +761,10 @@ struct ModelCalculation {
 
 /// Core V2 calculation: forecast conditions → required flow temp and initial curve.
 ///
-/// End-to-end: target_leather → required MWT (table) → required flow (MWT + ΔT/2)
+/// End-to-end: target_leather → required MWT (live solver) → required flow (MWT + ΔT/2)
 ///             → required curve (heat curve formula, initial guess only)
 fn calculate_required_curve(
     config: &Config,
-    table: &ControlTable,
     outside_temp: f64,
     live_delta_t: Option<f64>,
     forecast: Option<&ForecastHour>,
@@ -858,15 +777,20 @@ fn calculate_required_curve(
         None => (outside_temp, 0.0, "live"),
     };
 
-    // Step 1: Lookup required MWT from table
-    let adjusted_target = model.target_leather_c;
-    // The table was generated for target 20.5°C — scale linearly
-    // MWT sensitivity is ~0.27°C MWT per 0.1°C leather (from table gradient)
-    let mwt_base = table.interpolate_mwt(effective_outside, effective_solar);
-    let required_mwt = mwt_base.map(|m| {
-        let leather_adjustment = (adjusted_target - 20.5) * 2.7; // ~2.7 MWT per 1°C leather
-        m + leather_adjustment
-    });
+    // Step 1: Solve for required MWT using thermal physics model
+    let required_mwt = match heatpump_analysis::thermal::bisect_mwt_for_room(
+        "leather",
+        model.target_leather_c,
+        effective_outside,
+        effective_solar,  // irr_sw
+        0.0,              // irr_ne (not available from forecast)
+    ) {
+        Ok(mwt) => mwt,
+        Err(e) => {
+            warn!("thermal solver failed: {}, falling back to no-MWT", e);
+            None
+        }
+    };
 
     // Step 2: MWT → flow temp
     let delta_t = live_delta_t.unwrap_or(model.default_delta_t_c);
@@ -906,7 +830,6 @@ fn run_outer_cycle(
     config: &Config,
     runtime: &Arc<Mutex<RuntimeState>>,
     client: &Client,
-    table: &ControlTable,
     forecast_cache: &Arc<Mutex<Option<ForecastCache>>>,
 ) -> Result<()> {
     let mut state = runtime.lock().unwrap().clone();
@@ -1001,7 +924,7 @@ fn run_outer_cycle(
                 if waking || preheating {
                     // --- Daytime / preheat: model-predictive control ---
                     let calc = calculate_required_curve(
-                        config, table, outside, live_dt,
+                        config, outside, live_dt,
                         forecast.as_ref(),
                     );
 
@@ -1088,7 +1011,7 @@ fn run_outer_cycle(
                     // Use model for the final approach
                     let forecast = get_forecast_for_hour(client, config, forecast_cache, current_hour);
                     let calc = calculate_required_curve(
-                        config, table, outside, live_dt,
+                        config, outside, live_dt,
                         forecast.as_ref(),
                     );
                     let curve = calc.required_curve.unwrap_or(config.baseline.hc1_heat_curve);
@@ -1237,7 +1160,6 @@ fn run_inner_cycle(
 fn control_loop(
     config: Config,
     runtime: Arc<Mutex<RuntimeState>>,
-    table: Arc<ControlTable>,
     forecast_cache: Arc<Mutex<Option<ForecastCache>>>,
 ) {
     let client = Client::new();
@@ -1264,7 +1186,7 @@ fn control_loop(
         // Outer loop (every control_every_seconds = 900s)
         if last_outer.elapsed().as_secs() >= config.control_every_seconds {
             last_outer = Instant::now();
-            if let Err(err) = run_outer_cycle(&config, &runtime, &client, &table, &forecast_cache) {
+            if let Err(err) = run_outer_cycle(&config, &runtime, &client, &forecast_cache) {
                 error!("outer cycle failed: {err:#}");
             }
         }
@@ -1376,30 +1298,29 @@ async fn main() -> Result<()> {
         Commands::Run => {}
     }
 
-    // Load control table
-    let table = ControlTable::load(&config.control_table_path)
-        .with_context(|| format!("loading control table from {}", config.control_table_path.display()))?;
-    info!("loaded control table: {} points from {}", table.points.len(), config.control_table_path.display());
+    // Validate thermal solver is working (geometry loads OK)
+    match heatpump_analysis::thermal::bisect_mwt_for_room("leather", 20.5, 5.0, 0.0, 0.0) {
+        Ok(Some(mwt)) => info!("thermal solver OK: leather 20.5°C at 5°C outside → MWT {:.1}°C", mwt),
+        Ok(None) => warn!("thermal solver: leather 20.5°C not achievable at 5°C (unexpected)"),
+        Err(e) => anyhow::bail!("thermal solver failed to load geometry: {}", e),
+    }
 
     ensure_parent(&config.state_file)?;
     ensure_parent(&config.jsonl_log_file)?;
 
     let runtime = Arc::new(Mutex::new(load_runtime_state(&config.state_file)?));
-    let table = Arc::new(table);
     let forecast_cache: Arc<Mutex<Option<ForecastCache>>> = Arc::new(Mutex::new(None));
 
     let service_state = ServiceState {
         config: config.clone(),
         runtime: runtime.clone(),
-        control_table: table.clone(),
         forecast_cache: forecast_cache.clone(),
     };
 
     let loop_config = config.clone();
     let loop_runtime = runtime.clone();
-    let loop_table = table.clone();
     let loop_forecast = forecast_cache.clone();
-    std::thread::spawn(move || control_loop(loop_config, loop_runtime, loop_table, loop_forecast));
+    std::thread::spawn(move || control_loop(loop_config, loop_runtime, loop_forecast));
 
     let app = axum::Router::new()
         .route("/status", get(api_status))

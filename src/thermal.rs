@@ -28,3 +28,7 @@ pub use operational::operational_validate;
 pub use snapshot::{snapshot_export, snapshot_import};
 pub use dhw_sessions::{dhw_sessions, DhwSessionsOutput};
 pub use validation::validate;
+
+// Re-export solver entry points for adaptive-heating-mvp binary
+pub use display::{bisect_mwt_for_room, solve_equilibrium_temps};
+pub use error::{ThermalError, ThermalResult};
