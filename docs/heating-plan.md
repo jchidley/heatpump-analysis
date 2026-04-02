@@ -154,7 +154,17 @@ Every decision logged to:
 - **Conservatory**: excluded — 30m² glass, sub-hour time constant, follows outdoor + solar
 - **Other rooms**: constraints and context, not targets
 
-Leather door sensors (planned, Zigbee contact) will gate whether Leather dominates. Open doors → coupled to adjacent rooms → don't over-optimise for Leather alone.
+**Leather door sensors** (2× SONOFF SNZB-04P, in hand, not fitted). One on conservatory door, one on hall door. Three-stage plan:
+
+**Stage 1: Fit + pair + log.** Pair to Z2M on emonpi. Name: `leather_conservatory_door`, `leather_hall_door`. Telegraf picks up MQTT → InfluxDB automatically. Add topics to `adaptive-heating-mvp.toml` and query in outer loop (same pattern as T1 query). Log `door_conservatory` and `door_hall` (true/false) in every decision log entry. **No control changes yet** — just collect data.
+
+**Stage 2: Analyse (1–2 weeks of data).** Correlate door state with leather temp trajectory. Quantify: how much does leather drop per hour with conservatory door open at various outside temps? How quickly does it recover after closing? Does the model MWT need adjustment for door-open conditions, or is the current MWT correct and leather just can't reach target with the door open?
+
+**Stage 3: Control integration.** Based on Stage 2 data:
+- Conservatory door open: suppress target_flow increase (don't chase unreachable target). Hold current curve or reduce slightly. Log "door open, holding" as action.
+- Conservatory door closed after being open: immediate outer loop recalc (event-driven trigger) to resume normal targeting.
+- Hall door: likely smaller effect, may not need special handling. Data will tell.
+- Both doors open: leather is a corridor, not a room — switch primary target to aldora.
 
 ## Overnight strategy
 
@@ -259,7 +269,7 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 4. **Investigate why leather stuck at 19.6–19.9°C** — 6h of continuous heating at 7–10°C outside didn't reach 20.5°C target. Likely τ=15h approach time (33% at 6h) but could also be model optimism on internal gains. Compare model equilibrium with actual settled temp over 24h.
 5. **Event-driven outer loop** — trigger on DHW→heating transition, Leather deviation >0.5°C for >15 min
 6. **HP capacity clamp** — ignore `CurrentCompressorUtil` (reads negative values, unreliable). Use `RunDataElectricPowerConsumption` > 1500W for >30 min instead.
-7. **Leather door sensors** — gate Leather weighting. Zigbee contact sensors
+7. **Leather door sensors** — 2× SONOFF SNZB-04P (in hand, not fitted). Plan below.
 8. **Eco/normal mode detection** — plan DHW duration from detected mode (max flow temp ≥50°C = normal)
 9. **Pre-DHW banking** — 15 min before predicted DHW charge, boost target_flow to pre-raise Leather ~0.3°C
 10. **Direct flow temp control** — `SetModeOverride` to HMU, bypassing VRC 700 entirely
