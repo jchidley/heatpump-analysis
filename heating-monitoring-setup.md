@@ -498,7 +498,7 @@ sudo ./scripts/backup-sdcard.sh /dev/sda /path/to/output-name
 - **T2** (`dhw_t2`) = cold water inlet, after shower WWHR (540mm). Kamstrup register 0x0008 "Temp. 2 Outlet" (cold reference). ~24°C.
 - Measures heat drawn from cylinder by DHW usage (not heat added by HP)
 - WWHR pre-heats mains cold from ~10°C to ~29°C before the cylinder
-- **Note:** Kamstrup naming is from the meter's perspective — "Inlet" = hot, "Outlet" = cold. Counterintuitive for a DHW application. See `docs/dhw-fixes.md`.
+- **Note:** Kamstrup naming is from the meter's perspective — "Inlet" = hot, "Outlet" = cold. Counterintuitive for a DHW application. See `docs/dhw-cylinder-analysis.md`.
 
 ### DHW Cylinder Temperature (VR 10 on VWZ AI)
 - **HwcStorageTemp** (`ebusd/poll/HwcStorageTemp`) = VR 10 NTC probe in dry stat pocket, just above bottom coil (~600mm)

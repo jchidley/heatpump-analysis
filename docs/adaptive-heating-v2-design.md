@@ -45,7 +45,7 @@ Inner loop (every ~1 min):
         write Hc1HeatCurve
 ```
 
-The outer loop uses the calibrated thermal physics model via control table (Phase 1) or live solver (Phase 1b). The inner loop treats the VRC 700 as a black box - nudge curve until output matches target. The formula is only the initial guess; the inner loop converges in 1 tick (~60s).
+The outer loop uses the calibrated thermal physics model via live solver (`bisect_mwt_for_room`, Phase 1b complete). The inner loop treats the VRC 700 as a black box - nudge curve until output matches target. The formula is only the initial guess; the inner loop converges in 1 tick (~60s).
 
 **Why not open-loop formula?** The VRC 700's internal computation is opaque - hidden Optimum Start, `Hc1MinFlowTempDesired`=20°C floor, undocumented offsets. See "Pilot data findings" below.
 
@@ -122,9 +122,9 @@ Replaced V1 bang-bang (±0.10 every 15 min, oscillating 0.10↔1.00) with two-lo
 
 5. HP capacity clamp: if `CurrentCompressorUtil` > 95% for >30 min, stop raising curve.
 
-### Phase 2: Overnight planner (requires 1b)
+### Phase 2: Overnight planner 🟡 DEPLOYED (2 Apr 2026, awaiting first overnight run)
 
-Replace fixed `overnight_curve=0.10` and `preheat_hours=2.0` with temperature-dependent overnight strategy.
+Replaced fixed `overnight_curve=0.10` and `preheat_hours=2.0` with adaptive overnight strategy.
 
 **Key constraint**: reheat capacity. HP surplus = 5000W - 261×(20.5-outside). Analysis:
 
@@ -152,6 +152,18 @@ Forward simulation: `overnight_plan(current_leather, forecast[], dhw_expected, t
 6. Battery handles cost, so preheat timing is purely thermal, not tariff-aligned
 
 Outputs: overnight curve profile (may vary hourly) + preheat start time + DHW window.
+
+**Implementation (2 Apr 2026):**
+
+- `simulate_cooling()`: exponential decay with τ=15h toward equilibrium (outside + 2.5°C internal gains)
+- `estimate_reheat_hours()`: empirical 7500 W per °C/h from pilot data (surplus/7500 = °C/h rise)
+- `plan_overnight()`: scans 30-min steps backward from 07:00, finds latest safe start with 30-min safety margin
+- Three controller actions: `overnight_coast` (curve=0.10), `overnight_preheat` (model curve + inner loop), `overnight_maintain` (cold nights <2°C, continuous heating at 19.5°C target)
+
+**Known limitations:**
+- Reheat rate calibrated from 2 data points (need more overnight runs)
+- Solar gain not included in reheat estimate (conservative)
+- DHW scheduling not yet integrated (still Phase 1a trigger from HwcStorageTemp)
 
 #### DHW duration model (prerequisite)
 

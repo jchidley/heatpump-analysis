@@ -110,7 +110,7 @@ cargo run -- --all-data design-comparison
 - **[docs/adaptive-heating-control.md](docs/adaptive-heating-control.md)** — Strategy: outcomes-first control, room targeting, the house as a laboratory
 - **[docs/adaptive-heating-mvp.md](docs/adaptive-heating-mvp.md)** — V1 MVP spec (historical, superseded by V2 design)
 - **[docs/vrc700-settings-audit.md](docs/vrc700-settings-audit.md)** — VRC 700 settings, timer encoding, eBUS commands
-- **[docs/dhw-fixes.md](docs/dhw-fixes.md)** — DHW sensor mapping, cylinder analysis follow-ups
+
 
 ### Operations
 - **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Monitoring infrastructure (devices, MQTT, eBUS, InfluxDB, Grafana)

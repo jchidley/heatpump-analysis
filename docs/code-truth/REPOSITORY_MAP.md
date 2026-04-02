@@ -77,7 +77,7 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 | `influx.rs` | 352 | Flux query builders |
 | `display.rs` | 993 | CLI output, **equilibrium solver**, **MWT bisection**, **control table generation** |
 | `report.rs` | 44 | Table printer and RMSE |
-| `dhw_sessions.rs` | 1086 | **NEW**: DHW draw/charge session analysis with inflection detection |
+| `dhw_sessions.rs` | ~1050 | DHW draw/charge session analysis: inflection detection, draw type classification (bath/shower/tap), HWC tracking, during-charge draw detection |
 
 ## Standalone Binaries
 
@@ -128,8 +128,7 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | `docs/roadmap.md` | Planned enhancements with status |
 | `docs/pico-ebus-plan.md` | Pico W eBUS adapter build plan |
 | `docs/vrc700-settings-audit.md` | VRC 700 settings, timer encoding, eBUS commands |
-| `docs/dhw-fixes.md` | DHW sensor labelling, Grafana, cylinder analysis follow-ups |
-| `docs/dhw-cylinder-analysis.md` | 300L Kingspan Albion cylinder analysis |
+| `docs/dhw-cylinder-analysis.md` | Cylinder specs, sensor locations, charge physics, usable volume, remaining-litres model |
 | `docs/house-layout.md` | 13 rooms, radiators, ventilation, sensor locations |
 | `docs/room-thermal-model.md` | Thermal model methodology |
 | `docs/hydraulic-analysis.md` | Flow rate thresholds, sludge filter |

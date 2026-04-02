@@ -67,9 +67,9 @@ Analysis of 402 AM DHW charges from emoncms data (Oct 2024 – Mar 2026):
 - Preferred strategy: charge at 22:00 Cosy window, monitor T1, top up at 04:00 if needed
 - Cosy windows preferred to reduce battery pressure on cold days, but overnight timing flexible
 
-### New thermal submodule: dhw_sessions.rs (1086 lines)
+### Thermal submodule: dhw_sessions.rs
 
-Rust replacement for `scripts/dhw-inflection-detector.py`. Raw 10s data for event detection, HwcStorageTemp tracking during draws.
+DHW draw/charge session analysis. Raw 10s data for event detection, HwcStorageTemp tracking during draws, draw type classification (bath/shower/tap by peak flow rate), draws during HP charging detected via tap-side Multical meter. Writes `dhw_inflection` + `dhw_capacity` to InfluxDB; z2m-hub autoloads recommended capacity on startup.
 
 ### Thermal display.rs expanded (78 → 993 lines)
 
@@ -89,7 +89,7 @@ Best fit 1.25 (was 1.27) from expanded 17-point pilot data. VRC 700 formula: `fl
 |----------|-------|
 | Rust source files (`src/`) | 10 core + 16 thermal submodules (~14,011 lines) |
 | Standalone Rust binaries (`src/bin/`) | 3 (adaptive-heating-mvp, thermal-regression-check, cosy-scheduler [retired]) |
-| Python utility scripts | 2 (scripts/dhw-inflection-detector.py, scripts/dhw-auto-trigger.py [legacy]) |
+| Python utility scripts | 1 (scripts/dhw-auto-trigger.py [legacy, do not deploy]) |
 | Shell scripts (`scripts/`) | 3 |
 | Domain docs (`docs/`) | 16 |
 | Code-truth docs (`docs/code-truth/`) | 5 |

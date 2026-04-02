@@ -1,6 +1,6 @@
 # DHW Cylinder Analysis
 
-Analysis of the 300L Kingspan Albion cylinder, Multical/eBUS sensors, and heat pump charging. Based on 12 days of sensor data (19–31 March 2026): 28 charge cycles, 206 draw events, 4 T1 inflection measurements at 2-second resolution.
+Analysis of the 300L Kingspan Albion cylinder, Multical/eBUS sensors, and heat pump charging. Based on sensor data from March–April 2026: 32+ charge cycles, 55+ draw events, 6 T1 inflection measurements at 2-second resolution.
 
 ## Cylinder specification
 
@@ -210,25 +210,50 @@ Thermal diffusion blurs the thermocline: diffusion length = √(κ × t) where �
 
 ### Measured inflection volumes (2-second resolution)
 
-The inflection detector (`scripts/dhw-inflection-detector.py`) finds the exact volume at which T1 begins dropping, using rolling dT1/dV at native 2-second Multical resolution.
+The `dhw-sessions` CLI (`cargo run --bin heatpump-analysis -- dhw-sessions`) finds the exact volume at which T1 begins dropping, using rolling dT1/dV at native 2-second Multical resolution. It also classifies draws by type (bath/shower/tap) based on peak flow rate and tracks HwcStorageTemp during draws.
 
-| Date | Cumulative (L) | Gap (h) | T1 (°C) | T2 (°C) | Flow (L/h) | Context |
-|---|---|---|---|---|---|---|
-| 21 Mar | **177** | 0.9 | 44.3 | 24.6 | 332 | Full charge, WWHR showers, 55 min gap |
-| 27 Mar | **183** | 2.0 | 43.5 | 17.4 | 357 | Full charge, 2h gap between showers |
-| 29 Mar | **129** | 1.2 | 41.2 | 17.2 | 333 | Low T1 (no proper charge), weak stratification |
-| 23 Mar | 30 | 0.0 | 43.0 | 12.7 | 277 | After no-crossover charge (not true capacity) |
+| Date | Cumulative (L) | T1 (°C) | T2 (°C) | Flow (L/h) | Context |
+|---|---|---|---|---|---|
+| 21 Mar | **177** | 44.3 | 25.8 | 464 | Full charge, WWHR showers |
+| 23 Mar | **155** | 44.1 | 25.6 | 527 | Full charge, shower during charge |
+| 27 Mar | **173** | 43.5 | 25.2 | 530 | Full charge, back-to-back showers |
+| 29 Mar | **119** | 41.2 | 24.8 | 529 | Low T1 (no proper charge), weak stratification |
+| 31 Mar | **198** | 43.7 | 25.6 | 529 | Full charge, shower during charge |
+| 01 Apr | **174** | 43.5 | 25.0 | 534 | Full charge, shower during charge |
 
-**From full charge at 45°C: 177–183L usable** (geometric maximum: 243L, plug flow efficiency ~75%).
+**From full charge at 45°C: 177–198L usable** (geometric maximum: 243L, plug flow efficiency ~81%). The recommended capacity for z2m-hub is autoloaded from InfluxDB: currently **198L**.
 
-The 82L mixing loss is caused by the two coil sets (370mm and 970mm) disrupting plug flow. The cold front broadens into a temperature gradient as it passes through 600mm of coil structures.
+The mixing loss is caused by the two coil sets (370mm and 970mm) disrupting plug flow. The cold front broadens into a temperature gradient as it passes through 600mm of coil structures.
 
 ### What affects usable volume
 
-- **Cylinder temperature**: lower T1 → weaker density contrast → earlier inflection (129L at 41°C vs 180L at 45°C)
+- **Cylinder temperature**: lower T1 → weaker density contrast → earlier inflection (119L at 41°C vs 198L at 45°C)
 - **Gap between draws**: longer gap → thermocline diffusion → slightly earlier inflection
 - **Flow rate**: higher flow → more turbulence through coils → more mixing
 - **WWHR vs raw mains**: different inlet temperatures change density contrast
+
+### Draw type classification
+
+| Type | Peak flow | Volume | Typical |
+|---|---|---|---|
+| Bath | ≥650 L/h | 100–150L | Son's bath, taps wide open |
+| Shower | 350–650 L/h | 30–100L | 30L (Jack), 70L (girls), 100L (long) |
+| Tap | <350 L/h | 10–20L | Kitchen/bathroom sink |
+
+### Household usage (14-day data, everyone home)
+
+| Metric | Value |
+|---|---|
+| Daily average | 171L (0.9 tanks) |
+| Busiest days | 260–270L (1.3–1.4 tanks) |
+| Showers per day (avg) | 2.2 |
+| Typical pattern | 1 bath, 18 showers, 12 taps per week |
+
+The 198L tank handles 2 normal showers (70+70=140L) or 1 long + 1 short (100+30=130L) between charges comfortably. The 13:00–16:00 Cosy window is long enough for 2 full recharges in eco mode, allowing draws during the window at Cosy rate.
+
+### Draws during HP charging
+
+`dhw_flow` is measured by the tap-side Multical meter, independent of the HP charging circuit. Draws during charging are real usage that depletes the cylinder and must be tracked. The `dhw-sessions` CLI marks these with `*` (during_charge flag). z2m-hub v0.2.1+ tracks them in real time.
 
 ### Draw rates and practical capacity
 
@@ -275,20 +300,9 @@ The measured loss is 13W vs rated 93W because: only the top ~150L is hot (strati
 
 The showers removed 117% of the usable hot energy — this is why the cylinder was fully depleted.
 
-## The improved remaining-litres model
+## Remaining-litres model (z2m-hub)
 
-### What was wrong with the v0.1 z2m-hub model (fixed in v0.2.0)
-
-> **Status**: The improved model described below was implemented in z2m-hub v0.2.0 (March 2026). Config in `/etc/z2m-hub.toml`. Capacity autoloaded from InfluxDB via `dhw-inflection-detector.py` weekly cron.
-
-The v0.1 z2m-hub used pure volume subtraction: `remaining = 161 - volume_drawn`. Failure modes:
-
-| Failure | Impact |
-|---------|--------|
-| No crossover detection — claims 161L after every charge | Overestimates 25% of the time |
-| Fixed +50% for boosts regardless of state | Overestimates |
-| No standby decay (T1 drops 0.25°C/h) | Over-promises after long standby |
-| No temperature feedback | 28 Mar: claims 161L at T1=40.4° |
+Implemented in z2m-hub on pi5data. Config in `/etc/z2m-hub.toml`. `full_litres` autoloaded from InfluxDB (`dhw_capacity` measurement, written by `dhw-sessions` CLI).
 
 ### State variables
 
@@ -319,15 +333,15 @@ struct DhwState {
 
 ### Algorithm summary
 
-**During charge** (bc_flow > 900): Watch for HwcStorage ≥ T1_at_charge_start. On crossover: `remaining = 161` (conservative default pending V_full refinement).
+**During charge** (bc_flow > 900): Watch for HwcStorage ≥ T1_at_charge_start. On crossover: `remaining = full_litres` (autoloaded from InfluxDB, currently 198L).
 
 **After charge** (was_charging → !charging):
-- Crossover achieved → `remaining = 161`, `effective_temp = T1`
-- No crossover, gap < 1.5°C → thermocline dissolved, `remaining = 161` at lower temp
+- Crossover achieved → `remaining = full_litres`, `effective_temp = T1`
+- No crossover, gap < 1.5°C → thermocline dissolved, `remaining = full_litres` at lower temp
 - No crossover, gap > 3.5°C → sharp thermocline, remaining unchanged from pre-charge
 - Gap 1.5–3.5°C → interpolate; apply diffusion model during standby
 
-**During draws**: Subtract volume drawn. Temperature corrections override if worse:
+**During draws** (tracked regardless of charging state — Multical is tap-side): Subtract volume drawn. Temperature corrections override if worse:
 - HwcStorage crash >5°C → thermocline at 600mm, cap remaining at 148L minus further draws
 - T1 drop >0.5° during draw → thermocline at T1, remaining ≤ 20L
 - T1 drop >1.5° → remaining = 0
@@ -335,11 +349,11 @@ struct DhwState {
 
 **During standby**: `effective_T1 = T1_at_charge - 0.25 × hours`. Below 38°C → remaining = 0. 38–42°C → capacity scales linearly. Apply gap diffusion model.
 
-**Boost**: same crossover logic as scheduled charges, replacing the arbitrary +50%.
+**Boost**: same crossover logic as scheduled charges.
 
 ## Partial-charge volume estimation (future work)
 
-Once V_full is validated to ±10L, partial charges can be modelled as two zones:
+With V_full validated at 198L (±10L, 6 measurements), partial charges can be modelled as two zones:
 
 ```
   ┌─────────────────────────────┐  1530mm
@@ -357,11 +371,11 @@ shower_equivalent = V × (T_zone - T_cold) / (T_shower - T_cold)
 Example (23 March after no-crossover, gap 4°C):
 - Hot: 21L × (43.5 - 25) / (40 - 25) = 26L shower-equivalent
 - Warm: 150L × (39.5 - 25) / (40 - 25) = 145L shower-equivalent
-- Total: **171L shower-equivalent** — vs current model showing either 161L (wrong) or 21L (too conservative)
+- Total: **171L shower-equivalent**
 
 The complication: a sharp thermocline (gap >3°C) means the user experiences a temperature dip when the hot zone is exhausted and T1 crashes before the warm zone takes over. With a diffuse thermocline (gap <1.5°C or after standby), the transition is smooth.
 
-Pending: (a) V_full validated to ±10L, (b) thermocline mixing profile from more crash events, (c) gap-diffusion model validated.
+Pending: (a) thermocline mixing profile from more crash events, (b) gap-diffusion model validated.
 
 ## Validation needs and data collection
 
@@ -369,18 +383,16 @@ Pending: (a) V_full validated to ±10L, (b) thermocline mixing profile from more
 
 | Parameter | Value | Source | Confidence |
 |---|---|---|---|
-| Full capacity | 177–183L | 2-second inflection, 2 events | Medium — need more |
-| Crossover condition | HwcS ≥ T1_pre | 28 charge cycles, 100% | **Very high** |
-| HwcS crash threshold | 5°C drop during draw | 15 shower events | Medium |
+| Full capacity | 177–198L | 2-second inflection, 6 events | **High** |
+| Crossover condition | HwcS ≥ T1_pre | 32+ charge cycles, 100% | **Very high** |
 | Volume above HwcStorage | 148L | Geometry | High |
 | Standby T1 decay | 0.25°C/h | 20 observations, σ=0.02 | High |
 
 ### Highest-value next steps
 
-1. **Continuous large draw test** — bath tap wide open after full charge, no WWHR, no gap. Expected 200–220L. Time: ~20 min. Cost: ~2p reheat.
-2. **Back-to-back showers, no gap** — eliminates diffusion variable.
-3. **Run inflection detector periodically** — `uv run --with requests python scripts/dhw-inflection-detector.py --days 7 --write`. Target: 50+ measurements over months.
-4. **Summer repeat** — mains at ~18°C vs current ~15°C.
+1. **Summer repeat** — mains at ~18°C vs current ~15°C. Will affect WWHR effectiveness and density contrast.
+2. **Continuous large draw test** — bath tap wide open after full charge, no WWHR, no gap. Expected 200–220L.
+3. **Run `dhw-sessions` periodically** — `cargo run --bin heatpump-analysis -- dhw-sessions --days 14`. Writes to InfluxDB automatically; z2m-hub autoloads on restart.
 
 ### InfluxDB logging
 
@@ -393,8 +405,10 @@ dhw remaining_litres=X,model_version=2,t1=Y,hwc_storage=Z,
 
 Inflection detector writes to `dhw_inflection`:
 ```
-dhw_inflection cumulative_volume=X,draw_volume=Y,gap_hours=Z,
-    t1_start=A,t1_at_inflection=B,mains_temp=C,flow_rate=D
+dhw_inflection,category=capacity,crossover=true,draw_type=shower
+    cumulative_volume=X,draw_volume=Y,gap_hours=Z,
+    t1_start=A,t1_at_inflection=B,mains_temp=C,flow_rate=D,
+    hwc_pre=E,hwc_min=F,hwc_drop=G
 ```
 
 ## SPA display improvements

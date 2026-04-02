@@ -1,11 +1,9 @@
 //! DHW session analysis — historical draw/charge detection with inflection analysis.
 //!
-//! Replaces `scripts/dhw-inflection-detector.py` with fixes:
-//! - Raw 10s data for event detection (not 1-min averaged)
-//! - HwcStorageTemp tracked during draws (crash detection)
-//! - Mains temp from settled T2 during flow (not stale dead-leg)
-//! - Flow rate from peak during draw (not smeared average)
-//! - Writes `dhw_inflection` + `dhw_capacity` to InfluxDB for z2m-hub
+//! Queries InfluxDB at 10s resolution for event detection, then 2s for per-draw
+//! inflection analysis. Classifies draws by type (bath/shower/tap), tracks
+//! HwcStorageTemp during draws, detects draws during HP charging.
+//! Writes `dhw_inflection` + `dhw_capacity` to InfluxDB (z2m-hub autoloads on startup).
 
 use std::collections::HashMap;
 use std::fmt;
