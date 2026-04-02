@@ -7,7 +7,6 @@ Adaptive space heating control for 6 Rhodes Avenue. Vaillant Arotherm Plus 5kW, 
 This document is the canonical reference for **space-heating strategy, control policy, measured constraints, and rationale**.
 
 Use other docs for adjacent needs:
-- **Current live deployment snapshot:** `docs/current-production-state.md`
 - **Historical evidence workflows / how-to:** `docs/history-evidence-workflows.md`
 - **Code locations / module structure:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
 - **Secrets / deployment environment:** `deploy/SECRETS.md`
@@ -161,6 +160,21 @@ Every decision logged to:
 - **InfluxDB** (`adaptive_heating_mvp` measurement): `target_flow_c`, `curve_after`, `flow_desired_c`, room temps, outside temp, action, mode, tariff, and model outputs
 - **Local JSONL** on pi5data: full decision context for debugging and controller-intent audit trail
 
+### Live heating checks
+
+Use these when the question is **what is happening now**, not whether the recent plan worked.
+
+```bash
+cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status
+cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status --human
+echo 'read -c 700 Hc1HeatCurve' | nc -w 2 localhost 8888
+echo 'read -c 700 Hc1ActualFlowTempDesired' | nc -w 2 localhost 8888
+```
+
+Use the structured default `status` output for LLM/tool consumption.
+Use `--human` only for operator readability.
+A live snapshot does **not** prove whether the overnight planner worked; use the historical commands below for that.
+
 ### Historical evidence commands
 
 Use these when checking whether the heating strategy actually worked. **Default investigation pattern: rolling 7 days ending now, confirmed with `date -u` first.**
@@ -216,8 +230,6 @@ Use `docs/history-evidence-workflows.md` for:
 - confidence assessment
 - joined heating + DHW interpretation
 - the standard sequence: rolling 7-day review first, named anchor replay second, event drill-down third
-
-For current state instead of historical reconstruction, use `docs/live-queries.md`.
 
 When reviewing heating outcomes, keep the evidence split explicit:
 - **controller intent** = adaptive-heating runtime state and JSONL decision logs

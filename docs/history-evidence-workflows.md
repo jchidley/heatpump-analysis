@@ -3,9 +3,8 @@
 This document is the **how-to guide** for reconstructing historical evidence behind the heating and DHW plans.
 
 Use this alongside:
-- `heating-plan.md` — space-heating strategy and questions to answer
-- `dhw-plan.md` — DHW strategy and questions to answer
-- `live-queries.md` — current live state, not historical windows
+- `heating-plan.md` — space-heating strategy, questions to answer, and live heating checks
+- `dhw-plan.md` — DHW strategy, questions to answer, and live DHW checks
 
 ## Before you start
 
@@ -46,7 +45,8 @@ Use a shorter or custom window only when:
 ## How to use this guide
 
 1. **Decide whether the question is live or historical**
-   - live now → use `live-queries.md`
+   - live heating now → use the live heating checks in `heating-plan.md`
+   - live DHW now → use the live DHW checks in `dhw-plan.md`
    - chosen past window → stay in this guide
 2. **Pick the domain**
    - heating

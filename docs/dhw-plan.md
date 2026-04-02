@@ -7,8 +7,6 @@ Domestic hot water management for 6 Rhodes Avenue. 300L Kingspan Albion cylinder
 This document is the canonical reference for **DHW operating policy, cylinder behaviour, comfort/capacity model, and rationale**.
 
 Use other docs for adjacent needs:
-- **Current live deployment snapshot:** `docs/current-production-state.md`
-- **Current live query commands:** `docs/live-queries.md`
 - **Historical evidence workflows / how-to:** `docs/history-evidence-workflows.md`
 - **Code locations / module structure in this repo:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
 - **Secrets / InfluxDB token handling:** `deploy/SECRETS.md`
@@ -341,6 +339,21 @@ Strategy:
 - **During draws**: subtract Multical volume. Overrides: HwcStorage crash >5°C → cap at 148L minus further draws. T1 drop >0.5°C → remaining ≤ 20L. T1 drop >1.5°C → remaining = 0
 - **Standby**: `effective_T1 = T1_at_charge - 0.25 × hours`. Below 38°C → remaining = 0. 38–42°C → linear scale
 
+### Live DHW checks
+
+Use these when the question is **what hot-water state looks like right now**, not whether the recent DHW plan worked.
+
+```bash
+cargo run --bin heatpump-analysis -- dhw-live-status
+cargo run --bin heatpump-analysis -- dhw-live-status --human
+curl -s http://pi5data:3030/api/hot-water
+curl -s http://pi5data:3030/api/dhw/status
+```
+
+Use the structured default `dhw-live-status` output for LLM/tool consumption.
+Use `--human` only for operator readability.
+For practical availability, prefer `T1`, remaining litres, and charge state over `HwcStorageTemp` on its own.
+
 ### Historical evidence commands
 
 #### `dhw-history` (fused window reconstruction)
@@ -426,7 +439,7 @@ cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't
 - Writes `dhw_inflection` measurements + `dhw_capacity` recommended value to InfluxDB
 - Run periodically to keep capacity number fresh as seasonal mains temp changes
 
-Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-drilldown --since ... --until ...` when you want bounded native-cadence detail for one chosen DHW event/window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`. For historical workflow and interpretation, use `docs/history-evidence-workflows.md`.
+Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-drilldown --since ... --until ...` when you want bounded native-cadence detail for one chosen DHW event/window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For historical workflow and interpretation, use `docs/history-evidence-workflows.md`.
 
 ### InfluxDB measurements
 

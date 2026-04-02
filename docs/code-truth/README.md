@@ -17,7 +17,6 @@ Do **not** treat them as the primary source for:
 For those, see:
 - `../heating-plan.md`
 - `../dhw-plan.md`
-- `../current-production-state.md`
 - `../../deploy/SECRETS.md`
 - `../../AGENTS.md`
 

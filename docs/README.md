@@ -20,8 +20,6 @@ These are the canonical references for:
 
 Use these when asking **how the live system is deployed, checked, recovered, or configured**:
 
-- `current-production-state.md` — compact live-state summary for pi5data
-- `live-queries.md` — how to fetch live readings and snapshots on demand
 - `history-evidence-workflows.md` — step-by-step historical evidence recipes for heating, DHW, and joined questions
 - `../deploy/SECRETS.md` — InfluxDB token handling, dev vs prod
 - `emon-installation-runbook.md` — monitoring and infrastructure rebuild/runbook
@@ -65,7 +63,7 @@ It is **not** the best place for full strategy explanations or detailed code map
 ## Practical rule of thumb
 
 - **What should happen?** → `heating-plan.md`, `dhw-plan.md`
-- **What is live right now?** → `current-production-state.md`, `live-queries.md`
+- **How do I check live heating or DHW state?** → live check sections inside `heating-plan.md` and `dhw-plan.md`
 - **How do I reconstruct and review a past window?** → `history-evidence-workflows.md`
 - **How do I operate/recover it?** → runbooks / `deploy/SECRETS.md`
 - **Where do I change the code?** → `docs/code-truth/`
