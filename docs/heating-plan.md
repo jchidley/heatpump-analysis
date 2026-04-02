@@ -263,23 +263,33 @@ FRVs deprioritised — HP at capacity on cold days, FRVs redistribute insufficie
 
 ## Next steps
 
-1. **🔴 Fix outer/inner loop fight** — outer loop should only update `target_flow_c`, not write curve when inner loop is active. Currently outer resets the inner loop's converged curve every 15 min, creating a sawtooth. The inner loop knows the right curve; the outer loop's model-based guess is consistently 0.05–0.10 too low. Fix: outer writes curve only on mode transitions (overnight→preheat, preheat→daytime); during steady state, inner loop has sole authority over curve writes.
-2. **T1-based DHW decisions** — use T1 data to make smarter charge/defer decisions. 2 Apr 12:14: VRC 700 triggered DHW at HwcStorageTemp=34°C while T1=43.9°C — logging T1 alongside every charge decision to build the evidence base. Whether to suppress a charge depends on context (time of day, upcoming demand, tariff, heating contention). Blocked on: household experiment for minimum T1 + enough logged data to see the pattern.
-3. **More overnight data** — reheat rate calibrated from 2 points. Tonight's run (forecast ~5–7°C) gives a third. Need 10+ nights across 0–15°C range.
-4. **Investigate why leather stuck at 19.6–19.9°C** — 6h of continuous heating at 7–10°C outside didn't reach 20.5°C target. Likely τ=15h approach time (33% at 6h) but could also be model optimism on internal gains. Compare model equilibrium with actual settled temp over 24h.
-5. **Event-driven outer loop** — trigger on DHW→heating transition, Leather deviation >0.5°C for >15 min
-6. **HP capacity clamp** — ignore `CurrentCompressorUtil` (reads negative values, unreliable). Use `RunDataElectricPowerConsumption` > 1500W for >30 min instead.
-7. **Leather door sensors** — 2× SONOFF SNZB-04P (in hand, not fitted). Plan below.
-8. **Eco/normal mode detection** — plan DHW duration from detected mode (max flow temp ≥50°C = normal)
-9. **Pre-DHW banking** — 15 min before predicted DHW charge, boost target_flow to pre-raise Leather ~0.3°C
-10. **Direct flow temp control** — `SetModeOverride` to HMU, bypassing VRC 700 entirely
-11. **Defrost analysis** — eBUS provides definitive defrost status (code 516) vs current inference from negative DT/heat
+### Immediate (this week)
 
-### Observations (2 Apr 2026 daytime)
+1. **Fit leather door sensors** — 2× SONOFF SNZB-04P (in hand). Pair to Z2M, add to controller logging. No control changes — Stage 1 only (see door sensor plan above).
+2. **Review tonight's overnight planner run** — first real test. Did it coast the right amount? Preheat start on time? Leather ≥20°C by 07:00?
+3. **More overnight data** — reheat rate calibrated from 2 points. Tonight gives a third. Need 10+ nights across 0–15°C range.
 
-- Outer/inner loop fight: outer resets curve every 15 min (model guess 0.51–0.57), inner immediately overrides to 0.59–0.68. Wasteful eBUS writes, prevents steady-state convergence.
+### Needs evidence first (1–2 weeks of data collection)
+
+4. **Outer/inner loop sawtooth** — observed 2 Apr but data is contaminated by conservatory door open all morning. The inner loop pushing curve up was *compensating* for the door (correct behaviour). Need a clean doors-closed day to confirm whether the sawtooth is a real problem or an artefact. Do not fix until confirmed on clean data.
+5. **T1-based DHW decisions** — T1 now logged every cycle. Building evidence base: 2 Apr 12:14, VRC 700 triggered DHW at HwcStorageTemp=34°C while T1=43.9°C in Cosy window. Not necessarily wrong (bottom zone cold, afternoon demand, cheap rate). Need pattern across many charge events before changing logic. Blocked on: household shower experiment for minimum acceptable T1.
+6. **Leather response with doors closed** — 2 Apr leather stuck at 19.7°C was fully explained by conservatory door open (~1,500W cold air load). Not a model or controller bug. Door sensors will detect this in future.
+
+### Later (after evidence is in)
+
+7. **Event-driven outer loop** — trigger on DHW→heating transition, door state change, Leather deviation >0.5°C for >15 min
+8. **HP capacity clamp** — ignore `CurrentCompressorUtil` (reads negative values, unreliable). Use `RunDataElectricPowerConsumption` > 1500W for >30 min instead.
+9. **Eco/normal mode detection** — plan DHW duration from detected mode (max flow temp ≥50°C = normal)
+10. **Pre-DHW banking** — 15 min before predicted DHW charge, boost target_flow to pre-raise Leather ~0.3°C
+11. **Direct flow temp control** — `SetModeOverride` to HMU, bypassing VRC 700 entirely
+12. **Defrost analysis** — eBUS provides definitive defrost status (code 516) vs current inference from negative DT/heat
+
+### Observations (2 Apr 2026 daytime — conservatory door open all morning)
+
+- Leather stuck at 19.6–19.9°C for 6h. **Fully explained by conservatory door open** (~1,500W cold air load halves HP surplus). Model MWT≈28.3°C is correct for door-closed conditions.
+- Outer/inner loop sawtooth: outer resets curve every 15 min (model guess 0.51–0.57), inner overrides to 0.59–0.68. With door open, the inner loop was *correctly compensating* for the extra heat loss. **Do not fix until confirmed on clean doors-closed data.**
 - `CurrentCompressorUtil` reads negative values (-29, -55, -89, -102). Unreliable register — do not use for control decisions.
-- DHW triggered by VRC 700 at HwcStorageTemp=34°C while T1=43.9°C in 13:00 Cosy window. T1 data logged — feeds into DHW plan analysis. Not necessarily wrong: bottom zone genuinely cold, afternoon showers likely, Cosy rate + warm outside = cheap charge.
+- DHW triggered by VRC 700 at HwcStorageTemp=34°C while T1=43.9°C in 13:00 Cosy window. Data input for DHW plan — not necessarily wrong (bottom zone cold, afternoon demand, cheap rate).
 
 ## Key files
 
