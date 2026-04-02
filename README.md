@@ -59,6 +59,8 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `thermal-fit-diagnostics` | Period-by-period cooldown fit diagnostics |
 | `thermal-operational` | Operational validation (heating/DHW/off with solar) |
 | `thermal-snapshot` | Export/import reproducibility snapshots (human-gated) |
+| `thermal-control-table` | Generate MWT control table for adaptive heating |
+| `dhw-sessions` | Analyse DHW draw/charge sessions from InfluxDB |
 
 ### Options
 
@@ -104,8 +106,9 @@ cargo run -- --all-data design-comparison
 - **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — Room thermal model: methodology, calibration, equilibrium, moisture
 
 ### Adaptive heating control
+- **[docs/adaptive-heating-v2-design.md](docs/adaptive-heating-v2-design.md)** — V2 design: two-loop model-predictive control, phased plan, DHW strategy, pilot findings
 - **[docs/adaptive-heating-control.md](docs/adaptive-heating-control.md)** — Strategy: outcomes-first control, room targeting, the house as a laboratory
-- **[docs/adaptive-heating-mvp.md](docs/adaptive-heating-mvp.md)** — MVP spec: modes, levers, safety, logging, deployment
+- **[docs/adaptive-heating-mvp.md](docs/adaptive-heating-mvp.md)** — V1 MVP spec (historical, superseded by V2 design)
 - **[docs/vrc700-settings-audit.md](docs/vrc700-settings-audit.md)** — VRC 700 settings, timer encoding, eBUS commands
 - **[docs/dhw-fixes.md](docs/dhw-fixes.md)** — DHW sensor mapping, cylinder analysis follow-ups
 

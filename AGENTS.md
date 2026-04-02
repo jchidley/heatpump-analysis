@@ -28,6 +28,7 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 | Thermal fit diagnostics | `cargo run --bin heatpump-analysis -- thermal-fit-diagnostics --config model/thermal-config.toml` |
 | Thermal operational | `cargo run --bin heatpump-analysis -- thermal-operational --config model/thermal-config.toml` |
 | Thermal snapshot | `cargo run --bin heatpump-analysis -- thermal-snapshot export --config model/thermal-config.toml --signoff-reason "reason" --approved-by-human` |
+| Thermal control table | `cargo run --bin heatpump-analysis -- thermal-control-table --config model/thermal-config.toml` |
 | Regression check | `bash scripts/thermal-regression-ci.sh` |
 | Adaptive heating MVP | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml run` |
 | Adaptive heating status | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status` |
@@ -47,9 +48,9 @@ See `docs/code-truth/` for detailed architecture, patterns, and decisions.
 config.toml          → Domain constants, thresholds, feed IDs, radiators
 src/analysis.rs      → State machine + Polars queries
 src/thermal.rs       → Thin facade (re-exports public entry points)
-src/thermal/         → 15 submodules: config, geometry, physics, solar, wind, calibration,
+src/thermal/         → 16 submodules: config, geometry, physics, solar, wind, calibration,
                        validation, diagnostics, operational, artifact, snapshot,
-                       display, error, influx, report
+                       display, error, influx, report, dhw_sessions
 src/overnight.rs     → Overnight strategy backtest
 
 data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust + Python)
