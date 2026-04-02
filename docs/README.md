@@ -22,7 +22,8 @@ Use these when asking **how the live system is deployed, checked, recovered, or 
 
 - `current-production-state.md` — compact live-state summary for pi5data
 - `live-queries.md` — how to fetch live readings and snapshots on demand
-- `history-evidence-plan.md` — roadmap and command reference for reconstructing historical evidence from all sources
+- `history-evidence-workflows.md` — step-by-step historical evidence recipes for heating, DHW, and joined questions
+- `history-evidence-plan.md` — reference / roadmap: authority map, anchor windows, command catalog, maturity, and next-step evidence links
 - `../deploy/SECRETS.md` — InfluxDB token handling, dev vs prod
 - `emon-installation-runbook.md` — monitoring and infrastructure rebuild/runbook
 - `heating-monitoring-setup.md` — broader monitoring topology and setup context

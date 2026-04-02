@@ -8,6 +8,7 @@ This document is the canonical reference for **space-heating strategy, control p
 
 Use other docs for adjacent needs:
 - **Current live deployment snapshot:** `docs/current-production-state.md`
+- **Historical evidence workflows / how-to:** `docs/history-evidence-workflows.md`
 - **Historical evidence / reproducibility roadmap:** `docs/history-evidence-plan.md`
 - **Code locations / module structure:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
 - **Secrets / deployment environment:** `deploy/SECRETS.md`
@@ -247,6 +248,29 @@ Reheat rate for overnight planner: empirical 7500W per °C/h (HP_surplus / 7500 
 | `overnight_preheat` | Model curve + inner loop | Calculated start time reached |
 | `overnight_maintain` | Continuous heating at 19.5°C | Below 2°C outside |
 
+### Reproducible evidence check: overnight planner with DHW overlap
+
+A representative first overnight-planner window is now reproducible:
+
+```bash
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- heating-history \
+  --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z
+```
+
+Observed in that window:
+- likely preheat start at **03:06**
+- DHW overlap from **04:15–05:37** (**82 min**)
+- controller marked likely sawtooth behaviour (`sawtooth_alternations = 5`)
+- Leather entered a comfort-miss period from **05:35–09:05**
+- Leather was **19.63°C** by **09:00**, below the 20–21°C objective
+
+Meaning:
+- this window is a good reproducible anchor for the question **"did DHW steal preheat or delay comfort recovery?"**
+- it does **not** yet prove the overnight planner is wrong in isolation, because the run is contaminated by substantial DHW overlap
+- it strengthens the case for reviewing overnight runs with `heating-history` before tuning the planner, and for coordinating DHW more explicitly with morning preheat
+- it is also a candidate sawtooth window, but that interpretation still needs cleaner doors-closed / lower-disturbance examples before changing control logic
+
 ### Known limitations
 
 - Reheat rate calibrated from 2 data points (needs more overnight runs)
@@ -314,8 +338,8 @@ FRVs deprioritised - HP at capacity on cold days, FRVs redistribute insufficient
 ### Immediate (this week)
 
 1. **Fit leather door sensors** - 2× SONOFF SNZB-04P (in hand). Pair to Z2M, add to controller logging. No control changes - Stage 1 only (see door sensor plan above).
-2. **Review tonight's overnight planner run** - first real test. Use `heating-history` for the overnight window. Did it coast the right amount? Preheat start on time? Leather ≥20°C by 07:00?
-3. **More overnight data** - reheat rate calibrated from 2 points. Tonight gives a third. Need 10+ nights across 0-15°C range, reconstructed with `heating-history`.
+2. **Review overnight planner runs** - baseline reproducible example is `2026-04-02T00:00:00Z` → `2026-04-02T09:00:00Z` via `heating-history`: preheat started at 03:06, but DHW overlapped 04:15–05:37 and Leather still missed comfort by 07:00. Use this as the first anchor, then compare cleaner windows. Did it coast the right amount? Preheat start on time? Leather ≥20°C by 07:00?
+3. **More overnight data** - reheat rate calibrated from 2 points. Need 10+ nights across 0-15°C range, reconstructed with `heating-history`, especially nights without major DHW overlap.
 
 ### Needs evidence first (1-2 weeks of data collection)
 

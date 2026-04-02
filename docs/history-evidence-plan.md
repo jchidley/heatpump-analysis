@@ -12,6 +12,7 @@ It is the canonical reference for:
 Use other docs for adjacent needs:
 - **Space-heating strategy and next steps:** `heating-plan.md`
 - **DHW strategy and next steps:** `dhw-plan.md`
+- **Historical evidence workflows / how-to:** `history-evidence-workflows.md`
 - **Current live state:** `current-production-state.md`
 - **Current live query commands:** `live-queries.md`
 - **Code locations / implementation structure:** `code-truth/README.md`, `code-truth/REPOSITORY_MAP.md`, `code-truth/ARCHITECTURE.md`
@@ -29,22 +30,17 @@ The desired end state is:
 3. live-query commands show **what is happening now**
 4. no important historical conclusion depends on undocumented operator memory
 
-## Environment prerequisites
+## Scope
 
-Historical fused commands in this repo often need InfluxDB access.
+This page is the **reference / roadmap** for historical evidence:
+- data sources
+- authority map
+- canonical anchor windows
+- command catalog
+- maturity / gaps
+- links from plan next steps to evidence commands
 
-Use:
-
-```bash
-export INFLUX_TOKEN=$(ak get influxdb)
-```
-
-This is typically required for:
-- `cargo run --bin heatpump-analysis -- heating-history ...`
-- `cargo run --bin heatpump-analysis -- dhw-history ...`
-- `cargo run --bin heatpump-analysis -- dhw-sessions ...`
-
-Live-query commands in `live-queries.md` usually do **not** need this token.
+For step-by-step historical analysis, recipes, and review workflow, use `history-evidence-workflows.md`.
 
 ## Principles
 
@@ -316,6 +312,8 @@ When reviewing a claim from `heating-plan.md` or `dhw-plan.md`, classify it into
 
 The target is to migrate important B-class claims either into documented recipes or new fused commands.
 
+For review workflow, confidence, confounder handling, and step-by-step recipes, use `history-evidence-workflows.md`.
+
 ## Priority historical windows to reproduce
 
 These are the first concrete evidence slices that should be reproducible because they are repeatedly referenced in the plans and recent notes.
@@ -323,6 +321,7 @@ These are the first concrete evidence slices that should be reproducible because
 ### Heating priorities
 
 1. **Overnight planner window** — did preheat start at the right time, and was Leather ≥ 20°C by 07:00?
+   - baseline reproducible example: `2026-04-02T00:00:00Z` → `2026-04-02T09:00:00Z` via `heating-history` (preheat start 03:06, DHW overlap 04:15–05:37, comfort miss after 05:35)
 2. **DHW-interference window** — did DHW steal preheat or delay comfort recovery?
 3. **Sawtooth window** — did the outer loop and inner loop fight each other, or was the behaviour a valid response to extra load?
 4. **Door-open explanation window** — once door sensors are live, did door state explain the observed room underperformance?
@@ -339,6 +338,14 @@ These are the first concrete evidence slices that should be reproducible because
 
 These are named, reproducible windows that can be reused across plan updates and future analysis.
 
+### Heating anchors
+
+| Window | Why it matters | Command |
+|---|---|---|
+| 2026-04-02 00:00–09:00 UTC | First reproducible overnight-planner window: likely preheat start at 03:06, DHW overlap 04:15–05:37, comfort miss from 05:35 onward, and likely sawtooth | `cargo run --bin heatpump-analysis -- heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` |
+| Next clean overnight without major DHW overlap | Separate planner quality from DHW interference | `heating-history` once a representative window is nominated |
+| Next clean doors-closed daytime window | Check whether sawtooth is real control instability or just disturbance response | `heating-history` once door context is available |
+
 ### DHW anchors
 
 | Window | Why it matters | Command |
@@ -347,6 +354,21 @@ These are named, reproducible windows that can be reused across plan updates and
 | Next partial / no-crossover charge | Validate partial-charge interpretation and gap-based remaining-litres model | `dhw-history` once a representative window is nominated |
 | Next clear capacity / inflection window | Refresh the usable-litres evidence and collapse point | `cargo run --bin heatpump-analysis -- dhw-sessions --days 14 --format json` |
 | Next inferred eco vs normal pair | Compare completion, duration, and peak temperatures by inferred mode | `dhw-history` on nominated windows |
+
+## Nominated next anchor windows
+
+These are the next windows worth curating into named anchors once representative examples are identified.
+
+### Heating
+- next **clean overnight** without major DHW overlap
+- next **comfort-success overnight** where Leather reaches target by 07:00
+- next **clean doors-closed daytime** window for sawtooth review
+
+### DHW
+- next **partial / no-crossover** charge
+- next **low lower-cylinder / high-T1** trigger window
+- next **eco vs normal** comparison pair
+- next **draw during charging** window
 
 ## Gaps in current reproducibility
 
@@ -362,6 +384,13 @@ Still needed:
 - whether comfort was met
 - whether DHW interfered
 - whether behaviour looked stable or sawtoothed
+
+Current maturity by heating question:
+- **Overnight planner review** — **B moving toward A**. `heating-history` already gives a useful answer; 2026-04-02 00:00–09:00 is the first canonical anchor.
+- **More overnight data across temperatures** — **B**. Tooling exists, but the evidence base is still small.
+- **Sawtooth diagnosis** — **B**. `heating-history` detects likely sawtooth, but disturbance-free windows are still needed before changing control logic.
+- **Door-open impact** — **C moving toward B**. The doc/model story exists, but door sensors are not yet live in the evidence stream.
+- **Pre-DHW banking** — **B/C**. Heating and DHW commands can already be combined, but joined interpretation still needs a clearer recipe.
 
 Current state: first-pass command exists; some fields are still inferred heuristically.
 
@@ -433,6 +462,8 @@ First-pass event detection:
 - DHW during preheat
 - likely sawtooth behaviour
 
+For workflow and interpretation recipes, including the baseline overnight-planner example, use `history-evidence-workflows.md`.
+
 ## `dhw-history`
 
 Purpose:
@@ -464,44 +495,7 @@ First-pass event detection:
 - `HwcSFMode=load` stuck
 - large `T1` / `HwcStorageTemp` divergence
 
-### DHW recipe: assess whether lower-cylinder hysteresis matches practical comfort
-
-Run:
-
-```bash
-export INFLUX_TOKEN=$(ak get influxdb)
-cargo run --bin heatpump-analysis -- dhw-history --since ... --until ...
-```
-
-Check:
-- `charges_detected[*].crossover`
-- `t1_c`
-- `hwc_storage_c`
-- `remaining_litres`
-- `events.large_t1_hwc_divergence`
-- `warnings`
-
-Interpretation:
-- if `crossover=true`, the charge completed by the operational rule in the DHW plan
-- if `T1` remains high while `HwcStorageTemp` collapses, lower-cylinder hysteresis is **not** a direct comfort truth
-- if `remaining_litres` stays materially positive with high `T1`, the cylinder may still be practically fine for showers even when the lower sensor looks cold
-- if warnings indicate large divergence, treat that as evidence in favour of T1-based trigger logic rather than as a sensor fault by default
-
-Baseline reproducible example:
-
-```bash
-export INFLUX_TOKEN=$(ak get influxdb)
-cargo run --bin heatpump-analysis -- dhw-history \
-  --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z
-```
-
-This window showed:
-- a completed **36 min** top-up charge
-- `T1` rising to ~45.5°C
-- later `HwcStorageTemp` falling to **27°C**
-- z2m-hub still estimating **~118 L** remaining
-
-That is currently the canonical reproducible example supporting T1-first DHW interpretation.
+For workflow and interpretation recipes, including the baseline T1-vs-lower-cylinder example, use `history-evidence-workflows.md`.
 
 ## Link to next steps in the heating plan
 
@@ -509,7 +503,7 @@ From `heating-plan.md`, the next steps need the following evidence.
 
 | Next step | Evidence needed | Best command |
 |---|---|---|
-| Review overnight planner run | preheat timing, Leather by 07:00, DHW overlap, target vs actual desired flow | `heating-history` |
+| Review overnight planner run | preheat timing, Leather by 07:00, DHW overlap, target vs actual desired flow. Baseline reproducible example: 2026-04-02 00:00–09:00 showed preheat start 03:06 but DHW overlap 04:15–05:37 and a comfort miss | `heating-history` |
 | More overnight data | repeatable overnight windows across temperatures | `heating-history` |
 | Check outer/inner loop sawtooth | curve vs target vs actual desired flow over time | `heating-history` |
 | Replace `CurrentCompressorUtil` with power-based clamp | compare util vs power vs comfort outcomes | `heating-history` |

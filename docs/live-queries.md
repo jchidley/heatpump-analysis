@@ -18,10 +18,9 @@ Use this alongside:
 
 ### Preferred
 
-Run on pi5data (or against the pi5data checkout):
+Run on pi5data (or from this repo when the binary/config are present):
 
 ```bash
-cd ~/adaptive-heating-mvp
 cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status
 cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status --human
 ```
@@ -37,6 +36,18 @@ This structured snapshot contains:
 - leather and aldora temps
 - DHW T1 and HwcStorageTemp
 - warning strings for missing/stale inputs
+
+This command may warn in local dev if some live integrations are unavailable; for the smallest always-on runtime view, use `curl -s http://pi5data:3031/status`.
+
+### Which heating live command should I use?
+
+| Question | Best command | Why |
+|---|---|---|
+| What mode / target flow is the live controller using right now? | `curl -s http://pi5data:3031/status` | Smallest always-on runtime state |
+| What richer live heating snapshot do I have right now? | `cargo run --bin adaptive-heating-mvp -- --config model/adaptive-heating-mvp.toml status` | Best compact snapshot when live inputs are available |
+| Do actuator readings match controller intent? | adaptive CLI `status` | Includes curve, target flow, actual desired flow, flow/return |
+| What does the raw Vaillant side say? | raw eBUS heating reads | Source register view |
+| Am I checking live state or historical performance? | Live now → `status`; chosen past window → `heating-history` | Avoid mixing live queries with evidence reconstruction |
 
 ### Expected shape
 
@@ -197,6 +208,15 @@ It prints:
 - `actual_flow_desired_c` is close to `target_flow_c`
 - `leather_c` is plausible and changing over time
 - `warnings` is empty or only contains known benign gaps
+
+### Heating interpretation caveats
+- A single live snapshot does **not** tell you whether the overnight planner worked; use `heating-history` for that.
+- If the compact CLI `status` output is missing fields in local dev, fall back to `curl -s http://pi5data:3031/status` for runtime state and raw eBUS reads for actuator truth.
+- When judging controller quality, distinguish between:
+  - **controller intent** (`target_flow_c`, mode, action logs)
+  - **actuator output** (`Hc1ActualFlowTempDesired`, heat curve)
+  - **comfort outcome** (Leather / room temperatures)
+- Reproducible anchor: `heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` showed preheat start at 03:06, DHW overlap 04:15–05:37, and a comfort miss despite the planner running.
 
 ### DHW looks healthy when
 - `t1_c` is present and plausible

@@ -9,6 +9,7 @@ This document is the canonical reference for **DHW operating policy, cylinder be
 Use other docs for adjacent needs:
 - **Current live deployment snapshot:** `docs/current-production-state.md`
 - **Current live query commands:** `docs/live-queries.md`
+- **Historical evidence workflows / how-to:** `docs/history-evidence-workflows.md`
 - **Historical evidence / reproducibility roadmap:** `docs/history-evidence-plan.md`
 - **Code locations / module structure in this repo:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
 - **Secrets / InfluxDB token handling:** `deploy/SECRETS.md`

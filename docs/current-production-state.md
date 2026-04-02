@@ -41,6 +41,7 @@ For secrets handling, see:
 | Overnight strategy | Phase 2 latest-start planner active |
 | Open-Meteo forecast | Designed / configured, not yet fully operationally validated |
 | Door sensors | Hardware in hand, not yet integrated live |
+| Latest reproducible evidence window | `heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` → likely preheat start 03:06, DHW overlap 04:15–05:37, comfort miss 05:35–09:05, Leather 19.63°C by 09:00 |
 
 ## DHW: live state
 
