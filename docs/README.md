@@ -23,7 +23,6 @@ Use these when asking **how the live system is deployed, checked, recovered, or 
 - `current-production-state.md` — compact live-state summary for pi5data
 - `live-queries.md` — how to fetch live readings and snapshots on demand
 - `history-evidence-workflows.md` — step-by-step historical evidence recipes for heating, DHW, and joined questions
-- `history-evidence-plan.md` — reference / roadmap: authority map, anchor windows, command catalog, maturity, and next-step evidence links
 - `../deploy/SECRETS.md` — InfluxDB token handling, dev vs prod
 - `emon-installation-runbook.md` — monitoring and infrastructure rebuild/runbook
 - `heating-monitoring-setup.md` — broader monitoring topology and setup context
@@ -67,9 +66,7 @@ It is **not** the best place for full strategy explanations or detailed code map
 
 - **What should happen?** → `heating-plan.md`, `dhw-plan.md`
 - **What is live right now?** → `current-production-state.md`, `live-queries.md`
-- **How should historical review queries be architected?** → `history-query-architecture-plan.md`
-- **How do I reconstruct a past window?** → `history-evidence-workflows.md`
-- **What is the authority map / evidence roadmap?** → `history-evidence-plan.md`
+- **How do I reconstruct and review a past window?** → `history-evidence-workflows.md`
 - **How do I operate/recover it?** → runbooks / `deploy/SECRETS.md`
 - **Where do I change the code?** → `docs/code-truth/`
 - **What should an agent remember while working?** → `AGENTS.md`

@@ -3,7 +3,6 @@
 This document is the **how-to guide** for reconstructing historical evidence behind the heating and DHW plans.
 
 Use this alongside:
-- `history-evidence-plan.md` — authority map, anchor windows, command catalog, maturity, and roadmap
 - `heating-plan.md` — space-heating strategy and questions to answer
 - `dhw-plan.md` — DHW strategy and questions to answer
 - `live-queries.md` — current live state, not historical windows
@@ -66,7 +65,9 @@ Use a shorter or custom window only when:
 6. **Run the fused command or recipe**
    - prefer `heating-history` / `dhw-history` over manual source stitching
    - treat `history-review` as a summarising layer over those facts, not the primary reconstruction engine
-   - note that `history-review` is currently human-first, while `heating-history` / `dhw-history` are the structured-by-default evidence commands
+   - note that `history-review` default structured output is the real LLM/machine interface
+   - use `--human` only for a compact operator summary, not for LLM workflows
+   - its scorecard logic is still an early heuristic layer rather than the final explicit experiment model
 7. **Check the listed fields and warnings**
    - separate direct observations, inferred fields, and missing inputs
 8. **Assess confounders before drawing conclusions**
@@ -170,7 +171,7 @@ That anchor window showed:
 - likely sawtooth behaviour
 - Leather comfort miss from **05:56:59** onward
 
-Use `history-evidence-plan.md` for why the anchor matters and what maturity to assign to the resulting conclusion.
+Use `heating-plan.md` for why the anchor matters and what decision it is meant to inform.
 
 Query-efficiency note:
 - treat these commands as **pushdown-first InfluxDB reviews**, not just "Flux-first" wrappers
@@ -224,7 +225,7 @@ That anchor window showed:
 - later `HwcStorageTemp` falling to **27°C**
 - z2m-hub still estimating **~118 L** remaining
 
-Use `history-evidence-plan.md` for why the anchor matters and how it fits the broader DHW evidence roadmap.
+Use `dhw-plan.md` for why the anchor matters and how it fits the broader DHW strategy.
 
 ## Joined workflows
 
@@ -258,4 +259,4 @@ Promote an observation into `heating-plan.md` or `dhw-plan.md` only if:
 3. confounders are stated explicitly
 4. the conclusion is operationally relevant, not just visually interesting
 
-Otherwise keep it in `history-evidence-plan.md`, as a nominated anchor, or in ad hoc analysis notes until the evidence is stronger.
+Otherwise keep it in ad hoc analysis notes until the evidence is stronger, then promote it into `heating-plan.md`, `dhw-plan.md`, or this workflow doc when it becomes operationally useful.

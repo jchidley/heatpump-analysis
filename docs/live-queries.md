@@ -7,7 +7,6 @@ Use this alongside:
 - `heating-plan.md` — heating strategy and rationale
 - `dhw-plan.md` — DHW strategy and rationale
 - `history-evidence-workflows.md` — reconstructing past windows instead of querying live state
-- `history-evidence-plan.md` — authority map and evidence roadmap
 - `code-truth/README.md` — where the implementation lives
 
 ## Principles

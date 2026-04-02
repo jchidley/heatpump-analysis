@@ -9,7 +9,6 @@ This document is the canonical reference for **space-heating strategy, control p
 Use other docs for adjacent needs:
 - **Current live deployment snapshot:** `docs/current-production-state.md`
 - **Historical evidence workflows / how-to:** `docs/history-evidence-workflows.md`
-- **Historical evidence / reproducibility roadmap:** `docs/history-evidence-plan.md`
 - **Code locations / module structure:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
 - **Secrets / deployment environment:** `deploy/SECRETS.md`
 - **Agent-facing project memory / gotchas:** `AGENTS.md`
@@ -217,12 +216,6 @@ Use `docs/history-evidence-workflows.md` for:
 - confidence assessment
 - joined heating + DHW interpretation
 - the standard sequence: rolling 7-day review first, named anchor replay second, event drill-down third
-
-Use `docs/history-evidence-plan.md` for:
-- authority map
-- canonical anchor windows
-- maturity / gap tracking
-- links from next steps to evidence commands
 
 For current state instead of historical reconstruction, use `docs/live-queries.md`.
 

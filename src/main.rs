@@ -812,6 +812,7 @@ fn main() -> Result<()> {
             human,
             no_sessions,
         } => {
+            let explicit_window = since.is_some() || until.is_some();
             let (since, until) = resolve_history_window(since.as_deref(), until.as_deref(), days)?;
             run_history_review(
                 std::path::Path::new(config),
@@ -820,6 +821,7 @@ fn main() -> Result<()> {
                 &until,
                 human,
                 no_sessions,
+                explicit_window,
             )?;
         }
     }
@@ -861,16 +863,29 @@ struct HistoryReviewSummary {
     generated_at: String,
     target: String,
     window: HistoryReviewWindow,
+    heating_verdict: Option<HistoryVerdict>,
+    dhw_verdict: Option<HistoryVerdict>,
     heating: Option<thermal::HeatingHistorySummary>,
     dhw: Option<thermal::DhwHistorySummary>,
     dhw_sessions: Option<Value>,
     no_sessions: bool,
+    warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct HistoryReviewWindow {
     since: String,
     until: String,
+}
+
+#[derive(Serialize)]
+struct HistoryVerdict {
+    status: &'static str,
+    change_under_review: String,
+    success_criteria_checked: Vec<String>,
+    supporting_evidence: Vec<String>,
+    confounders: Vec<String>,
+    recommended_next_change: String,
 }
 
 fn run_history_review(
@@ -880,59 +895,8 @@ fn run_history_review(
     until: &str,
     human: bool,
     no_sessions: bool,
+    explicit_window: bool,
 ) -> Result<()> {
-    if human {
-        let now_utc = Utc::now().to_rfc3339();
-        println!("History review");
-        println!("==============");
-        println!("now_utc: {now_utc}");
-        println!("window: {since} → {until}");
-        println!("target: {:?}", target);
-        println!();
-
-        match target {
-            HistoryReviewTarget::Heating => {
-                thermal::heating_history(config_path, since, until, true, false)?;
-            }
-            HistoryReviewTarget::Dhw => {
-                thermal::dhw_history(config_path, since, until, true, false)?;
-                if !no_sessions {
-                    println!();
-                    println!("DHW sessions");
-                    println!("------------");
-                    let days = history_window_days(since, until)?;
-                    let config_path_str = config_path.to_string_lossy().to_string();
-                    thermal::dhw_sessions(
-                        &config_path_str,
-                        days,
-                        thermal::DhwSessionsOutput::Verbose,
-                        true,
-                    )?;
-                }
-            }
-            HistoryReviewTarget::Both => {
-                thermal::heating_history(config_path, since, until, true, false)?;
-                println!();
-                thermal::dhw_history(config_path, since, until, true, false)?;
-                if !no_sessions {
-                    println!();
-                    println!("DHW sessions");
-                    println!("------------");
-                    let days = history_window_days(since, until)?;
-                    let config_path_str = config_path.to_string_lossy().to_string();
-                    thermal::dhw_sessions(
-                        &config_path_str,
-                        days,
-                        thermal::DhwSessionsOutput::Verbose,
-                        true,
-                    )?;
-                }
-            }
-        }
-
-        return Ok(());
-    }
-
     let days = history_window_days(since, until)?;
     let config_path_str = config_path.to_string_lossy().to_string();
     let heating = match target {
@@ -947,12 +911,59 @@ fn run_history_review(
         }
         HistoryReviewTarget::Heating => None,
     };
+
+    let mut review_warnings = Vec::new();
     let dhw_sessions = match target {
+        HistoryReviewTarget::Dhw | HistoryReviewTarget::Both if !no_sessions && explicit_window => {
+            review_warnings.push(
+                "dhw_sessions omitted because the requested history-review window is exact; current session analysis is day-rounded and could include out-of-window evidence".to_string(),
+            );
+            None
+        }
         HistoryReviewTarget::Dhw | HistoryReviewTarget::Both if !no_sessions => {
             Some(thermal::dhw_sessions_json_summary(&config_path_str, days, true)?)
         }
         _ => None,
     };
+
+    let heating_verdict = heating.as_ref().map(heating_history_verdict);
+    let dhw_verdict = dhw.as_ref().map(dhw_history_verdict);
+
+    if human {
+        let now_utc = Utc::now().to_rfc3339();
+        println!("History review");
+        println!("==============");
+        println!("now_utc: {now_utc}");
+        println!("window: {since} → {until}");
+        println!("target: {:?}", target);
+        println!("mode: compact human summary only");
+        println!("note: structured default output is the machine/LLM interface; use heating-history or dhw-history directly for detailed factual views");
+        println!();
+
+        if let Some(verdict) = &heating_verdict {
+            print_history_verdict_human("Heating verdict", verdict);
+            println!();
+        }
+        if let Some(verdict) = &dhw_verdict {
+            print_history_verdict_human("DHW verdict", verdict);
+            println!();
+        }
+        if let Some(session_summary) = &dhw_sessions {
+            println!("dhw_sessions_summary:");
+            println!("{}", serde_json::to_string_pretty(session_summary)?);
+            println!();
+        }
+        if review_warnings.is_empty() {
+            println!("review_warnings: none");
+        } else {
+            println!("review_warnings:");
+            for warning in &review_warnings {
+                println!("- {warning}");
+            }
+        }
+
+        return Ok(());
+    }
 
     let summary = HistoryReviewSummary {
         generated_at: Utc::now().to_rfc3339(),
@@ -961,14 +972,237 @@ fn run_history_review(
             since: since.to_string(),
             until: until.to_string(),
         },
+        heating_verdict,
+        dhw_verdict,
         heating,
         dhw,
         dhw_sessions,
         no_sessions,
+        warnings: review_warnings,
     };
 
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
+}
+
+fn dedupe_strings(values: &mut Vec<String>) {
+    let mut seen = std::collections::BTreeSet::new();
+    values.retain(|value| seen.insert(value.clone()));
+}
+
+fn print_history_verdict_human(label: &str, verdict: &HistoryVerdict) {
+    println!("{label}");
+    println!("{}", "-".repeat(label.len()));
+    println!("status: {}", verdict.status);
+    println!("change_under_review: {}", verdict.change_under_review);
+    if verdict.success_criteria_checked.is_empty() {
+        println!("success_criteria_checked: none");
+    } else {
+        println!("success_criteria_checked:");
+        for item in &verdict.success_criteria_checked {
+            println!("- {item}");
+        }
+    }
+    if verdict.supporting_evidence.is_empty() {
+        println!("supporting_evidence: none");
+    } else {
+        println!("supporting_evidence:");
+        for item in &verdict.supporting_evidence {
+            println!("- {item}");
+        }
+    }
+    if verdict.confounders.is_empty() {
+        println!("confounders: none");
+    } else {
+        println!("confounders:");
+        for item in &verdict.confounders {
+            println!("- {item}");
+        }
+    }
+    println!(
+        "recommended_next_change: {}",
+        verdict.recommended_next_change
+    );
+}
+
+fn heating_history_verdict(summary: &thermal::HeatingHistorySummary) -> HistoryVerdict {
+    let comfort_miss_count = summary.events.comfort_miss_periods.len();
+    let dhw_overlap_count = summary.events.dhw_overlap_periods.len();
+    let has_core_comfort = summary.leather_c.is_some();
+    let has_controller_intent = !summary.controller_events.is_empty() || summary.target_flow_c.is_some();
+
+    let mut success_criteria_checked = vec![
+        "waking-hours comfort misses are acceptably rare".to_string(),
+        "controller intent and actuator response are present in the review window".to_string(),
+        "DHW overlap is not materially undermining comfort".to_string(),
+    ];
+    if summary.events.likely_preheat_start.is_some() {
+        success_criteria_checked.push(
+            "overnight preheat start is visible in controller evidence".to_string(),
+        );
+    }
+
+    let mut supporting_evidence = Vec::new();
+    if let Some(leather) = &summary.leather_c {
+        if let Some(latest) = &leather.latest {
+            supporting_evidence.push(format!(
+                "Leather latest {:.2}°C at {}",
+                latest.value, latest.ts
+            ));
+        }
+    }
+    supporting_evidence.push(format!("comfort miss periods detected: {comfort_miss_count}"));
+    supporting_evidence.push(format!("DHW overlap periods detected: {dhw_overlap_count}"));
+    supporting_evidence.push(format!(
+        "controller events recorded: {}",
+        summary.controller_events.len()
+    ));
+    if let Some(preheat) = &summary.events.likely_preheat_start {
+        supporting_evidence.push(format!(
+            "likely preheat start at {} via {}",
+            preheat.ts, preheat.action
+        ));
+    }
+    if summary.events.likely_sawtooth {
+        supporting_evidence.push(format!(
+            "sawtooth candidate detected (alternations={})",
+            summary.events.sawtooth_alternations
+        ));
+    }
+
+    let mut confounders = Vec::new();
+    if dhw_overlap_count > 0 {
+        confounders.push("DHW overlap was present in the review window".to_string());
+    }
+    if summary.events.likely_sawtooth {
+        confounders.push("controller behaviour showed a sawtooth candidate".to_string());
+    }
+    confounders.extend(summary.warnings.iter().cloned());
+    dedupe_strings(&mut confounders);
+
+    let (status, recommended_next_change) = if !has_core_comfort || !has_controller_intent {
+        (
+            "inconclusive",
+            "Restore missing heating evidence inputs before changing control logic.".to_string(),
+        )
+    } else if comfort_miss_count == 0 && !summary.events.likely_sawtooth {
+        (
+            "working",
+            "Hold the current heating plan and gather more clean overnight windows before retuning.".to_string(),
+        )
+    } else if comfort_miss_count > 0 && dhw_overlap_count == 0 && !summary.events.likely_sawtooth {
+        (
+            "failing",
+            "Investigate overnight planner timing and actuator follow-through on the next clean overnight anchor.".to_string(),
+        )
+    } else {
+        let next = if dhw_overlap_count > 0 {
+            "Review matched heating/DHW windows and consider DHW timing or pre-DHW banking before retuning heating."
+        } else if summary.events.likely_sawtooth {
+            "Validate the sawtooth pattern on a clean disturbance-free window before changing control gains."
+        } else {
+            "Review another clean overnight window before deciding on the next heating change."
+        };
+        ("mixed", next.to_string())
+    };
+
+    HistoryVerdict {
+        status,
+        change_under_review: "adaptive heating overnight planner and coupled heating control".to_string(),
+        success_criteria_checked,
+        supporting_evidence,
+        confounders,
+        recommended_next_change,
+    }
+}
+
+fn dhw_history_verdict(summary: &thermal::DhwHistorySummary) -> HistoryVerdict {
+    let full_count = summary
+        .charges_detected
+        .iter()
+        .filter(|c| c.crossover == Some(true))
+        .count();
+    let partial_count = summary.charges_detected.len().saturating_sub(full_count);
+    let has_core_dhw = summary.t1_c.is_some() && summary.hwc_storage_c.is_some();
+
+    let success_criteria_checked = vec![
+        "charge timing keeps hot-water supply practical".to_string(),
+        "full-charge fraction is acceptable".to_string(),
+        "partial or no-crossover charges are rare or explained".to_string(),
+        "T1 and HwcStorageTemp behaviour are consistent with the current plan".to_string(),
+    ];
+
+    let mut supporting_evidence = vec![
+        format!("charges detected: {}", summary.charges_detected.len()),
+        format!("full charges: {full_count}"),
+        format!("partial charges: {partial_count}"),
+    ];
+    if let Some(t1) = &summary.t1_c {
+        if let Some(latest) = &t1.latest {
+            supporting_evidence.push(format!("T1 latest {:.1}°C at {}", latest.value, latest.ts));
+        }
+    }
+    if let Some(remaining) = &summary.remaining_litres {
+        if let Some(latest) = &remaining.latest {
+            supporting_evidence.push(format!(
+                "remaining litres latest {:.0}L at {}",
+                latest.value, latest.ts
+            ));
+        }
+    }
+    if let Some(max_div) = summary.events.max_t1_hwc_divergence_c {
+        supporting_evidence.push(format!("max T1/HWC divergence {:.1}°C", max_div));
+    }
+
+    let mut confounders = Vec::new();
+    if summary.events.large_t1_hwc_divergence {
+        confounders.push("large T1/HwcStorageTemp divergence detected".to_string());
+    }
+    if summary.events.hwc_sfmode_load_stuck {
+        confounders.push("HwcSFMode may be stuck on load".to_string());
+    }
+    confounders.extend(summary.warnings.iter().cloned());
+    dedupe_strings(&mut confounders);
+
+    let (status, recommended_next_change) = if !has_core_dhw {
+        (
+            "inconclusive",
+            "Restore missing DHW evidence inputs before changing DHW control logic.".to_string(),
+        )
+    } else if summary.charges_detected.is_empty() {
+        (
+            "inconclusive",
+            "Wait for a representative DHW charge window or replay a named anchor before changing DHW logic.".to_string(),
+        )
+    } else if !summary.events.no_crossover && !summary.events.low_t1 && partial_count == 0 {
+        (
+            "working",
+            "Hold the current DHW plan and keep collecting representative charge windows before retuning.".to_string(),
+        )
+    } else if summary.events.no_crossover && summary.events.low_t1 {
+        (
+            "failing",
+            "Revisit DHW trigger/completion logic on the next representative charge because non-crossover behaviour is now coinciding with low T1.".to_string(),
+        )
+    } else {
+        let next = if summary.events.no_crossover {
+            "Inspect the next partial-charge anchor and validate whether T1-based completion logic should change."
+        } else if summary.events.large_t1_hwc_divergence {
+            "Keep using T1 as the comfort truth and review whether lower-cylinder-trigger behaviour is still operationally sensible."
+        } else {
+            "Review another representative DHW charge before changing the plan."
+        };
+        ("mixed", next.to_string())
+    };
+
+    HistoryVerdict {
+        status,
+        change_under_review: "T1-informed DHW timing and charge-completion interpretation".to_string(),
+        success_criteria_checked,
+        supporting_evidence,
+        confounders,
+        recommended_next_change,
+    }
 }
 
 fn history_window_days(since: &str, until: &str) -> Result<u32> {

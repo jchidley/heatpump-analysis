@@ -11,7 +11,6 @@ For strategy and rationale, see:
 For live queries and historical reconstruction, see:
 - `live-queries.md`
 - `history-evidence-workflows.md`
-- `history-evidence-plan.md`
 
 For code locations and module structure, see:
 - `code-truth/README.md`

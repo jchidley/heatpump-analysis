@@ -10,7 +10,6 @@ Use other docs for adjacent needs:
 - **Current live deployment snapshot:** `docs/current-production-state.md`
 - **Current live query commands:** `docs/live-queries.md`
 - **Historical evidence workflows / how-to:** `docs/history-evidence-workflows.md`
-- **Historical evidence / reproducibility roadmap:** `docs/history-evidence-plan.md`
 - **Code locations / module structure in this repo:** `docs/code-truth/README.md`, `docs/code-truth/REPOSITORY_MAP.md`, `docs/code-truth/ARCHITECTURE.md`
 - **Secrets / InfluxDB token handling:** `deploy/SECRETS.md`
 - **Agent-facing project memory / gotchas:** `AGENTS.md`
@@ -400,12 +399,6 @@ Use `docs/history-evidence-workflows.md` for:
 - joined heating + DHW interpretation
 - the standard sequence: rolling 7-day review first, named anchor replay second, event drill-down third
 
-Use `docs/history-evidence-plan.md` for:
-- authority map
-- canonical anchor windows
-- maturity / gap tracking
-- links from next steps to evidence commands
-
 When reviewing DHW outcomes, keep the evidence split explicit:
 - **authoritative comfort truth** = Multical `T1`
 - **lower-cylinder control truth** = eBUS `HwcStorageTemp`
@@ -433,7 +426,7 @@ cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't
 - Writes `dhw_inflection` measurements + `dhw_capacity` recommended value to InfluxDB
 - Run periodically to keep capacity number fresh as seasonal mains temp changes
 
-Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-drilldown --since ... --until ...` when you want bounded native-cadence detail for one chosen DHW event/window. That drill-down path is now the first executed architecture milestone from `docs/history-query-architecture-plan.md`. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`. For historical workflow and interpretation, use `docs/history-evidence-workflows.md`.
+Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-drilldown --since ... --until ...` when you want bounded native-cadence detail for one chosen DHW event/window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`. For historical workflow and interpretation, use `docs/history-evidence-workflows.md`.
 
 ### InfluxDB measurements
 

@@ -26,35 +26,35 @@ struct HistoryCtx {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NumericPoint {
-    ts: String,
-    value: f64,
+    pub ts: String,
+    pub value: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NumericSummary {
-    samples: usize,
-    start: Option<NumericPoint>,
-    end: Option<NumericPoint>,
-    min: Option<NumericPoint>,
-    max: Option<NumericPoint>,
-    latest: Option<NumericPoint>,
+    pub samples: usize,
+    pub start: Option<NumericPoint>,
+    pub end: Option<NumericPoint>,
+    pub min: Option<NumericPoint>,
+    pub max: Option<NumericPoint>,
+    pub latest: Option<NumericPoint>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StringPoint {
-    ts: String,
-    value: String,
+    pub ts: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SamplingStats {
-    label: String,
-    window_start: String,
-    window_end: String,
-    samples: usize,
-    median_step_seconds: Option<f64>,
-    min_step_seconds: Option<f64>,
-    max_step_seconds: Option<f64>,
+    pub label: String,
+    pub window_start: String,
+    pub window_end: String,
+    pub samples: usize,
+    pub median_step_seconds: Option<f64>,
+    pub min_step_seconds: Option<f64>,
+    pub max_step_seconds: Option<f64>,
 }
 
 struct TopicSummarySpec<'a> {
@@ -77,20 +77,20 @@ struct PlainMeasurementSummarySpec<'a> {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Period {
-    start: String,
-    end: String,
-    duration_minutes: f64,
+    pub start: String,
+    pub end: String,
+    pub duration_minutes: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ControllerEvent {
-    ts: String,
-    mode: String,
-    action: String,
-    tariff: String,
-    target_flow_c: Option<f64>,
-    curve_after: Option<f64>,
-    flow_desired_c: Option<f64>,
+    pub ts: String,
+    pub mode: String,
+    pub action: String,
+    pub tariff: String,
+    pub target_flow_c: Option<f64>,
+    pub curve_after: Option<f64>,
+    pub flow_desired_c: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,77 +106,77 @@ struct ControllerRow {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModeChange {
-    ts: String,
-    from: Option<String>,
-    to: String,
+    pub ts: String,
+    pub from: Option<String>,
+    pub to: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HeatingEvents {
-    comfort_miss_periods: Vec<Period>,
-    likely_preheat_start: Option<ControllerEvent>,
-    dhw_overlap_periods: Vec<Period>,
-    likely_sawtooth: bool,
-    sawtooth_alternations: usize,
+    pub comfort_miss_periods: Vec<Period>,
+    pub likely_preheat_start: Option<ControllerEvent>,
+    pub dhw_overlap_periods: Vec<Period>,
+    pub likely_sawtooth: bool,
+    pub sawtooth_alternations: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HeatingHistorySummary {
-    window: WindowSummary,
-    leather_c: Option<NumericSummary>,
-    aldora_c: Option<NumericSummary>,
-    outside_c: Option<NumericSummary>,
-    heat_curve: Option<NumericSummary>,
-    target_flow_c: Option<NumericSummary>,
-    actual_flow_desired_c: Option<NumericSummary>,
-    actual_flow_c: Option<NumericSummary>,
-    return_c: Option<NumericSummary>,
-    sampling: Vec<SamplingStats>,
-    controller_mode_changes: Vec<ModeChange>,
-    controller_events: Vec<ControllerEvent>,
-    events: HeatingEvents,
-    warnings: Vec<String>,
+    pub window: WindowSummary,
+    pub leather_c: Option<NumericSummary>,
+    pub aldora_c: Option<NumericSummary>,
+    pub outside_c: Option<NumericSummary>,
+    pub heat_curve: Option<NumericSummary>,
+    pub target_flow_c: Option<NumericSummary>,
+    pub actual_flow_desired_c: Option<NumericSummary>,
+    pub actual_flow_c: Option<NumericSummary>,
+    pub return_c: Option<NumericSummary>,
+    pub sampling: Vec<SamplingStats>,
+    pub controller_mode_changes: Vec<ModeChange>,
+    pub controller_events: Vec<ControllerEvent>,
+    pub events: HeatingEvents,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DhwChargeSummary {
-    start: String,
-    end: String,
-    duration_minutes: f64,
-    t1_start_c: Option<f64>,
-    t1_peak_c: Option<f64>,
-    t1_end_c: Option<f64>,
-    hwc_start_c: Option<f64>,
-    hwc_peak_c: Option<f64>,
-    hwc_end_c: Option<f64>,
-    remaining_litres_start: Option<f64>,
-    remaining_litres_end: Option<f64>,
-    sfmode_start: Option<String>,
-    sfmode_end: Option<String>,
-    crossover: Option<bool>,
+    pub start: String,
+    pub end: String,
+    pub duration_minutes: f64,
+    pub t1_start_c: Option<f64>,
+    pub t1_peak_c: Option<f64>,
+    pub t1_end_c: Option<f64>,
+    pub hwc_start_c: Option<f64>,
+    pub hwc_peak_c: Option<f64>,
+    pub hwc_end_c: Option<f64>,
+    pub remaining_litres_start: Option<f64>,
+    pub remaining_litres_end: Option<f64>,
+    pub sfmode_start: Option<String>,
+    pub sfmode_end: Option<String>,
+    pub crossover: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DhwEvents {
-    no_crossover: bool,
-    low_t1: bool,
-    hwc_sfmode_load_stuck: bool,
-    large_t1_hwc_divergence: bool,
-    max_t1_hwc_divergence_c: Option<f64>,
+    pub no_crossover: bool,
+    pub low_t1: bool,
+    pub hwc_sfmode_load_stuck: bool,
+    pub large_t1_hwc_divergence: bool,
+    pub max_t1_hwc_divergence_c: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DhwHistorySummary {
-    window: WindowSummary,
-    charges_detected: Vec<DhwChargeSummary>,
-    t1_c: Option<NumericSummary>,
-    hwc_storage_c: Option<NumericSummary>,
-    remaining_litres: Option<NumericSummary>,
-    sampling: Vec<SamplingStats>,
-    sfmode: Vec<StringPoint>,
-    charging: bool,
-    events: DhwEvents,
-    warnings: Vec<String>,
+    pub window: WindowSummary,
+    pub charges_detected: Vec<DhwChargeSummary>,
+    pub t1_c: Option<NumericSummary>,
+    pub hwc_storage_c: Option<NumericSummary>,
+    pub remaining_litres: Option<NumericSummary>,
+    pub sampling: Vec<SamplingStats>,
+    pub sfmode: Vec<StringPoint>,
+    pub charging: bool,
+    pub events: DhwEvents,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -197,9 +197,9 @@ pub struct DhwDrilldownSummary {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WindowSummary {
-    since: String,
-    until: String,
-    generated_at: String,
+    pub since: String,
+    pub until: String,
+    pub generated_at: String,
 }
 
 pub fn heating_history_summary(
