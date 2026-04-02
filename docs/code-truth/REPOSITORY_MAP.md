@@ -1,4 +1,4 @@
-<!-- code-truth: 7b6bfed -->
+<!-- code-truth: 296afce -->
 
 # Repository Map
 
@@ -16,7 +16,7 @@
 
 ## Source Modules
 
-### `src/main.rs` — CLI entry point (~611 lines)
+### `src/main.rs` — CLI entry point (~704 lines)
 
 Defines 28+ CLI subcommands via clap derive. Loads `config.toml` at startup. Routes to analysis functions, DB operations, thermal commands.
 
@@ -48,11 +48,11 @@ Reads from `~/github/octopus/data/`. Gas-vs-HP comparison, baseload analysis.
 
 Backtest model for overnight heating strategies.
 
-### `src/thermal.rs` — Thin facade (23 lines)
+### `src/thermal.rs` — Thin facade (30 lines)
 
-Re-exports 8 public entry points from 15 submodules. All implementation is in `src/thermal/`.
+Re-exports public entry points from 16 submodules. All implementation is in `src/thermal/`.
 
-### `src/thermal/` — Thermal model submodules (4,222 lines total)
+### `src/thermal/` — Thermal model submodules (~5,500 lines total)
 
 Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorway exchange, solar gain.
 
@@ -60,7 +60,7 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 |--------|-------|---------------|
 | `config.rs` | 213 | TOML config structs for thermal model |
 | `geometry.rs` | 269 | Room/connection/doorway types + JSON loading |
-| `physics.rs` | 399 | Constants, thermal mass, energy balance |
+| `physics.rs` | 400 | Constants, thermal mass, energy balance |
 | `solar.rs` | 180 | Solar position + irradiance |
 | `wind.rs` | 75 | Open-Meteo wind + ventilation multiplier |
 | `calibration.rs` | 626 | Grid search calibration, shared helpers |
@@ -71,21 +71,29 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 | `snapshot.rs` | 233 | Export/import manifests with human signoff |
 | `error.rs` | 99 | `ThermalError` enum |
 | `influx.rs` | 352 | Flux query builders |
-| `display.rs` | 78 | CLI output for rooms/connections |
+| `display.rs` | 993 | CLI output, **equilibrium solver**, **MWT bisection**, **control table generation** |
 | `report.rs` | 44 | Table printer and RMSE |
+| `dhw_sessions.rs` | 1086 | **NEW**: DHW draw/charge session analysis with inflection detection |
 
 ## Standalone Binaries
 
-### `src/bin/adaptive-heating-mvp.rs` (900 lines)
+### `src/bin/adaptive-heating-mvp.rs` (1,428 lines)
 
-**NEW.** Live adaptive heating controller. Axum HTTP API + background control loop. Reads eBUS via TCP, InfluxDB for room temps. Writes VRC 700 registers. Logs to InfluxDB + JSONL. Deployed as systemd service on `pi5data` (port 3031). Config: `model/adaptive-heating-mvp.toml`. Service: `deploy/adaptive-heating-mvp.service`.
+Live V2 adaptive heating controller. Two-loop architecture:
+
+**Outer loop** (every 900s): Open-Meteo forecast → thermal model control table → target flow temp → initial curve guess via heat curve formula.
+
+**Inner loop** (every 60s): proportional feedback on `Hc1ActualFlowTempDesired` toward target flow. Gain 0.05, deadband 0.5°C, max step 0.20. Floor guard: halve gain + double deadband when curve < 0.25.
 
 Key components:
-- `run_control_cycle()` — 15-minute decision loop: read state, evaluate mode-specific rules, write levers, log
-- `restore_baseline()` — write known-good values to VRC 700 (called on kill/stop)
-- `classify_tariff_period()` — Cosy/peak/standard from clock
+- `calculate_required_curve()` — forecast + control table → MWT → flow → curve. Uses default ΔT when compressor not actively heating (ΔT stabilisation fix).
+- `run_outer_cycle()` — full sensor sweep, mode-specific control logic, writes initial curve
+- `run_inner_cycle()` — light eBUS reads, proportional curve adjustment
+- `restore_baseline()` — write `Hc1HeatCurve=0.55` + `Z1OpMode=auto` on shutdown
 - HTTP API: `/status`, `/mode/{mode}`, `/kill`
 - Modes: `Occupied`, `ShortAbsence`, `AwayUntil`, `Disabled`, `MonitorOnly`
+
+On startup: `Z1OpMode=night` (SP=19). This eliminates VRC 700 Optimum Start and day/night transitions.
 
 ### `src/bin/thermal-regression-check.rs` (607 lines)
 
@@ -101,22 +109,18 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 |------|---------|---------|
 | `config.toml` | `src/main.rs`, `src/config.rs`, most modules | Domain constants, thresholds, feed IDs |
 | `model/thermal-config.toml` | `src/thermal/config.rs` | InfluxDB, test nights, calibration bounds |
-| `model/adaptive-heating-mvp.toml` | `src/bin/adaptive-heating-mvp.rs` | eBUS host, InfluxDB, Cosy windows, baseline values, room topics |
+| `model/adaptive-heating-mvp.toml` | `src/bin/adaptive-heating-mvp.rs` | eBUS host, InfluxDB, Cosy windows, baseline values, room topics, inner loop tuning |
+| `model/control-table.json` | `src/bin/adaptive-heating-mvp.rs` | MWT lookup table (Phase 1 only — Phase 1b replaces with live solver) |
 | `artifacts/thermal/regression-thresholds.toml` | `src/bin/thermal-regression-check.rs` | Regression gates |
 | `data/canonical/thermal_geometry.json` | `src/thermal/geometry.rs` | Room geometry single source of truth |
-
-## Deploy
-
-| File | Target | Purpose |
-|------|--------|---------|
-| `deploy/adaptive-heating-mvp.service` | pi5data `/etc/systemd/system/` | systemd unit for adaptive heating MVP |
 
 ## Domain Docs
 
 | Document | Concern |
 |----------|---------|
+| `docs/adaptive-heating-v2-design.md` | **V2 design**: two-loop architecture, phased implementation, DHW strategy, pilot findings |
 | `docs/adaptive-heating-control.md` | Strategy, philosophy, room targeting, control theory |
-| `docs/adaptive-heating-mvp.md` | Frozen MVP spec, implementation status, outstanding work |
+| `docs/adaptive-heating-mvp.md` | Frozen V1 MVP spec (historical, superseded by V2 design) |
 | `docs/roadmap.md` | Planned enhancements with status |
 | `docs/pico-ebus-plan.md` | Pico W eBUS adapter build plan |
 | `docs/vrc700-settings-audit.md` | VRC 700 settings, timer encoding, eBUS commands |
@@ -141,14 +145,21 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | Room geometry / fabric | `data/canonical/thermal_geometry.json` → `src/thermal/geometry.rs` |
 | Thermal calibration bounds | `model/thermal-config.toml` `[bounds]` |
 | Thermal physics / energy balance | `src/thermal/physics.rs` and `src/thermal/operational.rs` |
+| Equilibrium solver / MWT bisection | `src/thermal/display.rs::solve_equilibrium_temps()`, `bisect_mwt_for_room()` |
 | Solar gain model | `src/thermal/solar.rs` |
 | InfluxDB queries (thermal) | `src/thermal/influx.rs` |
 | Artifact schema / output | `src/thermal/artifact.rs` |
 | Regression CI gates | `src/bin/thermal-regression-check.rs` + `artifacts/thermal/regression-thresholds.toml` |
-| **Adaptive heating control logic** | `src/bin/adaptive-heating-mvp.rs::run_control_cycle()` |
+| **V2 control logic (outer loop)** | `src/bin/adaptive-heating-mvp.rs::run_outer_cycle()` |
+| **V2 control logic (inner loop)** | `src/bin/adaptive-heating-mvp.rs::run_inner_cycle()` |
+| **V2 forecast + model → curve** | `src/bin/adaptive-heating-mvp.rs::calculate_required_curve()` |
 | **Adaptive heating config** | `model/adaptive-heating-mvp.toml` |
+| **Control table (Phase 1)** | `model/control-table.json` (Phase 1b replaces with live solver) |
 | **Adaptive heating modes/API** | `src/bin/adaptive-heating-mvp.rs` (HTTP handlers + Mode enum) |
 | **Adaptive heating baseline** | `model/adaptive-heating-mvp.toml` `[baseline]` + `restore_baseline()` |
+| **V2 design / phase plan** | `docs/adaptive-heating-v2-design.md` |
+| **DHW duration model** | `docs/adaptive-heating-v2-design.md` Phase 2 section |
+| **DHW session analysis** | `src/thermal/dhw_sessions.rs` |
 | **Mobile dashboard** | `~/github/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
 | eBUS polling | `scripts/ebusd-poll.sh` on pi5data |
 | Octopus data refresh | `~/github/octopus/` — `npm run cli -- refresh` |

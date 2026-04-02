@@ -1,4 +1,4 @@
-<!-- code-truth: 7b6bfed -->
+<!-- code-truth: 296afce -->
 
 # Architecture
 
@@ -18,13 +18,17 @@ main.rs (CLI)
   │     └── config.rs
   ├── overnight.rs   (reads config for thresholds; uses analysis::enrich)
   │     └── analysis.rs, config.rs
-  └── thermal.rs     (thin facade — re-exports from 15 submodules)
+  └── thermal.rs     (thin facade — re-exports from 16 submodules)
         └── thermal/  (own config from model/thermal-config.toml)
+              └── display.rs  (equilibrium solver, MWT bisection, control table)
+              └── dhw_sessions.rs  (DHW draw/charge analysis)
 
 adaptive-heating-mvp.rs (separate binary, own dependency tree)
   ├── model/adaptive-heating-mvp.toml (own TOML config)
+  ├── model/control-table.json (MWT lookup — Phase 1 only)
   ├── ebusd TCP (localhost:8888)
   ├── InfluxDB HTTP (localhost:8086)
+  ├── Open-Meteo HTTP (forecast API)
   ├── Axum HTTP API (:3031)
   └── JSONL + InfluxDB logging
 ```
@@ -32,7 +36,7 @@ adaptive-heating-mvp.rs (separate binary, own dependency tree)
 Key constraints:
 - **analysis.rs has no dependency on db.rs or emoncms.rs** — operates purely on Polars DataFrames
 - **thermal.rs has no dependency on config.rs** — uses its own `ThermalConfig`
-- **adaptive-heating-mvp is fully independent** — shares no code with the analysis CLI or thermal module. Uses its own config, own InfluxDB queries, own eBUS access pattern.
+- **adaptive-heating-mvp is fully independent** — shares no code with the analysis CLI or thermal module. Uses its own config, own InfluxDB queries, own eBUS access, own forecast client. Phase 1b will create `src/lib.rs` to share the thermal solver.
 - **gaps.rs bypasses db.rs** — writes directly to `simulated_samples` and `gap_log` tables
 
 ## Data Flow
@@ -64,27 +68,35 @@ InfluxDB (pi5data:8086, bucket "energy")
                                  └──→ artifacts/thermal/*.json
 ```
 
-### Adaptive heating control path (live on pi5data)
+### Adaptive heating V2 control path (live on pi5data)
 
 ```
+Open-Meteo forecast API (hourly: temp, solar, humidity)
+  └──→ ForecastCache (refreshed every 3600s)
+
 eBUS (ebusd TCP :8888)
   ├── reads: RunDataStatuscode, DisplayedOutsideTemp, Hc1ActualFlowTempDesired,
-  │          Hc1HeatCurve, Z1DayTemp, Z1NightTemp, HwcTempDesired,
-  │          HwcStorageTemp, CurrentCompressorUtil, RunDataElectricPowerConsumption,
-  │          CurrentYieldPower, RunDataFlowTemp, RunDataReturnTemp
-  ├── writes: Hc1HeatCurve, Z1DayTemp, Z1NightTemp, HwcSFMode (+ others confirmed writable)
+  │          Hc1HeatCurve, HwcStorageTemp, CurrentCompressorUtil,
+  │          RunDataElectricPowerConsumption, CurrentYieldPower,
+  │          RunDataFlowTemp, RunDataReturnTemp
+  ├── writes: Hc1HeatCurve (inner loop), Z1OpMode (startup/shutdown),
+  │           HwcSFMode (DHW boost)
   │
 InfluxDB (localhost:8086)
-  ├── reads: Leather temp (emon/emonth2_23/temperature), Aldora temp (zigbee2mqtt/aldora_temp_humid)
+  ├── reads: Leather temp, Aldora temp
   ├── writes: adaptive_heating_mvp measurement (decision logs)
-  │
-  └──→ adaptive-heating-mvp::run_control_cycle()
+
+Control table (model/control-table.json)
+  └── 104-point MWT lookup: (outside_temp, solar) → required MWT
+
+  └──→ Outer loop (900s): forecast → control table → target_flow + initial curve
          │
-         ├── mode-specific control logic (occupied/absence/away/disabled)
-         ├── DHW Cosy-window boost logic
-         │
-         ├──→ InfluxDB (decision metrics)
-         └──→ JSONL file (full decision audit log)
+         └──→ Inner loop (60s): error = target_flow - Hc1ActualFlowTempDesired
+                │                  curve += gain × error (proportional feedback)
+                │
+                ├──→ eBUS write: Hc1HeatCurve
+                ├──→ InfluxDB (decision metrics)
+                └──→ JSONL file (full decision audit log)
 ```
 
 ### Mobile control path
@@ -102,7 +114,7 @@ Phone browser
 The adaptive-heating-mvp assumes ebusd is running on localhost:8888 and responsive. If ebusd is down:
 - reads return errors → `missing_core = true` → control logic skipped
 - writes fail → logged but control cycle continues
-- no retry/reconnect logic beyond the 15-minute cycle
+- no retry/reconnect logic beyond the cycle interval
 
 ### InfluxDB topic naming
 
@@ -115,10 +127,22 @@ The emonth2 uses `_field = "value"` while Zigbee sensors use `_field = "temperat
 
 ### VRC 700 baseline safety net
 
-The VRC 700 timers (`Z1Timer_*`, `HwcTimer_*`) remain programmed as fallback. If the adaptive controller stops writing, the VRC 700 continues operating on its own timer/curve schedule. The kill switch explicitly restores known-good register values.
+On startup: `Z1OpMode=night` (value 3). VRC 700 uses `Z1NightTemp` (19°C) permanently. On shutdown: `Z1OpMode=auto` + `Hc1HeatCurve=0.55`. VRC 700 resumes timer control. Crash without restore: house at 19°C with last curve. Safe.
+
+### ΔT stabilisation contract
+
+The outer loop only uses live flow-return ΔT when `RunDataStatuscode` contains both "Heating" and "Compressor" AND ΔT > 1.0°C. Otherwise falls back to `default_delta_t_c` (4.0°C). This prevents target_flow oscillation when compressor cycles off and flow ≈ return.
+
+### Inner loop floor guard contract
+
+When `Hc1HeatCurve < 0.25`, the inner loop halves its gain and doubles its deadband. This prevents hunting near the curve floor where each 0.01 curve ≈ 0.20°C flow change (verified by measurement).
 
 ### Config duplication
 
 Radiator T50 values exist in both `config.toml` (used by `analysis.rs`) and `data/canonical/thermal_geometry.json` (used by `thermal/geometry.rs`). These must be kept in sync manually.
 
 The adaptive-heating-mvp has its own baseline values in `model/adaptive-heating-mvp.toml` `[baseline]`. These must match the known-good VRC 700 settings documented in `docs/vrc700-settings-audit.md`.
+
+### Control table is a Phase 1 stopgap
+
+`model/control-table.json` is a pre-computed MWT lookup generated by `generate_control_table()` in `display.rs`. Phase 1b will replace this with direct calls to `bisect_mwt_for_room()`. The control table path will then be removed from the config.

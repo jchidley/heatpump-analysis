@@ -1,9 +1,9 @@
 # Repository Overview
 
 ```yaml
-commit: 7b6bfed
+commit: 296afce
 branch: main
-commit_date: 2026-03-31
+commit_date: 2026-04-02
 working_tree: clean
 ```
 
@@ -15,9 +15,9 @@ Three main functions:
 
 1. **Analysis CLI** — syncs monitoring data from emoncms.org to local SQLite, classifies HP operating states (heating/DHW/defrost/idle), produces COP breakdowns, energy analysis, degree-day normalisation, and gas-era comparisons using Polars.
 
-2. **Thermal model** — 13-room thermal network calibrated from Zigbee temperature sensors and InfluxDB data. Calibration, validation, operational analysis, and reproducibility snapshots.
+2. **Thermal model** — 13-room thermal network calibrated from Zigbee temperature sensors and InfluxDB data. Includes equilibrium solver, MWT bisection for control, and DHW session analysis. Calibration, validation, operational analysis, and reproducibility snapshots.
 
-3. **Adaptive heating MVP** — live pilot controller on `pi5data` that reads room sensors, outside temp, HP state, and cylinder state every 15 minutes, makes bounded control decisions by writing to the VRC 700 via eBUS, and logs everything to InfluxDB and JSONL. Mobile controls via z2m-hub.
+3. **Adaptive heating V2** — live model-predictive controller on `pi5data`. Two-loop architecture: outer loop (15 min) uses forecast + thermal model → target flow temp; inner loop (60s) nudges VRC 700 heat curve until `Hc1ActualFlowTempDesired` matches target. Reads eBUS + InfluxDB, writes to VRC 700 via eBUS, logs to InfluxDB and JSONL. Mobile controls via z2m-hub.
 
 Beyond this repo:
 - **z2m-hub** (`~/github/z2m-hub/`) — Zigbee automations, DHW tracking/boost, mobile dashboard, and heating mode control proxy
@@ -33,49 +33,62 @@ Beyond this repo:
 | Axum 0.8 + Tokio | HTTP API for adaptive heating MVP | `Cargo.toml` |
 | TOML (serde + toml) | External configuration for domain constants | `config.toml`, `model/thermal-config.toml`, `model/adaptive-heating-mvp.toml` |
 | clap 4 | CLI argument parsing (derive mode) | `Cargo.toml` |
-| reqwest 0.12 | HTTP client for emoncms REST API, InfluxDB queries, and eBUS reads | `Cargo.toml` |
+| reqwest 0.12 | HTTP client for emoncms REST API, InfluxDB queries, Open-Meteo forecast | `Cargo.toml` |
 | thiserror 2 | Typed domain errors in thermal module | `src/thermal/error.rs` |
 | sha2 | Config/artifact hashing for reproducibility | `Cargo.toml` |
 | chrono | Date/time handling | `Cargo.toml` |
 | tracing + tracing-subscriber | Structured logging for adaptive heating MVP | `Cargo.toml` |
 
-## What Changed Since Last Code-Truth (dfdffb4, 2026-03-30)
+## What Changed Since Last Code-Truth (7b6bfed, 2026-03-31)
 
-### Adaptive heating MVP (2026-03-31)
+42 commits covering:
 
-New binary `src/bin/adaptive-heating-mvp.rs` (900 lines). Live pilot controller deployed as systemd service on `pi5data`. Reads eBUS (via TCP to ebusd) and InfluxDB (room temps), writes VRC 700 registers, logs to InfluxDB and JSONL. HTTP API on port 3031 for mode control. Config in `model/adaptive-heating-mvp.toml`. systemd unit in `deploy/adaptive-heating-mvp.service`.
+### Adaptive heating V2 (2026-03-31 → 2026-04-02)
 
-New dependencies added to `Cargo.toml`: axum, tokio, tracing, tracing-subscriber.
+Complete rewrite from V1 bang-bang to V2 model-predictive control:
+- **Two-loop architecture**: outer loop (900s) uses Open-Meteo forecast + thermal model control table → target flow temp + initial curve guess. Inner loop (60s) proportional feedback on `Hc1ActualFlowTempDesired`.
+- **Z1OpMode=night on startup** (SP=19): eliminates VRC 700 Optimum Start, day/night transitions, and timer interference. Clean restore on shutdown (`Z1OpMode=auto`, `Hc1HeatCurve=0.55`).
+- **Removed flow_offset and room_offset EMAs** — inner loop replaces both. room_offset ran away to +2.18°C overnight.
+- **Phase 1b bug fixes deployed**: inner loop floor guard (halve gain below curve 0.25), ΔT stabilisation (use default ΔT when compressor not actively heating).
+- Source grew from 900 to 1428 lines.
 
-### VRC 700 control surface discovery (2026-03-31)
+### VRC 700 curve resolution discovery (2026-04-02)
 
-~25 writable VRC 700 registers confirmed by live eBUS write + readback. `Hc1HeatCurve` proven to change `Hc1ActualFlowTempDesired` on the live system. Documented in `docs/adaptive-heating-mvp.md`.
+`Hc1HeatCurve` is IEEE 754 float (verified via hex read). 0.01 step = ~0.20°C flow change at SP=19. No quantization to 0.05 steps. Documented across all relevant files.
 
-### z2m-hub patched (2026-03-31)
+### DHW strategy rework (2026-04-02)
 
-Added heating mode proxy routes and mobile dashboard section to `~/github/z2m-hub/src/main.rs`. Proxies to adaptive-heating-mvp on localhost:3031.
+Analysis of 402 AM DHW charges from emoncms data (Oct 2024 – Mar 2026):
+- Eco mode avg 102 min, 40% hit 120-min timeout, 95% incomplete below 2°C
+- Normal mode avg 60 min, 2% timeout, works at all temperatures
+- T1 (Multical, 0.01°C/2s at cylinder top) is far better than HwcStorageTemp (VR10 NTC, 0.5°C/30s at 600mm) for DHW decisions
+- Standing loss: 0.25°C/h T1 drop (not 0.26°C total as previously back-calculated)
+- Preferred strategy: charge at 22:00 Cosy window, monitor T1, top up at 04:00 if needed
+- Cosy windows preferred to reduce battery pressure on cold days, but overnight timing flexible
 
-### Documentation added/updated (2026-03-31)
+### New thermal submodule: dhw_sessions.rs (1086 lines)
 
-- `docs/adaptive-heating-control.md` — strategy, philosophy, room targeting, control theory
-- `docs/adaptive-heating-mvp.md` — frozen MVP spec, implementation status, outstanding work
-- `docs/roadmap.md` — adaptive heating and Pico eBUS sections added
-- `docs/dhw-fixes.md` — hygiene monitoring item added
-- `docs/pico-ebus-plan.md` — cross-reference to adaptive-heating-mvp
-- `docs/dynamic-curve-strategy.md` — deleted (superseded)
-- `AGENTS.md` — new binary, service, ports
+Rust replacement for `scripts/dhw-inflection-detector.py`. Raw 10s data for event detection, HwcStorageTemp tracking during draws.
+
+### Thermal display.rs expanded (78 → 993 lines)
+
+Added `solve_equilibrium_temps()`, `bisect_mwt_for_room()`, `generate_control_table()` — the solver functions that Phase 1b live solver will call from the adaptive controller.
+
+### Heat curve exponent updated
+
+Best fit 1.25 (was 1.27) from expanded 17-point pilot data. VRC 700 formula: `flow = setpoint + curve × (setpoint - outside)^1.25`.
 
 ## Repository Size
 
 | Category | Count |
 |----------|-------|
-| Rust source files (`src/`) | 10 core + 15 thermal submodules (~10,356 lines) |
+| Rust source files (`src/`) | 10 core + 16 thermal submodules (~14,011 lines) |
 | Standalone Rust binaries (`src/bin/`) | 3 (adaptive-heating-mvp, thermal-regression-check, cosy-scheduler [retired]) |
-| Python utility scripts (`model/`) | 2 (~1,654 lines, one-off only) |
-| Shell scripts (`scripts/`) | 3 + 2 services |
-| Domain docs (`docs/`) | 15 |
+| Python utility scripts | 2 (scripts/dhw-inflection-detector.py, scripts/dhw-auto-trigger.py [legacy]) |
+| Shell scripts (`scripts/`) | 3 |
+| Domain docs (`docs/`) | 16 |
 | Code-truth docs (`docs/code-truth/`) | 5 |
 | Config files | 4 (config.toml, thermal-config.toml, adaptive-heating-mvp.toml, regression-thresholds.toml) |
 | Deploy files | 1 (adaptive-heating-mvp.service) |
-| Canonical data | 1 (thermal_geometry.json) |
+| Canonical data | 2 (thermal_geometry.json, control-table.json) |
 | Git submodules | 6 |
