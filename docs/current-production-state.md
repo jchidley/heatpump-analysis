@@ -46,7 +46,8 @@ For secrets handling, see:
 | Overnight strategy | Phase 2 latest-start planner active |
 | Open-Meteo forecast | Designed / configured, not yet fully operationally validated |
 | Door sensors | Hardware in hand, not yet integrated live |
-| Latest reproducible evidence window | `heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` → likely preheat start 03:06, DHW overlap 04:15–05:37, comfort miss 05:35–09:05, Leather 19.63°C by 09:00 |
+| Default historical review command | `date -u`; then `cargo run --bin heatpump-analysis -- heating-history` |
+| Named regression anchor | `heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` → likely preheat start 03:06, DHW overlap 04:15–05:37, comfort miss 05:35–09:05, Leather 19.63°C by 09:00 |
 
 ## DHW: live state
 
@@ -61,7 +62,8 @@ For secrets handling, see:
 | Remaining litres | z2m-hub model + Influx-backed recommended full litres |
 | Manual boost path | `POST /api/dhw/boost` via z2m-hub |
 | Planned next step | T1-based charge triggering instead of pure VRC hysteresis |
-| Latest reproducible evidence window | `dhw-history --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z` → completed 36 min top-up; later `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining |
+| Default historical review command | `date -u`; then `cargo run --bin heatpump-analysis -- dhw-history` |
+| Named regression anchor | `dhw-history --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z` → completed 36 min top-up; later `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining |
 
 ## Deployment paths on pi5data
 

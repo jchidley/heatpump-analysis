@@ -11,9 +11,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use chrono::{NaiveDate, Utc};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use polars::prelude::SerWriter;
 use reqwest::blocking::Client;
+use serde::Serialize;
 use serde_json::Value;
 
 #[derive(Parser)]
@@ -78,6 +79,13 @@ enum ThermalSnapshotCommands {
         #[arg(long)]
         approved_by_human: bool,
     },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum HistoryReviewTarget {
+    Heating,
+    Dhw,
+    Both,
 }
 
 #[derive(Subcommand)]
@@ -221,35 +229,86 @@ enum Commands {
         #[arg(long)]
         human: bool,
     },
-    /// Reconstruct a fused heating-history window from InfluxDB evidence
+    /// Reconstruct fused high-resolution heating-history evidence (defaults to last 7 days ending now)
     HeatingHistory {
         /// Path to thermal calibration config TOML (for InfluxDB connection)
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
-        /// Inclusive start of window (RFC3339, e.g. 2026-04-02T00:00:00Z)
+        /// Inclusive start of window (RFC3339). Defaults to --days before --until/now.
+        #[arg(long)]
+        since: Option<String>,
+        /// Exclusive end of window (RFC3339). Defaults to now.
+        #[arg(long)]
+        until: Option<String>,
+        /// Rolling window size when --since is omitted
+        #[arg(long, default_value_t = 7)]
+        days: u32,
+        /// Human-oriented summary output
+        #[arg(long)]
+        human: bool,
+        /// Print raw InfluxDB Flux profiler output for key queries to stderr
+        #[arg(long)]
+        profile_queries: bool,
+    },
+    /// Reconstruct fused high-resolution DHW-history evidence (defaults to last 7 days ending now)
+    DhwHistory {
+        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+        /// Inclusive start of window (RFC3339). Defaults to --days before --until/now.
+        #[arg(long)]
+        since: Option<String>,
+        /// Exclusive end of window (RFC3339). Defaults to now.
+        #[arg(long)]
+        until: Option<String>,
+        /// Rolling window size when --since is omitted
+        #[arg(long, default_value_t = 7)]
+        days: u32,
+        /// Human-oriented summary output
+        #[arg(long)]
+        human: bool,
+        /// Print raw InfluxDB Flux profiler output for key queries to stderr
+        #[arg(long)]
+        profile_queries: bool,
+    },
+    /// Native-cadence DHW drill-down for one bounded event/window
+    DhwDrilldown {
+        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        #[arg(long, default_value = "model/thermal-config.toml")]
+        config: String,
+        /// Inclusive start of drill-down window (RFC3339)
         #[arg(long)]
         since: String,
-        /// Exclusive end of window (RFC3339, e.g. 2026-04-02T09:00:00Z)
+        /// Exclusive end of drill-down window (RFC3339)
         #[arg(long)]
         until: String,
         /// Human-oriented summary output
         #[arg(long)]
         human: bool,
     },
-    /// Reconstruct a fused DHW-history window from InfluxDB evidence
-    DhwHistory {
+    /// Comprehensive high-resolution historical review (defaults to maximum-detail last 7 days ending now)
+    HistoryReview {
+        /// Domain to review
+        #[arg(value_enum, default_value_t = HistoryReviewTarget::Both)]
+        target: HistoryReviewTarget,
         /// Path to thermal calibration config TOML (for InfluxDB connection)
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
-        /// Inclusive start of window (RFC3339, e.g. 2026-03-21T05:00:00Z)
+        /// Inclusive start of window (RFC3339). Defaults to --days before --until/now.
         #[arg(long)]
-        since: String,
-        /// Exclusive end of window (RFC3339, e.g. 2026-03-21T08:00:00Z)
+        since: Option<String>,
+        /// Exclusive end of window (RFC3339). Defaults to now.
         #[arg(long)]
-        until: String,
+        until: Option<String>,
+        /// Rolling window size when --since is omitted
+        #[arg(long, default_value_t = 7)]
+        days: u32,
         /// Human-oriented summary output
         #[arg(long)]
         human: bool,
+        /// Skip DHW session analysis when reviewing DHW/both
+        #[arg(long)]
+        no_sessions: bool,
     },
 }
 
@@ -703,18 +762,65 @@ fn main() -> Result<()> {
             ref config,
             ref since,
             ref until,
+            days,
             human,
+            profile_queries,
         } => {
-            thermal::heating_history(std::path::Path::new(config), since, until, human)?;
+            let (since, until) = resolve_history_window(since.as_deref(), until.as_deref(), days)?;
+            thermal::heating_history(
+                std::path::Path::new(config),
+                &since,
+                &until,
+                human,
+                profile_queries,
+            )?;
         }
 
         Commands::DhwHistory {
             ref config,
             ref since,
             ref until,
+            days,
+            human,
+            profile_queries,
+        } => {
+            let (since, until) = resolve_history_window(since.as_deref(), until.as_deref(), days)?;
+            thermal::dhw_history(
+                std::path::Path::new(config),
+                &since,
+                &until,
+                human,
+                profile_queries,
+            )?;
+        }
+
+        Commands::DhwDrilldown {
+            ref config,
+            ref since,
+            ref until,
             human,
         } => {
-            thermal::dhw_history(std::path::Path::new(config), since, until, human)?;
+            thermal::dhw_drilldown(std::path::Path::new(config), since, until, human)?;
+        }
+
+        Commands::HistoryReview {
+            target,
+            ref config,
+            ref since,
+            ref until,
+            days,
+            human,
+            no_sessions,
+        } => {
+            let (since, until) = resolve_history_window(since.as_deref(), until.as_deref(), days)?;
+            run_history_review(
+                std::path::Path::new(config),
+                target,
+                &since,
+                &until,
+                human,
+                no_sessions,
+            )?;
         }
     }
 
@@ -748,6 +854,162 @@ struct DhwLiveSummary {
     charging: Option<bool>,
     safe_for_two_showers: Option<bool>,
     warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct HistoryReviewSummary {
+    generated_at: String,
+    target: String,
+    window: HistoryReviewWindow,
+    heating: Option<thermal::HeatingHistorySummary>,
+    dhw: Option<thermal::DhwHistorySummary>,
+    dhw_sessions: Option<Value>,
+    no_sessions: bool,
+}
+
+#[derive(Serialize)]
+struct HistoryReviewWindow {
+    since: String,
+    until: String,
+}
+
+fn run_history_review(
+    config_path: &std::path::Path,
+    target: HistoryReviewTarget,
+    since: &str,
+    until: &str,
+    human: bool,
+    no_sessions: bool,
+) -> Result<()> {
+    if human {
+        let now_utc = Utc::now().to_rfc3339();
+        println!("History review");
+        println!("==============");
+        println!("now_utc: {now_utc}");
+        println!("window: {since} → {until}");
+        println!("target: {:?}", target);
+        println!();
+
+        match target {
+            HistoryReviewTarget::Heating => {
+                thermal::heating_history(config_path, since, until, true, false)?;
+            }
+            HistoryReviewTarget::Dhw => {
+                thermal::dhw_history(config_path, since, until, true, false)?;
+                if !no_sessions {
+                    println!();
+                    println!("DHW sessions");
+                    println!("------------");
+                    let days = history_window_days(since, until)?;
+                    let config_path_str = config_path.to_string_lossy().to_string();
+                    thermal::dhw_sessions(
+                        &config_path_str,
+                        days,
+                        thermal::DhwSessionsOutput::Verbose,
+                        true,
+                    )?;
+                }
+            }
+            HistoryReviewTarget::Both => {
+                thermal::heating_history(config_path, since, until, true, false)?;
+                println!();
+                thermal::dhw_history(config_path, since, until, true, false)?;
+                if !no_sessions {
+                    println!();
+                    println!("DHW sessions");
+                    println!("------------");
+                    let days = history_window_days(since, until)?;
+                    let config_path_str = config_path.to_string_lossy().to_string();
+                    thermal::dhw_sessions(
+                        &config_path_str,
+                        days,
+                        thermal::DhwSessionsOutput::Verbose,
+                        true,
+                    )?;
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    let days = history_window_days(since, until)?;
+    let config_path_str = config_path.to_string_lossy().to_string();
+    let heating = match target {
+        HistoryReviewTarget::Heating | HistoryReviewTarget::Both => {
+            Some(thermal::heating_history_summary(config_path, since, until, false)?)
+        }
+        HistoryReviewTarget::Dhw => None,
+    };
+    let dhw = match target {
+        HistoryReviewTarget::Dhw | HistoryReviewTarget::Both => {
+            Some(thermal::dhw_history_summary(config_path, since, until, false)?)
+        }
+        HistoryReviewTarget::Heating => None,
+    };
+    let dhw_sessions = match target {
+        HistoryReviewTarget::Dhw | HistoryReviewTarget::Both if !no_sessions => {
+            Some(thermal::dhw_sessions_json_summary(&config_path_str, days, true)?)
+        }
+        _ => None,
+    };
+
+    let summary = HistoryReviewSummary {
+        generated_at: Utc::now().to_rfc3339(),
+        target: format!("{:?}", target).to_lowercase(),
+        window: HistoryReviewWindow {
+            since: since.to_string(),
+            until: until.to_string(),
+        },
+        heating,
+        dhw,
+        dhw_sessions,
+        no_sessions,
+    };
+
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+fn history_window_days(since: &str, until: &str) -> Result<u32> {
+    let since_dt = chrono::DateTime::parse_from_rfc3339(since)
+        .with_context(|| format!("invalid since timestamp: {since}"))?;
+    let until_dt = chrono::DateTime::parse_from_rfc3339(until)
+        .with_context(|| format!("invalid until timestamp: {until}"))?;
+    anyhow::ensure!(
+        until_dt > since_dt,
+        "history review window must have since < until"
+    );
+    let seconds = (until_dt - since_dt).num_seconds();
+    let days = ((seconds + 86_399) / 86_400).max(1) as u32;
+    Ok(days)
+}
+
+fn resolve_history_window(
+    since: Option<&str>,
+    until: Option<&str>,
+    days: u32,
+) -> Result<(String, String)> {
+    let until_dt = match until {
+        Some(ts) => chrono::DateTime::parse_from_rfc3339(ts)
+            .with_context(|| format!("invalid --until timestamp: {ts}"))?
+            .with_timezone(&Utc),
+        None => Utc::now(),
+    };
+
+    let since_dt = match since {
+        Some(ts) => chrono::DateTime::parse_from_rfc3339(ts)
+            .with_context(|| format!("invalid --since timestamp: {ts}"))?
+            .with_timezone(&Utc),
+        None => until_dt - chrono::TimeDelta::days(days as i64),
+    };
+
+    anyhow::ensure!(
+        since_dt < until_dt,
+        "history window must have since < until (got {since_dt} >= {until_dt})"
+    );
+
+    Ok((since_dt.to_rfc3339(), until_dt.to_rfc3339()))
 }
 
 fn get_json(client: &Client, url: &str) -> Result<Value> {

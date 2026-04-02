@@ -20,13 +20,16 @@ mod wind;
 
 // Re-export the public entry points consumed by main.rs
 pub use calibration::calibrate;
-pub use dhw_sessions::{dhw_sessions, DhwSessionsOutput};
+pub use dhw_sessions::{dhw_sessions, dhw_sessions_json_summary, DhwSessionsOutput};
 pub use diagnostics::fit_diagnostics;
 pub use display::{
     generate_control_table, print_analyse, print_connections, print_equilibrium, print_moisture,
     print_rooms,
 };
-pub use history::{dhw_history, heating_history};
+pub use history::{
+    dhw_drilldown, dhw_history, dhw_history_summary, heating_history, heating_history_summary,
+    DhwHistorySummary, HeatingHistorySummary,
+};
 pub use operational::operational_validate;
 pub use snapshot::{snapshot_export, snapshot_import};
 pub use validation::validate;

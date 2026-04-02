@@ -21,6 +21,29 @@ This is typically required for:
 - `cargo run --bin heatpump-analysis -- dhw-history ...`
 - `cargo run --bin heatpump-analysis -- dhw-sessions ...`
 
+## Standard investigation window (default for both heating and DHW)
+
+Unless a command forces a different shape, **all historical investigations should default to a rolling 7-day window ending now**.
+
+Always anchor the review with an explicit current UTC timestamp first:
+
+```bash
+date -u
+```
+
+Then use the history commands directly — they now default to **last 7 days ending now**:
+
+```bash
+cargo run --bin heatpump-analysis -- heating-history
+cargo run --bin heatpump-analysis -- dhw-history
+cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json
+```
+
+Use a shorter or custom window only when:
+- the command itself requires it
+- you are drilling into one already-identified event inside the 7-day review
+- you are reproducing a named historical anchor for documentation or regression checking
+
 ## How to use this guide
 
 1. **Decide whether the question is live or historical**
@@ -30,19 +53,35 @@ This is typically required for:
    - heating
    - DHW
    - joined heating + DHW interaction
-3. **Start from a canonical anchor window if one exists**
-   - reuse a known window first when validating or updating a plan
+3. **Start with the rolling 7-day-to-now window**
+   - confirm `date -u` first
+   - use the built-in 7-day-to-now default as the first pass for both heating and DHW
+4. **Replay a named anchor window if needed**
+   - reuse a documented window when validating a named claim or regression case
    - nominate a new window only when no anchor fits the question
-4. **Run the fused command or recipe**
+5. **Only then drill into one specific event if needed**
+   - drill-down is for one nominated charge / overlap / comfort-miss / disturbance event
+   - do not start by pulling native-resolution detail for the whole review window
+   - for DHW-native detail, use `cargo run --bin heatpump-analysis -- dhw-drilldown --since ... --until ...`
+6. **Run the fused command or recipe**
    - prefer `heating-history` / `dhw-history` over manual source stitching
-5. **Check the listed fields and warnings**
+   - treat `history-review` as a summarising layer over those facts, not the primary reconstruction engine
+   - note that `history-review` is currently human-first, while `heating-history` / `dhw-history` are the structured-by-default evidence commands
+7. **Check the listed fields and warnings**
    - separate direct observations, inferred fields, and missing inputs
-6. **Assess confounders before drawing conclusions**
-7. **Classify the result**
+8. **Assess confounders before drawing conclusions**
+9. **Classify the result**
    - confirms the plan
    - weakly supports the plan
    - contradicts the plan
    - inconclusive / needs a cleaner window
+
+## Window review template
+
+When reviewing output, explicitly note which important facts are:
+- **directly observed**
+- **derived / interpreted**
+- **warning-backed because evidence is missing, stale, or incomplete**
 
 ## Window review template
 
@@ -89,8 +128,9 @@ A valid outcome of a review is:
 Run:
 
 ```bash
+date -u
 export INFLUX_TOKEN=$(ak get influxdb)
-cargo run --bin heatpump-analysis -- heating-history --since ... --until ...
+cargo run --bin heatpump-analysis -- heating-history
 ```
 
 Check:
@@ -109,21 +149,33 @@ Interpretation:
 - if target flow, actual desired flow, and curve alternate aggressively, mark the window as a sawtooth candidate — but do not retune from one disturbance-heavy window alone
 - always separate **controller intent**, **actuator response**, and **comfort outcome**
 
-Baseline reproducible example:
+Default review pattern:
 
 ```bash
+date -u
 export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- heating-history
+```
+
+For a named historical regression anchor, you may still use a fixed window such as:
+
+```bash
 cargo run --bin heatpump-analysis -- heating-history \
   --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z
 ```
 
-This window showed:
+That anchor window showed:
 - likely preheat start at **03:06**
-- DHW overlap from **04:15–05:37**
+- DHW overlap from **04:14:30–05:37:00**
 - likely sawtooth behaviour
-- Leather comfort miss from **05:35** onward
+- Leather comfort miss from **05:56:59** onward
 
-Use `history-evidence-plan.md` for why this window matters and what maturity to assign to the resulting conclusion.
+Use `history-evidence-plan.md` for why the anchor matters and what maturity to assign to the resulting conclusion.
+
+Query-efficiency note:
+- treat these commands as **pushdown-first InfluxDB reviews**, not just "Flux-first" wrappers
+- prefer the fused history commands because they are where query shaping, batching, and operator-cost discipline should live
+- official optimisation references: InfluxData, *Optimize Flux queries* (<https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/>) and *Query with the InfluxDB API* (<https://docs.influxdata.com/influxdb/v2/query-data/execute-queries/influx-api/>)
 
 ## DHW workflows
 
@@ -132,8 +184,9 @@ Use `history-evidence-plan.md` for why this window matters and what maturity to 
 Run:
 
 ```bash
+date -u
 export INFLUX_TOKEN=$(ak get influxdb)
-cargo run --bin heatpump-analysis -- dhw-history --since ... --until ...
+cargo run --bin heatpump-analysis -- dhw-history
 ```
 
 Check:
@@ -150,21 +203,28 @@ Interpretation:
 - if `remaining_litres` stays materially positive with high `T1`, the cylinder may still be practically fine for showers even when the lower sensor looks cold
 - if warnings indicate large divergence, treat that as evidence in favour of T1-based trigger logic rather than as a sensor fault by default
 
-Baseline reproducible example:
+Default review pattern:
 
 ```bash
+date -u
 export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- dhw-history
+```
+
+For a named historical regression anchor, you may still use a fixed window such as:
+
+```bash
 cargo run --bin heatpump-analysis -- dhw-history \
   --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z
 ```
 
-This window showed:
+That anchor window showed:
 - a completed **36 min** top-up charge
 - `T1` rising to ~45.5°C
 - later `HwcStorageTemp` falling to **27°C**
 - z2m-hub still estimating **~118 L** remaining
 
-Use `history-evidence-plan.md` for why this window matters and how it fits the broader DHW evidence roadmap.
+Use `history-evidence-plan.md` for why the anchor matters and how it fits the broader DHW evidence roadmap.
 
 ## Joined workflows
 
@@ -173,9 +233,10 @@ Use `history-evidence-plan.md` for why this window matters and how it fits the b
 Run both windows over the same period:
 
 ```bash
+date -u
 export INFLUX_TOKEN=$(ak get influxdb)
-cargo run --bin heatpump-analysis -- heating-history --since ... --until ...
-cargo run --bin heatpump-analysis -- dhw-history --since ... --until ...
+cargo run --bin heatpump-analysis -- heating-history
+cargo run --bin heatpump-analysis -- dhw-history
 ```
 
 Check:

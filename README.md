@@ -61,8 +61,9 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `thermal-snapshot` | Export/import reproducibility snapshots (human-gated) |
 | `thermal-control-table` | Generate MWT control table for adaptive heating |
 | `dhw-sessions` | Analyse DHW draw/charge sessions from InfluxDB |
-| `heating-history` | Reconstruct fused heating-history evidence for a chosen window |
-| `dhw-history` | Reconstruct fused DHW-history evidence for a chosen window |
+| `heating-history` | Reconstruct fused high-resolution heating-history evidence; defaults to last 7 days ending now |
+| `dhw-history` | Reconstruct fused high-resolution DHW-history evidence; defaults to last 7 days ending now |
+| `history-review` | Comprehensive high-resolution 7-day-to-now review for `heating`, `dhw`, or `both` |
 
 ### Options
 
@@ -84,11 +85,19 @@ cargo run -- --from 2024-12-01 --to 2025-02-28 summary
 # Export January data to CSV for spreadsheet analysis
 cargo run -- --from 2025-01-01 --to 2025-01-31 export -o january.csv
 
-# Reconstruct an overnight heating window
+# Standard historical investigation: rolling 7 days ending now
+cargo run --bin heatpump-analysis -- heating-history
+cargo run --bin heatpump-analysis -- dhw-history
+cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json
+
+# One-command comprehensive reviews
+cargo run --bin heatpump-analysis -- history-review heating
+cargo run --bin heatpump-analysis -- history-review dhw
+cargo run --bin heatpump-analysis -- history-review both
+
+# Fixed regression anchor windows when you need a specific known event
 cargo run --bin heatpump-analysis -- heating-history \
   --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z
-
-# Reconstruct a morning DHW charge window
 cargo run --bin heatpump-analysis -- dhw-history \
   --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z
 

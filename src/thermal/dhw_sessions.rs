@@ -836,7 +836,7 @@ fn write_results_to_influx(
 
 // ── JSON output ─────────────────────────────────────────────────────────────
 
-fn output_json(results: &[InflectionResult]) {
+fn json_summary(results: &[InflectionResult]) -> serde_json::Value {
     let capacity: Vec<_> = results
         .iter()
         .filter(|r| r.inflection_category() == InflectionCategory::Capacity)
@@ -877,7 +877,7 @@ fn output_json(results: &[InflectionResult]) {
 
     let rec = compute_recommended_capacity(&capacity);
 
-    let out = serde_json::json!({
+    serde_json::json!({
         "max_usable_litres": if max_usable.is_finite() { Some(max_usable.round()) } else { None },
         "geometric_max_litres": GEOMETRIC_MAX.round(),
         "plug_flow_efficiency": if max_usable.is_finite() { Some((max_usable / GEOMETRIC_MAX * 1000.0).round() / 1000.0) } else { None },
@@ -889,9 +889,7 @@ fn output_json(results: &[InflectionResult]) {
         "showers": showers,
         "taps": taps,
         "total_draws": results.len(),
-    });
-
-    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    })
 }
 
 // ── Human-readable output ───────────────────────────────────────────────────
@@ -1105,12 +1103,11 @@ pub enum DhwSessionsOutput {
 }
 
 /// Run DHW session analysis.
-pub fn dhw_sessions(
+fn analyse_sessions(
     config_path: &str,
     days: u32,
-    output: DhwSessionsOutput,
     no_write: bool,
-) -> ThermalResult<()> {
+) -> ThermalResult<Vec<InflectionResult>> {
     let (_cfg_text, cfg) = super::config::load_thermal_config(std::path::Path::new(config_path))?;
     let token = super::config::resolve_influx_token(&cfg)?;
 
@@ -1136,15 +1133,36 @@ pub fn dhw_sessions(
         eprintln!();
     }
 
-    // Write to InfluxDB unless --no-write
     if !no_write {
         write_results_to_influx(url, org, &token, bucket, &results);
     }
 
+    Ok(results)
+}
+
+pub fn dhw_sessions_json_summary(
+    config_path: &str,
+    days: u32,
+    no_write: bool,
+) -> ThermalResult<serde_json::Value> {
+    let results = analyse_sessions(config_path, days, no_write)?;
+    Ok(json_summary(&results))
+}
+
+pub fn dhw_sessions(
+    config_path: &str,
+    days: u32,
+    output: DhwSessionsOutput,
+    no_write: bool,
+) -> ThermalResult<()> {
+    let results = analyse_sessions(config_path, days, no_write)?;
+
     match output {
         DhwSessionsOutput::Human => output_human(&results, days, false),
         DhwSessionsOutput::Verbose => output_human(&results, days, true),
-        DhwSessionsOutput::Json => output_json(&results),
+        DhwSessionsOutput::Json => {
+            println!("{}", serde_json::to_string_pretty(&json_summary(&results)).unwrap())
+        }
     }
 
     Ok(())

@@ -15,7 +15,9 @@ Use this alongside:
 - Treat live values as **queries**, not documentation.
 - Keep plan docs for policy and interpretation, not daily snapshots.
 - Prefer compact summaries over raw register dumps when checking current state.
+- Prefer the **authoritative live source** for a field over a merely faster one.
 - If the question is about a **past window**, stop and use `history-evidence-workflows.md` instead.
+- Default historical review pattern: confirm `date -u`, then use a rolling **7-day-to-now** window for both heating and DHW, then a named anchor window if needed, and only then narrow to one specific event.
 
 ## Heating controller snapshot
 
@@ -112,6 +114,10 @@ This is useful for:
 - current target flow
 
 Use the CLI `status` command above for the richer on-demand snapshot.
+
+`history-review` is not a live-query tool; use it only when reviewing past windows.
+
+For historical queries, prefer the fused commands that follow the repo's **pushdown-first InfluxDB** approach rather than ad hoc raw-series pulls. Official references: InfluxData, *Optimize Flux queries* (<https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/>) and *Query with the InfluxDB API* (<https://docs.influxdata.com/influxdb/v2/query-data/execute-queries/influx-api/>).
 
 ## DHW live summary
 
@@ -228,7 +234,8 @@ It prints:
   - **controller intent** (`target_flow_c`, mode, action logs)
   - **actuator output** (`Hc1ActualFlowTempDesired`, heat curve)
   - **comfort outcome** (Leather / room temperatures)
-- Reproducible anchor: `heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` showed preheat start at 03:06, DHW overlap 04:15–05:37, and a comfort miss despite the planner running.
+- Default historical fallback: `date -u`, then run `cargo run --bin heatpump-analysis -- heating-history`, then replay a named anchor window if needed, and only then zoom in on one nominated event.
+- Reproducible anchor: `heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` showed preheat start at 03:06, DHW overlap 04:14:30–05:37:00, and a comfort miss from 05:56:59 despite the planner running.
 
 ## DHW quick checks
 
@@ -243,6 +250,7 @@ It prints:
 - Do **not** treat a low `HwcStorageTemp` alone as proof that usable hot water is low.
 - `HwcStorageTemp` is a lower-cylinder control signal, not the household comfort truth.
 - For practical DHW availability, prefer `t1_c`, `remaining_litres`, crossover/charge state, and the `safe_for_two_showers` summary.
+- Default historical fallback: `date -u`, then run `cargo run --bin heatpump-analysis -- dhw-history`, then replay a named anchor window if needed, and only then zoom in on one nominated event.
 - Reproducible example: `dhw-history --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z` showed `T1` ~45°C while `HwcStorageTemp` later fell to 27°C with ~118 L still remaining.
 
 ## Safe fallback commands

@@ -24,11 +24,19 @@ This document is intentionally self-contained apart from those references.
 
 Make the evidence behind the heating and DHW plans **reproducible on demand** for both humans and LLMs.
 
+But reproducibility is not the final product. The final product is better operational decisions.
+The primary historical output should help answer:
+- are the recent **heating** changes working?
+- are the recent **DHW** changes working?
+- what should change next?
+
 The desired end state is:
 1. plan docs explain **what matters and why**
 2. evidence commands reconstruct **what happened** for a chosen period
-3. live-query commands show **what is happening now**
-4. no important historical conclusion depends on undocumented operator memory
+3. review commands state **whether the recent plan changes look successful, mixed, or unsuccessful**
+4. review commands recommend the **next change or next investigation** when the evidence is strong enough
+5. live-query commands show **what is happening now**
+6. no important historical conclusion depends on undocumented operator memory
 
 ## Scope
 
@@ -42,7 +50,35 @@ This page is the **reference / roadmap** for historical evidence:
 
 For step-by-step historical analysis, recipes, and review workflow, use `history-evidence-workflows.md`.
 
+## Experiment-driven use case
+
+The main use case is now:
+- make a heating or DHW change
+- review a bounded recent period
+- decide whether the change is working
+- decide what should change next
+
+So historical evidence should be organised around **experiment evaluation**, not generic retrospective reporting.
+
 ## Principles
+
+### Authority before cadence
+
+Choose the **authoritative source first** for each field, then use that source at its **native cadence** where relevant.
+
+Do not prefer a faster but less authoritative signal over a slower authoritative one.
+
+### Command roles
+
+- `heating-history` is the authoritative fused heating-window command
+- `dhw-history` is the authoritative fused DHW-window command
+- `history-review` is the higher-level composition / reporting layer over those facts
+
+`history-review` should summarise or combine those results, not become a separate raw-series reconstruction engine.
+Its primary job is to produce a **decision-first review**:
+- how is heating working?
+- how is DHW working?
+- what change should be next?
 
 ### Historical evidence should not live mainly in prose
 
@@ -63,7 +99,18 @@ Historical and live commands should default to:
 - stable shapes
 - machine-readable warnings
 
+For the history command family, the current intended default is:
+- `heating-history` / `dhw-history` → structured by default, `--human` optional
+- `history-review` → structured by default, `--human` for the operator-facing wrapper view
+
 Add `--human` when a more readable operator summary is useful.
+
+However, the primary output of `history-review` should not just be machine-readable facts.
+It should be machine-readable **judgement**:
+- verdict
+- supporting evidence
+- caveats / warnings
+- recommended next change
 
 ### Reconstruct from all available sources, not one subsystem
 
@@ -93,6 +140,7 @@ Examples:
 
 Where sources are incomplete or inferred, outputs should include:
 - `warnings`
+- clear distinction between **direct observation**, **derived interpretation**, and **missing / incomplete evidence**
 - optional `source` and `confidence` fields later if needed
 
 ### Use an existing command when it is already good enough
@@ -104,6 +152,29 @@ There are two valid reproducibility paths:
 2. **add a new fused command** when the answer currently requires stitching together multiple tools or undocumented operator knowledge
 
 The standard should be: an LLM should be able to reproduce the evidence from this document and its references without hidden context.
+
+### YAGNI / anti-pattern guardrail
+
+Do not add historical machinery that does not help evaluate heating or DHW experiments.
+
+Low-value work should be deprioritised unless it improves correctness or decisions directly:
+- extra raw fields without changing the eventual verdict
+- broad generic reporting abstractions
+- more query micro-optimisation when current performance is already routine-use acceptable
+- client-side reconstruction that duplicates work InfluxDB should do
+
+Because this system is InfluxDB-backed, avoid these specific anti-patterns:
+- wide raw-series exports followed by Rust-side reconstruction by default
+- per-event query loops where one compact batched query can do the job
+- heavy Flux transformations before pushdown narrowing
+- pretending tiny buckets create real resolution
+
+Concrete cut/defer list for the current roadmap:
+- richer profiler presentation
+- generic reporting features in `history-review`
+- extra machine-readable fields that do not change verdicts or recommendations
+- generic abstractions added before the heating/DHW scorecard shape is stable
+- further optimisation work unless routine review speed becomes a real problem again
 
 ## Historical data sources
 
@@ -286,6 +357,24 @@ Typical role in evidence commands:
 
 ## Existing reproducible evidence
 
+### Standard review protocol
+
+Unless a command forces a different input shape, the default historical review for **both heating and DHW** is:
+1. confirm the current UTC time with `date -u`
+2. run the fused history commands with their built-in 7-day-to-now defaults
+3. replay a documented fixed anchor window when you need to reproduce a named historical case
+4. drill into a narrower event-scoped window only after the 7-day sweep or anchor replay identifies something worth zooming into
+
+Canonical shell pattern:
+
+```bash
+date -u
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- heating-history
+cargo run --bin heatpump-analysis -- dhw-history
+cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json
+```
+
 These already have good-enough commands and should be documented rather than replaced.
 
 | Topic | Command | Notes |
@@ -294,9 +383,11 @@ These already have good-enough commands and should be documented rather than rep
 | Current heating state (human) | `... status --human` | operator view |
 | Current DHW state | `cargo run --bin heatpump-analysis -- dhw-live-status` | structured by default |
 | Current DHW state (human) | `... dhw-live-status --human` | operator view |
-| Historical DHW session analysis | `cargo run --bin heatpump-analysis -- dhw-sessions --days 14 --format json` | inflection / capacity / draw type evidence |
-| Fused heating history | `cargo run --bin heatpump-analysis -- heating-history --since ... --until ...` | structured by default; add `--human` for operator view |
-| Fused DHW history | `cargo run --bin heatpump-analysis -- dhw-history --since ... --until ...` | structured by default; add `--human` for operator view |
+| Historical DHW session analysis | `cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json` | default rolling 7-day inflection / capacity / draw type evidence |
+| Fused heating history | `cargo run --bin heatpump-analysis -- heating-history` | authoritative fused heating-window command; structured by default; defaults to last 7 days ending now; add `--human` for operator view |
+| Fused DHW history | `cargo run --bin heatpump-analysis -- dhw-history` | authoritative fused DHW-window command; structured by default; defaults to last 7 days ending now; add `--human` for operator view |
+| Native DHW drill-down | `cargo run --bin heatpump-analysis -- dhw-drilldown --since ... --until ...` | bounded native-cadence detail for one chosen DHW event/window; first executed architecture milestone from `history-query-architecture-plan.md` |
+| History review layer | `cargo run --bin heatpump-analysis -- history-review heating|dhw|both` | higher-level composition/reporting layer over the fused history commands |
 | Analysis CLI summaries from emoncms history | existing `summary`, `daily`, `hourly`, `cop-by-temp`, `overnight`, `thermal-operational` style commands | useful, but not yet a full long-range reproduction layer |
 | Live multi-system snapshot | `bash scripts/live-state.sh` | convenience wrapper |
 
@@ -320,16 +411,16 @@ These are the first concrete evidence slices that should be reproducible because
 
 ### Heating priorities
 
-1. **Overnight planner window** — did preheat start at the right time, and was Leather ≥ 20°C by 07:00?
-   - baseline reproducible example: `2026-04-02T00:00:00Z` → `2026-04-02T09:00:00Z` via `heating-history` (preheat start 03:06, DHW overlap 04:15–05:37, comfort miss after 05:35)
+1. **Overnight planner window** — first run the rolling 7-day-to-now `heating-history` review, then ask whether preheat started at the right time and whether Leather reached ≥ 20°C by 07:00 on each overnight segment
+   - named regression anchor: `2026-04-02T00:00:00Z` → `2026-04-02T09:00:00Z` via `heating-history` (preheat start 03:06, DHW overlap 04:14:30–05:37:00, comfort miss from 05:56:59)
 2. **DHW-interference window** — did DHW steal preheat or delay comfort recovery?
 3. **Sawtooth window** — did the outer loop and inner loop fight each other, or was the behaviour a valid response to extra load?
 4. **Door-open explanation window** — once door sensors are live, did door state explain the observed room underperformance?
 
 ### DHW priorities
 
-1. **Morning charge window** — how did `T1`, `HwcStorageTemp`, and charge completion evolve during a representative charge?
-   - reproducible example: `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z` via `dhw-history` (completed 36 min top-up, then `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C and z2m-hub still estimated ~118 L remaining)
+1. **Morning charge window** — first run the rolling 7-day-to-now `dhw-history` review, then ask how `T1`, `HwcStorageTemp`, and charge completion evolved during representative charges inside that sweep
+   - named regression anchor: `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z` via `dhw-history` (completed 36 min top-up, then `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C and z2m-hub still estimated ~118 L remaining)
 2. **Low-`T1` trigger window** — did the VRC 700 trigger based on low lower-cylinder temperature even while top-of-cylinder comfort remained high?
 3. **Capacity / inflection window** — where did `T1` start to collapse, and how many usable litres were delivered?
 4. **Eco vs normal comparison window** — how did charge duration, completion, and top temperature differ by inferred mode?
@@ -342,7 +433,7 @@ These are named, reproducible windows that can be reused across plan updates and
 
 | Window | Why it matters | Command |
 |---|---|---|
-| 2026-04-02 00:00–09:00 UTC | First reproducible overnight-planner window: likely preheat start at 03:06, DHW overlap 04:15–05:37, comfort miss from 05:35 onward, and likely sawtooth | `cargo run --bin heatpump-analysis -- heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` |
+| 2026-04-02 00:00–09:00 UTC | First reproducible overnight-planner window: likely preheat start at 03:06, DHW overlap 04:14:30–05:37:00, comfort miss from 05:56:59 onward, and likely sawtooth | `cargo run --bin heatpump-analysis -- heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z` |
 | Next clean overnight without major DHW overlap | Separate planner quality from DHW interference | `heating-history` once a representative window is nominated |
 | Next clean doors-closed daytime window | Check whether sawtooth is real control instability or just disturbance response | `heating-history` once door context is available |
 
@@ -352,7 +443,7 @@ These are named, reproducible windows that can be reused across plan updates and
 |---|---|---|
 | 2026-04-02 05:00–08:00 UTC | Completed morning top-up, then large `T1` / `HwcStorageTemp` divergence while practical hot-water availability remained good | `cargo run --bin heatpump-analysis -- dhw-history --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z` |
 | Next partial / no-crossover charge | Validate partial-charge interpretation and gap-based remaining-litres model | `dhw-history` once a representative window is nominated |
-| Next clear capacity / inflection window | Refresh the usable-litres evidence and collapse point | `cargo run --bin heatpump-analysis -- dhw-sessions --days 14 --format json` |
+| Next clear capacity / inflection window | Refresh the usable-litres evidence and collapse point | `cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json` |
 | Next inferred eco vs normal pair | Compare completion, duration, and peak temperatures by inferred mode | `dhw-history` on nominated windows |
 
 ## Nominated next anchor windows
@@ -386,13 +477,13 @@ Still needed:
 - whether behaviour looked stable or sawtoothed
 
 Current maturity by heating question:
-- **Overnight planner review** — **B moving toward A**. `heating-history` already gives a useful answer; 2026-04-02 00:00–09:00 is the first canonical anchor.
+- **Overnight planner review** — **B moving toward A**. `heating-history` now uses compact pushdown-first / Flux-shaped summaries and Flux/state-change event construction for the main review facts; 2026-04-02 00:00–09:00 is the first canonical anchor.
 - **More overnight data across temperatures** — **B**. Tooling exists, but the evidence base is still small.
 - **Sawtooth diagnosis** — **B**. `heating-history` detects likely sawtooth, but disturbance-free windows are still needed before changing control logic.
 - **Door-open impact** — **C moving toward B**. The doc/model story exists, but door sensors are not yet live in the evidence stream.
 - **Pre-DHW banking** — **B/C**. Heating and DHW commands can already be combined, but joined interpretation still needs a clearer recipe.
 
-Current state: first-pass command exists; some fields are still inferred heuristically.
+Current state: the first pushdown-first / Flux-shaped fused command is now in place for heating-history, with compact summaries, compact controller-event shaping, cadence estimates, and batched compact numeric summaries. `dhw-history` now also batches DHW charge-period summaries and boundary lookups into a few compact multi-result Flux requests, and both `heating-history` and `dhw-history` support `--profile-queries` for raw Flux profiler output. `history-review` now defaults to structured output built from those compact summaries, with `--human` preserving the wrapper view. Testing also exposed two important operational findings: some older `adaptive_heating_mvp` rows omit the `tariff` tag, so controller-row reconstruction must tolerate missing tags; and the embedded `dhw_sessions` add-on is still day-rounded rather than exact-window bounded. The main remaining gap is no longer basic reconstruction; it is that the primary review output is still too fact-first and not decisive enough for the real operator question: are the recent heating and DHW changes working, and what should change next? Remaining work is now mainly exact-window session alignment, decision-first verdicts, explicit experiment scorecards, and boundary-stability coverage for decision-critical fields. Lower-value work such as richer profiler presentation, generic reporting features, and extra raw fields is now explicitly deprioritised.
 
 ## DHW gaps
 
@@ -412,7 +503,22 @@ Current maturity by DHW question:
 - **Eco/normal detection** — **B**. Some windows can be inferred from charge characteristics, but explicit mode evidence is still weak.
 - **Predictive DHW compensation** — **B/C**. Needs joined use of `dhw-history` and `heating-history`, and clearer cross-window recipes.
 
-Current state: first-pass command exists; some evidence may still be incomplete or warning-backed.
+Current state: first-pass command exists; event-boundary semantics have been improved and native-cadence DHW drill-down now exists. Some evidence may still be incomplete or warning-backed, especially around `remaining_litres` boundary attribution and boundary-stability validation.
+
+## Query-efficiency expectations for new commands
+
+New historical commands should follow official InfluxData guidance, not just the repo shorthand of "Flux-first".
+In practice this means:
+- prefer pushdown-capable query structure first (`range`, static `filter`, selector/aggregate)
+- avoid introducing `map`, `pivot`, `union`, or `join` until the candidate row set is already small
+- batch related summaries into fewer `/api/v2/query` calls when one multi-result query can return the same shaped facts
+- profile expensive query shapes before declaring them "good enough"
+
+Primary references:
+- InfluxData, *Optimize Flux queries*: https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/
+- InfluxData, *Query with the InfluxDB API*: https://docs.influxdata.com/influxdb/v2/query-data/execute-queries/influx-api/
+- InfluxData, *Join data in InfluxDB with Flux*: https://docs.influxdata.com/influxdb/v2/query-data/flux/join/
+- InfluxData, *Schema design*: https://docs.influxdata.com/influxdb/v2/write-data/best-practices/schema-design/
 
 ## Minimum provenance expectations for new commands
 
@@ -430,6 +536,11 @@ Later improvements can add per-field provenance, for example:
 
 ## Fused history commands added
 
+The intended command boundary is:
+- `heating-history` produces the fused heating evidence
+- `dhw-history` produces the fused DHW evidence
+- `history-review` summarises or combines those facts and should not become a separate raw-series reconstruction engine
+
 ## `heating-history`
 
 Purpose:
@@ -438,8 +549,10 @@ Purpose:
 Suggested interface:
 
 ```bash
-cargo run --bin heatpump-analysis -- heating-history --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z
-cargo run --bin heatpump-analysis -- heating-history --since ... --until ... --human
+date -u
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- heating-history
+cargo run --bin heatpump-analysis -- heating-history --human
 ```
 
 Default output should be structured.
@@ -472,8 +585,10 @@ Purpose:
 Suggested interface:
 
 ```bash
-cargo run --bin heatpump-analysis -- dhw-history --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z
-cargo run --bin heatpump-analysis -- dhw-history --since ... --until ... --human
+date -u
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- dhw-history
+cargo run --bin heatpump-analysis -- dhw-history --human
 ```
 
 Default output should be structured.
@@ -489,6 +604,8 @@ First-pass fields:
 - charging yes / no over the window
 - warnings for suspicious or incomplete evidence
 
+These fields should use explicit event-boundary semantics where applicable. In particular, `T1` / `HwcStorageTemp` charge summaries and pre/post remaining-litres values should represent charge-boundary facts, not accidental first/last values inside a broader outer review window.
+
 First-pass event detection:
 - no crossover
 - low `T1`
@@ -503,11 +620,11 @@ From `heating-plan.md`, the next steps need the following evidence.
 
 | Next step | Evidence needed | Best command |
 |---|---|---|
-| Review overnight planner run | preheat timing, Leather by 07:00, DHW overlap, target vs actual desired flow. Baseline reproducible example: 2026-04-02 00:00–09:00 showed preheat start 03:06 but DHW overlap 04:15–05:37 and a comfort miss | `heating-history` |
-| More overnight data | repeatable overnight windows across temperatures | `heating-history` |
-| Check outer/inner loop sawtooth | curve vs target vs actual desired flow over time | `heating-history` |
-| Replace `CurrentCompressorUtil` with power-based clamp | compare util vs power vs comfort outcomes | `heating-history` |
-| Pre-DHW banking | quantify comfort dip and recovery around DHW charges | `heating-history` + `dhw-history` |
+| Review overnight planner run | start with rolling 7-day-to-now evidence; then inspect preheat timing, Leather by 07:00, DHW overlap, target vs actual desired flow. Named anchor: 2026-04-02 00:00–09:00 showed preheat start 03:06, DHW overlap 04:14:30–05:37:00, and a comfort miss from 05:56:59 | `heating-history` |
+| More overnight data | repeatable overnight windows across temperatures from the latest 7-day sweep | `heating-history` |
+| Check outer/inner loop sawtooth | curve vs target vs actual desired flow over the latest 7-day sweep, then zoom in | `heating-history` |
+| Replace `CurrentCompressorUtil` with power-based clamp | compare util vs power vs comfort outcomes over the latest 7-day sweep | `heating-history` |
+| Pre-DHW banking | quantify comfort dip and recovery around DHW charges, starting from matched 7-day windows | `heating-history` + `dhw-history` |
 | Door-open impact | door-state overlays with room response | `heating-history` once sensors are live |
 
 ## Link to next steps in the DHW plan
@@ -516,11 +633,11 @@ From `dhw-plan.md`, the next steps need the following evidence.
 
 | Next step | Evidence needed | Best command |
 |---|---|---|
-| T1-based charge decisions | repeated examples of T1 vs HwcStorage vs trigger timing. Baseline reproducible example: 2026-04-02 05:00–08:00 showed `T1` ~45°C with `HwcStorageTemp` at 27°C and ~118 L still remaining after a completed top-up | `dhw-history` |
-| Summer mains temp repeat | monthly T2 / capacity / WWHR shifts | `dhw-sessions` initially, later `dhw-history` summaries |
+| T1-based charge decisions | repeated examples of T1 vs HwcStorage vs trigger timing, starting from the latest rolling 7-day sweep. Named anchor: 2026-04-02 05:00–08:00 showed `T1` ~45°C with `HwcStorageTemp` at 27°C and ~118 L still remaining after a completed top-up | `dhw-history` |
+| Summer mains temp repeat | rolling 7-day T2 / capacity / WWHR review, repeated monthly | `dhw-sessions` initially, later `dhw-history` summaries |
 | Legionella monitor | turnover + sufficiently hot cycle history | later dedicated hygiene command |
-| Eco/normal detection | inferred mode over charge windows | `dhw-history` |
-| Predictive DHW compensation | DHW event linked to heating comfort dip | `dhw-history` + `heating-history` |
+| Eco/normal detection | inferred mode over charge windows from the latest rolling 7-day sweep | `dhw-history` |
+| Predictive DHW compensation | DHW event linked to heating comfort dip, starting from matched 7-day windows | `dhw-history` + `heating-history` |
 
 ## Implementation order
 
@@ -537,6 +654,7 @@ From `dhw-plan.md`, the next steps need the following evidence.
 2. Add `dhw-history` ✅
 3. Make outputs structured by default and `--human` optional ✅
 4. Add explicit window arguments (`--since`, `--until`, later `--hours` if useful) ✅
+5. Use rolling 7-day-to-now windows as the documented default investigation pattern ✅
 
 ### Phase 3 — connect historical claims back to commands
 

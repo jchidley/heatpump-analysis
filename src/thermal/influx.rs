@@ -280,12 +280,27 @@ pub fn query_flux_csv_pub(
     query_flux_csv(influx_url, org, token, flux)
 }
 
+/// Public wrapper to execute Flux and return raw annotated CSV.
+pub fn query_flux_raw_pub(
+    influx_url: &str,
+    org: &str,
+    token: &str,
+    flux: &str,
+) -> ThermalResult<String> {
+    query_flux_raw(influx_url, org, token, flux)
+}
+
 fn query_flux_csv(
     influx_url: &str,
     org: &str,
     token: &str,
     flux: &str,
 ) -> ThermalResult<Vec<HashMap<String, String>>> {
+    let text = query_flux_raw(influx_url, org, token, flux)?;
+    parse_influx_annotated_csv(&text)
+}
+
+fn query_flux_raw(influx_url: &str, org: &str, token: &str, flux: &str) -> ThermalResult<String> {
     let url = format!(
         "{}/api/v2/query?org={}",
         influx_url.trim_end_matches('/'),
@@ -310,7 +325,7 @@ fn query_flux_csv(
         return Err(ThermalError::InfluxQueryFailed { status, body: text });
     }
 
-    parse_influx_annotated_csv(&text)
+    Ok(text)
 }
 
 fn parse_influx_annotated_csv(csv_text: &str) -> ThermalResult<Vec<HashMap<String, String>>> {
@@ -339,10 +354,13 @@ fn parse_influx_annotated_csv(csv_text: &str) -> ThermalResult<Vec<HashMap<Strin
             continue;
         }
 
-        let mut map = HashMap::new();
         let Some(h) = headers.as_ref() else {
             continue;
         };
+        if rec.len() == h.len() && rec.iter().zip(h.iter()).all(|(val, head)| val == head) {
+            continue;
+        }
+        let mut map = HashMap::new();
         for (i, val) in rec.iter().enumerate() {
             if i >= h.len() {
                 continue;

@@ -164,22 +164,59 @@ Every decision logged to:
 
 ### Historical evidence commands
 
-Use these when checking whether the heating strategy actually worked over a chosen window:
+Use these when checking whether the heating strategy actually worked. **Default investigation pattern: rolling 7 days ending now, confirmed with `date -u` first.**
 
 ```bash
-cargo run --bin heatpump-analysis -- heating-history \
-  --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z
-cargo run --bin heatpump-analysis -- heating-history \
-  --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z --human
+date -u
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- heating-history
+cargo run --bin heatpump-analysis -- heating-history --human
 ```
 
-`heating-history` is the fused historical command for this plan.
+Use a narrower fixed window only for drilling into one already-identified event or replaying a named anchor.
+
+`heating-history` is the authoritative fused historical command for this plan.
+
+`history-review heating|both` is the higher-level review layer over that evidence, not a separate raw-series reconstruction path.
+
+For this plan, the key requirement is not just reconstructing the last 7 days. The primary review output should help decide:
+- is the current heating strategy working?
+- if not, what should change next?
+
+So the intended top of the review is a decision-first verdict such as:
+- overnight preheat working / mixed / failing
+- DHW interference material / tolerable / absent
+- sawtooth risk real / unproven / likely confounded
+- recommended next change: hold course, tune overnight logic, or investigate a confounder first
+
+Treat each meaningful control change as a **heating experiment** against this plan.
+A useful review should eventually report:
+- `status`: working | mixed | failing | inconclusive
+- `change_under_review`
+- `success_criteria_checked`
+- `supporting_evidence`
+- `confounders`
+- `recommended_next_change`
+
+For this plan, the most important success criteria are:
+- Leather ≥20°C by 07:00 on relevant mornings
+- waking-hours comfort maintained acceptably
+- DHW overlap not causing material morning comfort loss
+- no strong evidence of harmful sawtooth behaviour
+
+And because the evidence layer is InfluxDB-backed, avoid anti-patterns here too:
+- do not turn heating review back into raw-series export + Rust-side reconstruction
+- do not add metrics that do not help evaluate a heating experiment
+- do not overuse heavy Flux operators before pushdown narrowing
+
+For implementation and future refactors, the intended query style is **pushdown-first InfluxDB querying**: storage-tier `range`/static `filter`/selector work first, heavy Flux operators late, and fewer batched query requests where practical. Official references: InfluxData, *Optimize Flux queries* (<https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/>), *Join data in InfluxDB with Flux* (<https://docs.influxdata.com/influxdb/v2/query-data/flux/join/>), and *Query with the InfluxDB API* (<https://docs.influxdata.com/influxdb/v2/query-data/execute-queries/influx-api/>).
 
 Use `docs/history-evidence-workflows.md` for:
 - step-by-step review workflow
 - confounder handling
 - confidence assessment
 - joined heating + DHW interpretation
+- the standard sequence: rolling 7-day review first, named anchor replay second, event drill-down third
 
 Use `docs/history-evidence-plan.md` for:
 - authority map
@@ -188,6 +225,13 @@ Use `docs/history-evidence-plan.md` for:
 - links from next steps to evidence commands
 
 For current state instead of historical reconstruction, use `docs/live-queries.md`.
+
+When reviewing heating outcomes, keep the evidence split explicit:
+- **controller intent** = adaptive-heating runtime state and JSONL decision logs
+- **actuator truth** = eBUS (`Hc1HeatCurve`, `Hc1ActualFlowTempDesired`, actual flow/return, outside temp)
+- **comfort outcome** = room temperatures, especially Leather and Aldora
+
+These are different layers of truth and should not be collapsed into one inferred signal.
 
 ### Room priorities
 
@@ -243,19 +287,18 @@ Reheat rate for overnight planner: empirical 7500W per °C/h (HP_surplus / 7500 
 
 ### Reproducible evidence check: overnight planner with DHW overlap
 
-A representative first overnight-planner window is now reproducible:
+Default review should start with the rolling 7-day-to-now window above. For regression and documentation, a representative first overnight-planner anchor window is also reproducible:
 
 ```bash
-export INFLUX_TOKEN=$(ak get influxdb)
 cargo run --bin heatpump-analysis -- heating-history \
   --since 2026-04-02T00:00:00Z --until 2026-04-02T09:00:00Z
 ```
 
 Observed in that window:
 - likely preheat start at **03:06**
-- DHW overlap from **04:15–05:37** (**82 min**)
+- DHW overlap from **04:14:30–05:37:00** (**82.5 min**)
 - controller marked likely sawtooth behaviour (`sawtooth_alternations = 5`)
-- Leather entered a comfort-miss period from **05:35–09:05**
+- Leather entered a comfort-miss period from **05:56:59–09:00:00**
 - Leather was **19.63°C** by **09:00**, below the 20–21°C objective
 
 Meaning:
@@ -331,13 +374,13 @@ FRVs deprioritised - HP at capacity on cold days, FRVs redistribute insufficient
 ### Immediate (this week)
 
 1. **Fit leather door sensors** - 2× SONOFF SNZB-04P (in hand). Pair to Z2M, add to controller logging. No control changes - Stage 1 only (see door sensor plan above).
-2. **Review overnight planner runs** - baseline reproducible example is `2026-04-02T00:00:00Z` → `2026-04-02T09:00:00Z` via `heating-history`: preheat started at 03:06, but DHW overlapped 04:15–05:37 and Leather still missed comfort by 07:00. Use this as the first anchor, then compare cleaner windows. Did it coast the right amount? Preheat start on time? Leather ≥20°C by 07:00?
-3. **More overnight data** - reheat rate calibrated from 2 points. Need 10+ nights across 0-15°C range, reconstructed with `heating-history`, especially nights without major DHW overlap.
+2. **Review overnight planner runs** - always start with `date -u` plus a rolling 7-day `heating-history` window ending now, then drill into the fixed 2026-04-02 overnight anchor if needed. Baseline anchor example: preheat started at 03:06, DHW overlapped 04:14:30–05:37:00, and Leather entered a comfort-miss period from 05:56:59. Did it coast the right amount? Preheat start on time? Leather ≥20°C by 07:00?
+3. **More overnight data** - use the rolling 7-day-to-now `heating-history` review as the default evidence sweep. Reheat rate is calibrated from only 2 points; need 10+ nights across 0-15°C range, especially nights without major DHW overlap.
 
 ### Needs evidence first (1-2 weeks of data collection)
 
 4. **Outer/inner loop sawtooth** - observed 2 Apr but data is contaminated by conservatory door open all morning. The inner loop pushing curve up was *compensating* for the door (correct behaviour). Need a clean doors-closed day to confirm whether the sawtooth is a real problem or an artefact. Review with `heating-history`. Do not fix until confirmed on clean data.
-5. **T1-based DHW decisions** - T1 now logged every cycle. Building evidence base: 2 Apr 12:14, VRC 700 triggered DHW at HwcStorageTemp=34°C while T1=43.9°C in Cosy window. Not necessarily wrong (bottom zone cold, afternoon demand, cheap rate). Need pattern across many charge events before changing logic. Review with `dhw-history`, and correlate with `heating-history` when comfort dips are suspected. Blocked on: household shower experiment for minimum acceptable T1.
+5. **T1-based DHW decisions** - T1 now logged every cycle. Building evidence base: 2 Apr 12:14, VRC 700 triggered DHW at HwcStorageTemp=34°C while T1=43.9°C in Cosy window. Not necessarily wrong (bottom zone cold, afternoon demand, cheap rate). Need pattern across many charge events before changing logic. Review first with rolling 7-day-to-now `dhw-history`, and correlate with the same rolling 7-day `heating-history` window when comfort dips are suspected. Blocked on: household shower experiment for minimum acceptable T1.
 6. **Leather response with doors closed** - 2 Apr leather stuck at 19.7°C was fully explained by conservatory door open (~1,500W cold air load). Not a model or controller bug. Door sensors will detect this in future, and later `heating-history` should overlay them once logged.
 
 ### Later (after evidence is in)

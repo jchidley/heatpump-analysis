@@ -67,6 +67,7 @@ It is **not** the best place for full strategy explanations or detailed code map
 
 - **What should happen?** → `heating-plan.md`, `dhw-plan.md`
 - **What is live right now?** → `current-production-state.md`, `live-queries.md`
+- **How should historical review queries be architected?** → `history-query-architecture-plan.md`
 - **How do I reconstruct a past window?** → `history-evidence-workflows.md`
 - **What is the authority map / evidence roadmap?** → `history-evidence-plan.md`
 - **How do I operate/recover it?** → runbooks / `deploy/SECRETS.md`

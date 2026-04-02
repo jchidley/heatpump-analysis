@@ -275,10 +275,9 @@ Preferred overnight strategy:
 
 ### Reproducible evidence check: morning top-up with large sensor divergence
 
-A representative recent window confirms the current policy and reinforces the T1-first direction:
+Default investigation should start with the rolling 7-day-to-now window. For regression and documentation, this representative anchor window confirms the current policy and reinforces the T1-first direction:
 
 ```bash
-export INFLUX_TOKEN=$(ak get influxdb)
 cargo run --bin heatpump-analysis -- dhw-history \
   --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z
 ```
@@ -347,20 +346,59 @@ Strategy:
 
 #### `dhw-history` (fused window reconstruction)
 
+**Default investigation pattern: rolling 7 days ending now, confirmed with `date -u` first.**
+
 ```bash
-cargo run --bin heatpump-analysis -- dhw-history \
-  --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z
-cargo run --bin heatpump-analysis -- dhw-history \
-  --since 2026-03-21T05:00:00Z --until 2026-03-21T08:00:00Z --human
+date -u
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- dhw-history
+cargo run --bin heatpump-analysis -- dhw-history --human
 ```
 
-`dhw-history` is the fused historical command for this plan.
+Use a narrower fixed window only for drilling into one already-identified event or replaying a named anchor.
+
+`dhw-history` is the authoritative fused historical command for this plan.
+
+`history-review dhw|both` is the higher-level review layer over that evidence, not a separate raw-series reconstruction path.
+
+For this plan, the key requirement is not just reconstructing the last 7 days. The primary review output should help decide:
+- is the current DHW strategy working?
+- if not, what should change next?
+
+So the intended top of the review is a decision-first verdict such as:
+- charge timing working / mixed / failing
+- partial evening charges still a problem / no longer a problem
+- 04:00 top-up justified / unnecessary / still uncertain
+- recommended next change: hold timing, change trigger logic, change mode, or gather one specific missing evidence item first
+
+Treat each meaningful schedule / trigger / mode change as a **DHW experiment** against this plan.
+A useful review should eventually report:
+- `status`: working | mixed | failing | inconclusive
+- `change_under_review`
+- `success_criteria_checked`
+- `supporting_evidence`
+- `confounders`
+- `recommended_next_change`
+
+For this plan, the most important success criteria are:
+- reliable hot-water readiness after the chosen charge strategy
+- acceptable full-charge fraction
+- partial evening charges reduced or clearly explained
+- top-up timing aligned with actual need rather than lower-cylinder artefacts
+
+And because the evidence layer is InfluxDB-backed, avoid anti-patterns here too:
+- do not rebuild DHW event logic client-side from wide raw exports by default
+- do not add history fields that do not help evaluate a DHW experiment
+- do not confuse day-rounded session summaries with exact-window evidence
+
+For implementation and future refactors, the intended query style is **pushdown-first InfluxDB querying**: do pushdown-capable filtering/selection early, keep heavy Flux operators late, and batch related summaries into fewer requests where practical. Official references: InfluxData, *Optimize Flux queries* (<https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/>), *Query with the InfluxDB API* (<https://docs.influxdata.com/influxdb/v2/query-data/execute-queries/influx-api/>), and *Schema design* (<https://docs.influxdata.com/influxdb/v2/write-data/best-practices/schema-design/>).
 
 Use `docs/history-evidence-workflows.md` for:
 - step-by-step review workflow
 - confounder handling
 - confidence assessment
 - joined heating + DHW interpretation
+- the standard sequence: rolling 7-day review first, named anchor replay second, event drill-down third
 
 Use `docs/history-evidence-plan.md` for:
 - authority map
@@ -368,12 +406,23 @@ Use `docs/history-evidence-plan.md` for:
 - maturity / gap tracking
 - links from next steps to evidence commands
 
+When reviewing DHW outcomes, keep the evidence split explicit:
+- **authoritative comfort truth** = Multical `T1`
+- **lower-cylinder control truth** = eBUS `HwcStorageTemp`
+- **practical household state** = z2m-hub derived remaining litres / charge state
+- **charge completion / crossover** = operational interpretation derived from those inputs
+
+Compact DHW history summaries should use event-boundary semantics where applicable: charge start/end, `T1` start/peak/end, `HwcStorageTemp` start/peak/end, and pre/post practical-state values should mean the charge boundaries themselves, not arbitrary first/last values inside a larger outer review window.
+
+This has now started to land in the implementation: `dhw-history` uses explicit boundary-aware lookups for charge start/end values, and `dhw-drilldown` provides the bounded native-cadence follow-up path for one chosen DHW window.
+
 #### `dhw-sessions` CLI (capacity + inflection analysis)
 
 ```bash
+date -u
 export INFLUX_TOKEN=$(ak get influxdb)
-cargo run --bin heatpump-analysis -- dhw-sessions --days 14              # verbose (default)
-cargo run --bin heatpump-analysis -- dhw-sessions --days 14 --format json
+cargo run --bin heatpump-analysis -- dhw-sessions --days 7               # verbose (default investigation window)
+cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json
 cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't update InfluxDB
 ```
 
@@ -384,7 +433,7 @@ cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --no-write    # don't
 - Writes `dhw_inflection` measurements + `dhw_capacity` recommended value to InfluxDB
 - Run periodically to keep capacity number fresh as seasonal mains temp changes
 
-Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`. For historical workflow and interpretation, use `docs/history-evidence-workflows.md`.
+Use `dhw-history` when you want a fused explanation for a specific charge window. Use `dhw-drilldown --since ... --until ...` when you want bounded native-cadence detail for one chosen DHW event/window. That drill-down path is now the first executed architecture milestone from `docs/history-query-architecture-plan.md`. Use `dhw-sessions` when you want the deeper capacity / inflection evidence behind this plan. For current live state instead of historical reconstruction, use `docs/live-queries.md`. For historical workflow and interpretation, use `docs/history-evidence-workflows.md`.
 
 ### InfluxDB measurements
 
@@ -428,10 +477,12 @@ The InfluxDB token is the same one Telegraf uses. See `deploy/SECRETS.md` for fr
 
 Development fallback: when `INFLUX_TOKEN` is not set locally, use `ak get influxdb`. Do not hardcode tokens in repo-tracked config.
 
-Run historical analysis from this repo:
+Run historical analysis from this repo using the standard rolling 7-day window:
 
 ```bash
-cargo run --bin heatpump-analysis -- dhw-sessions --days 14
+date -u
+export INFLUX_TOKEN=$(ak get influxdb)
+cargo run --bin heatpump-analysis -- dhw-sessions --days 7
 ```
 
 ## Reference data
@@ -464,8 +515,8 @@ Showers removed 117% of usable hot energy — this is why the cylinder fully dep
 
 ## Next steps
 
-1. **T1-based charge decisions** — trigger DHW from T1 < threshold via `HwcSFMode=load`, not VRC 700 hysteresis. Monitor completion from T1 ≥ 45°C. Review representative windows with `dhw-history` (for example `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z`, where `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining). Blocked on: minimum acceptable T1 household experiment
-2. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions` monthly, then inspect representative charge windows with `dhw-history`
+1. **T1-based charge decisions** — trigger DHW from T1 < threshold via `HwcSFMode=load`, not VRC 700 hysteresis. Monitor completion from T1 ≥ 45°C. Review first with rolling 7-day-to-now `dhw-history`, then use representative anchors such as `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z` where `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining. Blocked on: minimum acceptable T1 household experiment
+2. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions --days 7` as the default rolling review, then inspect representative charge windows with `dhw-history`
 3. **Legionella monitor** — track turnover + temperature history, alert on stagnation risk
 4. **SPA display improvements** — richer status on phone dashboard
 5. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan charge duration accordingly. Investigate if writable via eBUS (VWZ AI B512/B513 registers?) and validate against `dhw-history`
