@@ -246,7 +246,7 @@ Writes to circuit `700`. TCP `localhost:8888` on pi5data.
 | Register | R/W | Notes |
 |---|---|---|
 | `Z1OpMode` | RW | 0=off, 1=auto, 2=day, **3=night** |
-| `Hc1HeatCurve` | RW | 0.10-4.00 |
+| `Hc1HeatCurve` | RW | 0.10-4.00, IEEE 754 float (0.01 step = ~0.20°C flow) |
 | `Hc1ActualFlowTempDesired` | R | **Inner loop feedback** |
 | `DisplayedOutsideTemp` | R | Filtered outside temp |
 | `HwcStorageTemp` | R | Cylinder NTC (reads cold after draws - see DHW section) |
