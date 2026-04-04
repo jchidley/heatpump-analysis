@@ -350,9 +350,27 @@ Meaning:
 
 ### Known limitations
 
-- Reheat rate calibrated from 2 data points (needs more overnight runs)
+- **Model parameters empirically wrong** (see § Empirical vs model parameters below)
 - Solar gain not included in reheat estimate (conservative - will overshoot on sunny mornings)
 - Uses average overnight outside temp (should use hourly forecast from Open-Meteo)
+
+### Empirical vs model parameters
+
+From 35 DHW-cooling and 27 post-DHW reheat segments (15-min resolution, 16 days of ebusd data):
+
+| Parameter | Model | Empirical | Ratio | Effect on planner |
+|---|---|---|---|---|
+| τ (cooling time constant) | 15.0h | ~45h (median 49.7h) | 3× slower | Model overpredicts overnight cooling |
+| K (reheat: surplus W per °C/h) | 7,500 | ~20,600 (median) | 2.7× slower | Model overpredicts reheat speed |
+
+**Net effect**: the two errors reinforce each other. The model thinks the house cools fast AND reheats fast, so it panics and starts heating immediately — but the real house barely cools overnight and also reheats slowly. Result: zero coasting on every night, wasting 3-5h of heating per mild night.
+
+**Caveats on the empirical numbers**:
+- τ=45h is from **short DHW segments** (50-120 min). Surrounding rooms are still warm from recent heating. True overnight τ (5-8h, no heating) may be shorter as surrounding rooms also cool. The calibrated model τ=15h was from genuine overnight cooldowns — it may be more appropriate for overnight use.
+- K=20,600 from post-DHW reheat captures non-linear effects (thermal lag through walls, modulating compressor, radiator warmup time). The model K=7,500 was from 2 preheat-to-morning segments.
+- The reheat segments are mostly mild weather (8-12°C, n=15). Cold-weather reheat data is thin.
+
+**Recommended approach**: rather than blindly replacing model constants, each overnight is now an experiment. Record predicted vs actual cooling and reheat, and converge the parameters over 10+ nights across 0-15°C. The `break` fix (commit e11cbd6) was the immediate blocker — the planner will now actually coast, producing real overnight data to calibrate against.
 
 ## Away mode
 
