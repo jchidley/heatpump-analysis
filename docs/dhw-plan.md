@@ -251,19 +251,7 @@ Charge triggers when HwcStorageTemp drops below 40°C (CylinderChargeHyst=5K, ta
 
 ### Tariff
 
-| Rate | Price | Times |
-|---|---|---|
-| **Cosy** | 13.24p/kWh | 04:00–07:00, 13:00–16:00, 22:00–00:00 |
-| **Mid-peak** | 26.98p/kWh | 00:00–04:00, 07:00–13:00, 19:00–22:00 |
-| **Peak** | 40.48p/kWh | 16:00–19:00 |
-| **Effective (all-in)** | 16.7p/kWh | Total bill ÷ total kWh (last 12 months, inc standing + VAT) |
-| **Marginal (battery-blended)** | 13.9p/kWh | 95% battery coverage × Cosy + 5% grid mid-peak |
-
-Rates are Q2 2026 South East inc VAT (from [mysmartenergy.uk](https://mysmartenergy.uk/Cosy/South-East-England)). The 16.7p all-in effective includes standing charge (52.76p/day = 2.8p/kWh). For scheduling decisions use the **marginal battery-blended rate** (13.9p). 95% of import falls in off-peak. Cost difference between Cosy and marginal battery-blended is only 0.7p/kWh. A 70L shower reheat (~1.5 kWh at COP 3.5) costs <0.3p more off-Cosy vs on-Cosy — negligible.
-
-**When it matters**: cold days when the HP runs flat out for heating, battery depletes before 16:00, and you hit real grid peak at 40.48p. Shifting heavy DHW draws into Cosy windows on those days protects the battery.
-
-**Most of the year**: don't worry about timing.
+See [Heating plan § Tariff](heating-plan.md#tariff) for rates. Key point for DHW: Cosy-vs-battery cost difference is only 0.7p/kWh — a shower reheat costs <0.3p more off-Cosy. **Timing only matters on cold days** when the battery depletes and you hit real grid peak at 40.48p.
 
 ### The midday Cosy window (13:00–16:00)
 
@@ -292,16 +280,7 @@ Preferred overnight strategy:
 - **04:00–07:00** (Cosy): use only when a morning recharge is genuinely required and an earlier completion window is not available or not enough
 - **00:00–04:00** (mid-peak): acceptable when needed to satisfy DHW adequacy before heating, because DHW need outranks tariff optimisation
 
-The key overnight decision is **not a bare T1 threshold**. Morning readiness means having enough practical hot water for a whole number of expected showers at the required temperature. T1 remains the authoritative outlet-temperature signal, but the operational target is a **morning shower budget**, informed by:
-- `T1`
-- derived remaining litres
-- whether the previous charge reached crossover / full-cylinder conditions
-- overnight standby decay
-- observed household morning demand
-- the next required heating start time
-- the predicted DHW charge duration needed to restore morning capacity
-
-Current working assumption: first-thing morning demand is usually **normal showers**, not the occasional long-shower extreme. So the overnight controller should avoid reserving for rare worst-case draws by default; instead it should preserve enough hot water for the expected number of normal morning showers, then keep reviewing real-world data.
+The key overnight decision is **morning shower budget** — enough practical hot water for the expected normal morning showers, not a bare T1 threshold. Inputs: T1, remaining litres, crossover state, standby decay, expected demand, next preheat start, predicted charge duration. Don't reserve for rare worst-case draws.
 
 ### Historical emoncms evidence: could morning DHW have been scheduled earlier?
 
@@ -331,23 +310,9 @@ So the historical evidence supports this priority order:
 2. if more DHW is needed before morning use, try to complete it **before** the heating-critical window
 3. only then optimise for Cosy timing
 
-### VRC 700 / timer-control investigation required
+### VRC 700 sequencing investigation (required)
 
-The earlier-before-heating strategy is **not** just a scheduling idea; it depends on what the VRC 700 can actually express.
-
-This needs explicit investigation in the plan, because the current control surface may not be sufficient by timers alone:
-- the normal DHW/heating timer windows may not allow the required overlap-free sequencing by themselves
-- heating may need to run **outside the normal programmed periods** on some days
-- the required heating start time may vary **day by day** depending on outside temperature and predicted DHW duration
-- a single boost window may be only one hour, but **boosts can be repeated**, so boost-based orchestration remains a viable candidate rather than a dead end
-
-So the real implementation question is:
-- can the VRC 700 timer/settings model express **DHW first, then heating start at a variable time**, day by day?
-- if not, what is the cleanest practical intervention: timer rewrites, operating-mode changes, **repeated boosts**, or direct controller writes?
-
-The investigation should therefore compare these approaches on reliability, controllability, and operational ugliness — not assume that repeated boosts are inherently too limited.
-
-This investigation belongs in the DHW plan because the earlier-morning strategy is only useful if the controller can actually schedule it.
+The earlier-before-heating strategy needs VRC 700 to express **DHW first, then heating at a variable start time** — day by day. Options: timer rewrites, mode changes, repeated boosts, or direct eBUS writes. Not yet investigated.
 
 ## Decisions and rationale
 
@@ -358,32 +323,9 @@ This investigation belongs in the DHW plan because the earlier-morning strategy 
 - **Partial-charge model**: when a charge ends without crossover, z2m-hub uses gap-based interpolation. Future: shower-equivalent calculation (`V × (T_zone − T_cold) / (T_shower − T_cold)`) would give more accurate remaining estimate for two-zone cylinders
 - **"Failed" evening crossover is usually fine**: evening charges that serve concurrent showers deliver 2–3× more thermal energy than quiet charges (see § Evening charges with concurrent draws). Crossover rate is a misleading quality metric — what matters is whether enough hot water remains for the next morning without forcing a preheat-window DHW charge on a cold night
 
-### Reproducible evidence check: morning top-up with large sensor divergence
+### Evidence anchor: T1 vs HwcStorageTemp divergence (2 Apr 05:00–08:00)
 
-Default investigation should start with the rolling 7-day-to-now window. For regression and documentation, this representative anchor window confirms the current policy and reinforces the T1-first direction:
-
-```bash
-cargo run --bin heatpump-analysis -- dhw-history \
-  --since 2026-04-02T05:00:00Z --until 2026-04-02T08:00:00Z
-```
-
-Observed in that window:
-- one completed top-up charge from **05:01–05:37**
-- `T1` rose **42.85 → 45.46°C**
-- `HwcStorageTemp` rose **42.5 → 45.0°C**
-- `crossover = true`
-- by **08:00**, `T1` was still **45.0°C** while `HwcStorageTemp` had fallen to **27.0°C**
-- z2m-hub still estimated **118 L remaining**
-
-Meaning:
-- this is a clean, reproducible example of **why T1 is authoritative for household comfort**
-- a cold lower-cylinder reading does **not** mean the cylinder is practically empty
-- the current **45°C target**, **221 L full-capacity assumption** (updated from 198L after more inflection measurements at 91% plug flow efficiency), and **crossover-as-completion** rule remain consistent with observed behaviour
-- this strengthens the case for **T1-led practical-capacity decisions** and does **not** currently justify changing timer windows
-
-However, the joined heating + DHW review also shows that a DHW charge can be **operationally successful as a hot-water event while still being strategically harmful to space-heating comfort** if it occupies the morning preheat window. So DHW review now needs two separate questions:
-- did the charge restore enough practical hot-water capacity?
-- was the timing compatible with the heating objective?
+After a morning top-up (05:01–05:37, crossover=true), T1 stayed at 45°C while HwcStorageTemp fell to 27°C by 08:00. z2m-hub estimated 118L remaining. Confirms: T1 is authoritative, cold lower-cylinder ≠ empty, 45°C target and 221L capacity are correct. A charge can be successful as a DHW event while harmful to heating if it occupies the preheat window.
 
 ## HP contention with heating
 
@@ -396,11 +338,7 @@ Each DHW charge blocks space heating. Impact by outside temperature:
 | 10°C | ~0.2°C drop, recovers in ~30 min |
 | 15°C | Negligible |
 
-On cold days, schedule DHW at 22:00 (before overnight) to keep 04:00–07:00 clear for preheat. See [Heating plan](heating-plan.md).
-
-For heating review, DHW-active periods should usually be **parked from primary scoring of heating-control effectiveness** because the heat pump is temporarily unavailable to space heating. But they should **not** be discarded: they often provide excellent **cooldown / building-response data** and should be reused there. In other words:
-- **heating-plan ownership**: park DHW-active windows from primary heating-algorithm scoring, but keep them as thermal-response evidence
-- **dhw-plan ownership**: review whether DHW timing/triggering was justified and whether it materially harmed heating comfort
+On cold days, schedule DHW at 22:00 (before overnight) to keep preheat window clear. See [Heating plan](heating-plan.md). DHW-active periods are parked from heating-effectiveness scoring but reused for cooldown/building-response analysis.
 
 ## Hygiene (legionella)
 
@@ -454,75 +392,16 @@ For practical availability, prefer `T1`, remaining litres, and charge state over
 
 #### `dhw-history` (fused window reconstruction)
 
-**Default investigation pattern: rolling 7 days ending now, confirmed with `date -u` first.**
-
 ```bash
 date -u
 export INFLUX_TOKEN=$(ak get influxdb)
-cargo run --bin heatpump-analysis -- dhw-history
-cargo run --bin heatpump-analysis -- dhw-history --human
+cargo run --bin heatpump-analysis -- dhw-history          # JSON (default)
+cargo run --bin heatpump-analysis -- dhw-history --human   # readable
 ```
 
-Use a narrower fixed window only for drilling into one already-identified event or replaying a named anchor.
+Success criteria: reliable hot-water readiness, acceptable crossover rate, evening concurrent draws classified correctly. Each schedule/trigger change is an experiment. See `docs/history-evidence-workflows.md` for review workflow and evidence interpretation.
 
-`dhw-history` is the authoritative fused historical command for this plan.
-
-`history-review dhw|both` is the higher-level review layer over that evidence, not a separate raw-series reconstruction path.
-
-For this plan, the key requirement is not just reconstructing the last 7 days. The primary review output should help decide:
-- is the current DHW strategy working?
-- if not, what should change next?
-
-So the intended top of the review is a decision-first verdict such as:
-- charge timing working / mixed / failing
-- evening charges with concurrent draws: efficient / problematic for next morning / needs mode switch
-- 04:00 top-up justified / unnecessary / still uncertain
-- recommended next change: hold timing, change trigger logic, change mode, or gather one specific missing evidence item first
-
-Treat each meaningful schedule / trigger / mode change as a **DHW experiment** against this plan.
-A useful review should eventually report:
-- `status`: working | mixed | failing | inconclusive
-- `change_under_review`
-- `success_criteria_checked`
-- `supporting_evidence`
-- `confounders`
-- `recommended_next_change`
-
-For this plan, the most important success criteria are:
-- reliable hot-water readiness after the chosen charge strategy
-- acceptable full-charge fraction
-- evening charges with concurrent draws classified correctly (efficient real-time delivery vs genuinely incomplete)
-- top-up timing aligned with actual need rather than lower-cylinder artefacts
-
-And because the evidence layer is InfluxDB-backed, avoid anti-patterns here too:
-- do not rebuild DHW event logic client-side from wide raw exports by default
-- do not add history fields that do not help evaluate a DHW experiment
-- do not confuse day-rounded session summaries with exact-window evidence
-
-For implementation and future refactors, the intended query style is **pushdown-first InfluxDB querying**: do pushdown-capable filtering/selection early, keep heavy Flux operators late, and batch related summaries into fewer requests where practical. Official references: InfluxData, *Optimize Flux queries* (<https://docs.influxdata.com/influxdb/v2/query-data/optimize-queries/>), *Query with the InfluxDB API* (<https://docs.influxdata.com/influxdb/v2/query-data/execute-queries/influx-api/>), and *Schema design* (<https://docs.influxdata.com/influxdb/v2/write-data/best-practices/schema-design/>).
-
-Use `docs/history-evidence-workflows.md` for:
-- step-by-step review workflow
-- confounder handling
-- confidence assessment
-- joined heating + DHW interpretation
-- the standard sequence: rolling 7-day review first, named anchor replay second, event drill-down third
-
-When reviewing DHW outcomes, keep the evidence split explicit:
-- **authoritative comfort truth** = Multical `T1`
-- **lower-cylinder control truth** = eBUS `HwcStorageTemp`
-- **practical household state** = z2m-hub derived remaining litres / charge state
-- **charge completion / crossover** = operational interpretation derived from those inputs
-- **heating interaction truth** = whether the charge occupied a comfort-critical heating window, especially 04:00–07:00
-
-Compact DHW history summaries should use event-boundary semantics where applicable: charge start/end, `T1` start/peak/end, `HwcStorageTemp` start/peak/end, and pre/post practical-state values should mean the charge boundaries themselves, not arbitrary first/last values inside a larger outer review window.
-
-For joined DHW + heating review, DHW-active periods should be handled in two lanes at once:
-- **as DHW events**: did the charge restore enough practical hot-water capacity?
-- **as heating interactions**: was the timing compatible with the heating objective?
-- **as thermal-response evidence**: if space heating was unavailable, did the resulting cooldown segment provide useful building-response data for the heating plan?
-
-This has now started to land in the implementation: `dhw-history` uses explicit boundary-aware lookups for charge start/end values, and `dhw-drilldown` provides the bounded native-cadence follow-up path for one chosen DHW window.
+Evidence layers: T1 (comfort truth), HwcStorageTemp (control truth), z2m-hub remaining litres (practical state), charge crossover (completion). For joined DHW + heating review, classify each charge as DHW event, heating interaction, and thermal-response evidence.
 
 #### `dhw-sessions` CLI (capacity + inflection analysis)
 
@@ -624,24 +503,17 @@ Showers removed 117% of usable hot energy — this is why the cylinder fully dep
 ## Next steps
 
 1. **Morning shower-capacity trigger validation** — use the improved data collection over the coming week to validate a practical overnight top-up rule based on whether the cylinder can support the expected number of **normal morning showers** at acceptable comfort. T1 remains authoritative for outlet temperature, but the trigger should be practical-capacity-led rather than a bare T1 cutoff. Review first with rolling 7-day-to-now `dhw-history`, then inspect representative anchors such as `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z` where `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining.
-2. **VRC 700 sequencing / timer feasibility investigation** — determine how to actually express an earlier-before-heating morning DHW strategy on the real controller. Specifically investigate:
-   - whether heating can be allowed to start outside the normal programmed periods
-   - whether heating start needs day-by-day adjustment
-   - whether DHW and heating timers can be rewritten safely each day
-   - whether repeated boost windows provide a practical sequencing mechanism
-   - whether the best control path is timer rewrites, mode changes, repeated boosts, or direct writes
-   This is now a required design step, not an optional refinement.
-3. **Earlier-before-heating morning scheduling** — when morning DHW is still required, schedule it to complete before the heating-critical preheat window by backing the start time off by the predicted charge duration. Historical emoncms evidence supports this as feasible for most cases: **61.1%** of morning charges fit within 90 minutes, **88.2%** within 120 minutes, and all observed historical morning charges within 150 minutes.
-4. **T1-led overnight top-up logic** — once the morning shower-capacity rule is validated, trigger DHW via `HwcSFMode=load` only when predicted morning capacity is insufficient, not when `HwcStorageTemp` alone looks low. Monitor completion from T1, crossover, and remaining practical capacity.
-5. **DHW/heating interaction accounting** — when reviewing charges, explicitly classify whether each DHW-active interval was:
+2. **VRC 700 sequencing + earlier-morning scheduling** — investigate how to express "DHW first, then heat" on the real controller (timer rewrites, boosts, mode changes, or direct writes). When morning DHW is needed, back off the start time by predicted charge duration so it finishes before preheat. Historical evidence: 61% of charges fit in 90 min, 88% in 120 min, 100% in 150 min.
+3. **T1-led overnight top-up logic** — once the morning shower-capacity rule is validated, trigger DHW via `HwcSFMode=load` only when predicted morning capacity is insufficient, not when `HwcStorageTemp` alone looks low. Monitor completion from T1, crossover, and remaining practical capacity.
+4. **DHW/heating interaction accounting** — when reviewing charges, explicitly classify whether each DHW-active interval was:
    - operationally justified for hot-water readiness
    - strategically harmful to the heating objective
    - useful as cooldown / building-response evidence for the heating plan
-6. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions --days 7` as the default rolling review, then inspect representative charge windows with `dhw-history`
-7. **Legionella monitor** — track turnover + temperature history, alert on stagnation risk
-8. **SPA display improvements** — richer status on phone dashboard
-9. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan charge duration accordingly. Investigate if writable via eBUS (VWZ AI B512/B513 registers?) and validate against `dhw-history`
-10. **Predictive DHW compensation** — 15 min before predicted charge, boost heating target_flow to pre-raise Leather ~0.3°C (cold days only). Correlate `dhw-history` with `heating-history`
+5. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions --days 7` as the default rolling review, then inspect representative charge windows with `dhw-history`
+6. **Legionella monitor** — track turnover + temperature history, alert on stagnation risk
+7. **SPA display improvements** — richer status on phone dashboard
+8. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan charge duration accordingly. Investigate if writable via eBUS (VWZ AI B512/B513 registers?) and validate against `dhw-history`
+9. **Predictive DHW compensation** — 15 min before predicted charge, boost heating target_flow to pre-raise Leather ~0.3°C (cold days only). Correlate `dhw-history` with `heating-history`
 
 ## Revert to autonomous VRC 700 DHW
 
