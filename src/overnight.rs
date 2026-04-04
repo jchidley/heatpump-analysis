@@ -7,8 +7,8 @@
 //! 4. Compare actual vs optimal across the full dataset
 //!
 //! Two-rate tariff model (Octopus Cosy + Tesla Powerwall):
-//!   - Cosy: 14.05p/kWh during 04:00–07:00 (morning) and 13:00–16:00 (afternoon)
-//!   - Blended: 17.0p/kWh all other times (battery absorbs peaks)
+//!   - Cosy: 13.24p/kWh during 04:00–07:00 (morning) and 13:00–16:00 (afternoon)
+//!   - Blended: ~14.0p/kWh all other times (battery absorbs peaks)
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, NaiveDate, Timelike};
@@ -21,11 +21,12 @@ use crate::config::config;
 // ---------------------------------------------------------------------------
 
 /// Cosy rate (p/kWh) — applies during three Cosy windows
-const COSY_RATE: f64 = 14.05;
+/// Q2 2026 South East inc VAT, from mysmartenergy.uk
+const COSY_RATE: f64 = 13.24;
 /// Mid-peak rate (p/kWh) — 00:00–04:00, 07:00–13:00, 19:00–22:00
-const MID_RATE: f64 = 28.65;
+const MID_RATE: f64 = 26.98;
 /// Peak rate (p/kWh) — 16:00–19:00
-const PEAK_RATE: f64 = 42.97;
+const PEAK_RATE: f64 = 40.48;
 
 /// Battery covers ~95% of non-Cosy usage at effective Cosy rate.
 /// The 5% leakage hits grid at mid/peak rates.
@@ -159,9 +160,9 @@ struct SimResult {
 /// Tariff band for a given clock hour.
 #[derive(Clone, Copy, PartialEq)]
 enum TariffBand {
-    Cosy, // 14.05p — 04:00-07:00, 13:00-16:00, 22:00-00:00
-    Mid,  // 28.65p — 00:00-04:00, 07:00-13:00, 19:00-22:00
-    Peak, // 42.97p — 16:00-19:00
+    Cosy, // 13.24p — 04:00-07:00, 13:00-16:00, 22:00-00:00
+    Mid,  // 26.98p — 00:00-04:00, 07:00-13:00, 19:00-22:00
+    Peak, // 40.48p — 16:00-19:00
 }
 
 fn tariff_band(offset_min: u32) -> TariffBand {

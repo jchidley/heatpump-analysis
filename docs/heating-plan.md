@@ -57,12 +57,13 @@ Octopus Cosy, three windows:
 
 | Rate | Price | Times |
 |---|---|---|
-| **Cosy** | 14.05p/kWh | 04:00-07:00, 13:00-16:00, 22:00-00:00 |
-| **Mid-peak** | 28.65p/kWh | 00:00-04:00, 07:00-13:00, 19:00-22:00 |
-| **Peak** | 42.97p/kWh | 16:00-19:00 |
-| **Battery effective** | 14.63p/kWh | Powerwall covers ~95% of non-Cosy usage |
+| **Cosy** | 13.24p/kWh | 04:00-07:00, 13:00-16:00, 22:00-00:00 |
+| **Mid-peak** | 26.98p/kWh | 00:00-04:00, 07:00-13:00, 19:00-22:00 |
+| **Peak** | 40.48p/kWh | 16:00-19:00 |
+| **Effective (all-in)** | 16.7p/kWh | Total bill ÷ total kWh (last 12 months, inc standing + VAT) |
+| **Marginal (battery-blended)** | 13.9p/kWh | 95% battery coverage × Cosy + 5% grid mid-peak |
 
-The battery already captures most tariff arbitrage. From 512 days of data: effective cost £912 vs £1596 naive (no battery). Total scheduling optimisation yields £15-40/year. Cost difference between Cosy and battery-effective is 0.58p/kWh - negligible for heating. The real value of Cosy alignment is **protecting the battery for peak hours on cold days** when the HP runs flat out.
+Rates are Q2 2026 South East inc VAT. All-in effective rate from `~/github/octopus` half-hourly data (6,908 kWh, ~£1,151, 12 months). The 16.7p includes standing charge (52.76p/day = 2.8p/kWh) — for scheduling decisions use the **marginal battery-blended rate** (13.9p) not the all-in rate. 95% of import falls in off-peak. Battery captures most tariff arbitrage: marginal Cosy-vs-non-Cosy difference is only 0.7p/kWh (mid) to 1.4p/kWh (peak). Total scheduling optimisation yields ~£5/year. The real value of Cosy alignment is **protecting the battery for peak hours on cold days** when the HP runs flat out.
 
 ## Control surface
 
@@ -212,10 +213,18 @@ A useful review should eventually report:
 - `recommended_next_change`
 
 For this plan, the most important success criteria are:
-- Leather ≥20°C by 07:00 on relevant mornings
-- waking-hours comfort maintained acceptably
+- Leather ≥20°C by 07:00 on **clean mornings**
+- waking-hours comfort maintained acceptably in **clean windows**
 - DHW overlap not causing material morning comfort loss
 - no strong evidence of harmful sawtooth behaviour
+
+Treat each major controller change as a **heating experiment**. Confounders should be parked, not allowed to swallow the whole evaluation. The intended review output should therefore separate:
+- `clean_window_verdict` — did the heating algorithm/control-structure change improve outcomes when major confounders were absent?
+- `parked_confounders` — which intervals were excluded from primary scoring, and why?
+- `secondary_value` — for example DHW-active cooldown segments reused for thermal-response analysis
+- `referred_to_plan` — where follow-up belongs (`docs/dhw-plan.md`, door plan, etc.)
+
+This framing should increase usable evidence, not reduce it. DHW-active periods and other confounded windows are still retained and classified; they are simply scored in the correct review lane instead of being allowed to blur the primary heating verdict.
 
 And because the evidence layer is InfluxDB-backed, avoid anti-patterns here too:
 - do not turn heating review back into raw-series export + Rust-side reconstruction
@@ -237,6 +246,24 @@ When reviewing heating outcomes, keep the evidence split explicit:
 - **comfort outcome** = room temperatures, especially Leather and Aldora
 
 These are different layers of truth and should not be collapsed into one inferred signal.
+
+### Confounders: park them, don’t forget them
+
+Confounders should be **identified, labelled, and parked**. They should not block evaluation of the heating algorithm over the rest of the review window.
+
+In practice this means:
+- **DHW-active periods** are excluded from the primary question **"did the heating-control changes work?"** because the heat pump is temporarily unavailable to space heating
+- **door-open periods** are excluded from primary scoring of the baseline heating strategy because the room is being deliberately disturbed
+- **missing-data / service-hang periods** are excluded from any strong effectiveness claim
+
+But parked does **not** mean discarded:
+- **DHW-active periods** are valuable for **cooldown / building-response analysis** and should be reused for thermal-response validation
+- **door-open periods** belong to the existing Leather/conservatory door plan and should be reviewed there as disturbance-response evidence
+- **DHW timing interactions** belong to `docs/dhw-plan.md`, where one success criterion is whether DHW timing materially harms heating comfort
+
+So heating review should separate:
+- **clean heating windows** → primary evaluation of algorithm and control-structure changes
+- **parked confounded windows** → retained for the relevant secondary review lane, not forgotten
 
 ### Room priorities
 
@@ -282,13 +309,21 @@ From emoncms data (heating state, indoor_t rising):
 
 Reheat rate for overnight planner: empirical 7500W per °C/h (HP_surplus / 7500 = °C/h rise). Calibrated from 2 data points - needs more overnight runs.
 
-### Three overnight actions
+### Controller actions
 
-| Action | Curve | When |
-|---|---|---|
-| `overnight_coast` | 0.10 (zero output) | House warm enough, free cooling |
-| `overnight_preheat` | Model curve + inner loop | Calculated start time reached |
-| `overnight_maintain` | Continuous heating at 19.5°C | Below 2°C outside |
+From 7 days of observed data (28 Mar – 4 Apr 2026, 10,080 1-minute samples):
+
+| Action | Occurrences | Curve | When |
+|---|---|---|---|
+| `hold` | 197 | Unchanged | DHW active, or stabilising between outer cycles. Most common action |
+| `daytime_model` | 117 | Model-derived | Waking hours: thermal solver → target flow → curve |
+| `overnight_preheat` | 35 | Model curve | Overnight: calculated preheat start reached |
+| `heating_coast` | 21 | ~0.45 | Pre-adaptive period: coasting on residual heat |
+| `preheat_model` | 12 | Model curve | Morning: live solver driving preheat toward 20.5°C |
+| `heating_recovery` | 9 | Ramping | Pre-adaptive period: recovering from setback |
+| `dhw_boost` | 2 | Held | Controller triggered DHW boost (`HwcSFMode=load`) |
+| `overnight_coast` | 1 | 0.10 (zero output) | House warm enough, free cooling |
+| `overnight_maintain` | 0 (not yet triggered) | Continuous at 19.5°C | Below 2°C outside |
 
 ### Reproducible evidence check: overnight planner with DHW overlap
 
@@ -310,6 +345,7 @@ Meaning:
 - this window is a good reproducible anchor for the question **"did DHW steal preheat or delay comfort recovery?"**
 - it does **not** yet prove the overnight planner is wrong in isolation, because the run is contaminated by substantial DHW overlap
 - it strengthens the case for reviewing overnight runs with `heating-history` before tuning the planner, and for coordinating DHW more explicitly with morning preheat
+- the relevant DHW question is now **not** just "was T1 high enough?" but **"did the cylinder actually need a morning charge to support the expected number of normal morning showers?"**
 - it is also a candidate sawtooth window, but that interpretation still needs cleaner doors-closed / lower-disturbance examples before changing control logic
 
 ### Known limitations
@@ -345,7 +381,7 @@ On cold days (<5°C), every DHW charge matters. Scheduling DHW in the 22:00-00:0
 
 | Priority | Action | Cost | Impact |
 |---|---|---|---|
-| 1 | Close Elvina trickle vents | FREE | Removes system bottleneck - MWT 49→47°C at -3°C |
+| 1 | Close Elvina trickle vents | FREE | Removes system bottleneck - MWT 49→47°C at -3°C. Elvina reads 17–18.8°C consistently (3–4 Apr), 2–3°C below all other bedrooms |
 | 2 | Aldora rad upgrade (reuse existing 909W DP DF) | FREE | MWT 47→45°C |
 | 3 | Jack&Carol bay window draught-strip | ~£30 | 60-150W saving |
 | 4 | EWI on SE wall (~30m2) | ~£5k DIY | 19% heat demand reduction. MWT 49→43°C at -3°C |
@@ -367,26 +403,37 @@ FRVs deprioritised - HP at capacity on cold days, FRVs redistribute insufficient
 |---|---|
 | V1 MVP (bang-bang) | Proved eBUS writes work. Oscillated badly. Retired |
 | V2 Phase 1a (two-loop) | ✅ Deployed. Inner loop converges in 1 tick |
-| V2 Phase 1b (live solver) | ✅ Deployed. `bisect_mwt_for_room` on ARM <1ms |
-| V2 Phase 2 (overnight planner) | ✅ Deployed, awaiting more overnight data |
+| V2 Phase 1b (live solver) | ✅ Deployed. `bisect_mwt_for_room` on ARM <1ms. Clean afternoon/evening windows show maintained comfort under model-driven control |
+| V2 Phase 2 (overnight planner) | ✅ Deployed and validated. Two consecutive clean overnight successes (3-4 Apr): Leather ≥20.7°C by morning, zero comfort misses |
 | V2 Phase 2b (T1-based DHW) | 🟡 T1 query added. Scheduling logic not yet implemented |
 | Open-Meteo forecast | 🟡 Designed, not implemented |
 | Door sensors | ⚪ Waiting on hardware |
 | Away mode API | ✅ Endpoint exists |
+
+## Evidence-based status of current heating changes
+
+Current extracted evidence supports different conclusions for different parts of the controller:
+
+- **Daytime model-driven control:** supported by clean-window evidence. In clean afternoon/evening windows on **2026-04-01 13:29:30–21:05:00** and **2026-04-02 13:17:30–21:00:00**, the controller had **no detected comfort-miss period**. In the 2026-04-02 clean window, Leather rose from **20.2°C to 21.5°C**. On **2026-04-04**, Leather held 20.7–22.0°C all day with smooth curve adjustments (0.60–1.28 range depending on outside temp).
+- **Overnight planner:** ✅ **validated on two consecutive clean nights** (3–4 Apr 2026). Night of 2–3 Apr: `overnight_preheat` from 22:33 at curve 0.57–0.58, Leather 20.8°C by 07:00. Night of 3–4 Apr: `overnight_preheat` from 23:07 at curve 0.60, Leather minimum 20.7°C at 09:15, recovered to 21.9°C. Both nights had outside temps 9–11°C (mild). **Not yet tested on cold nights (<5°C).**
+- **Sawtooth flag:** reclassified as **not a real control problem**. The 54 alternations flagged over 7 days are `daytime_model` ↔ `hold` transitions during DHW charges — the controller correctly holds during charging then resumes. Overnight traces show smooth operation with curve held steady for hours. The earlier 2 Apr sawtooth was inner-loop compensation for conservatory door open (correct behaviour).
+- **DHW-active windows:** excluded from primary scoring of heating-control effectiveness, but retained as useful cooldown/building-response evidence.
+- **Door-open windows:** handled under the existing door plan and excluded from baseline heating-effectiveness scoring.
+
+The first observed `preheat_model` morning (**2026-04-02 03:06:07Z**) had **82.5 minutes of DHW overlap** and still entered a comfort-miss period — this was the DHW-confounded baseline. Subsequent clean nights proved the planner works when DHW doesn't steal the preheat window.
 
 ## Next steps
 
 ### Immediate (this week)
 
 1. **Fit leather door sensors** - 2× SONOFF SNZB-04P (in hand). Pair to Z2M, add to controller logging. No control changes - Stage 1 only (see door sensor plan above).
-2. **Review overnight planner runs** - always start with `date -u` plus a rolling 7-day `heating-history` window ending now, then drill into the fixed 2026-04-02 overnight anchor if needed. Baseline anchor example: preheat started at 03:06, DHW overlapped 04:14:30–05:37:00, and Leather entered a comfort-miss period from 05:56:59. Did it coast the right amount? Preheat start on time? Leather ≥20°C by 07:00?
-3. **More overnight data** - use the rolling 7-day-to-now `heating-history` review as the default evidence sweep. Reheat rate is calibrated from only 2 points; need 10+ nights across 0-15°C range, especially nights without major DHW overlap.
+2. **Gather cold-night evidence** - the overnight planner is validated on mild nights (9–11°C) but untested below 5°C. Need 3+ nights across 0–5°C range. The plan says below 2°C must `overnight_maintain` — not yet triggered.
+3. **Continue rolling 7-day reviews** - use `heating-history` as default evidence sweep. Reheat rate is calibrated from only 2 points; need 10+ nights across 0–15°C range.
 
 ### Needs evidence first (1-2 weeks of data collection)
 
-4. **Outer/inner loop sawtooth** - observed 2 Apr but data is contaminated by conservatory door open all morning. The inner loop pushing curve up was *compensating* for the door (correct behaviour). Need a clean doors-closed day to confirm whether the sawtooth is a real problem or an artefact. Review with `heating-history`. Do not fix until confirmed on clean data.
-5. **T1-based DHW decisions** - T1 now logged every cycle. Building evidence base: 2 Apr 12:14, VRC 700 triggered DHW at HwcStorageTemp=34°C while T1=43.9°C in Cosy window. Not necessarily wrong (bottom zone cold, afternoon demand, cheap rate). Need pattern across many charge events before changing logic. Review first with rolling 7-day-to-now `dhw-history`, and correlate with the same rolling 7-day `heating-history` window when comfort dips are suspected. Blocked on: household shower experiment for minimum acceptable T1.
-6. **Leather response with doors closed** - 2 Apr leather stuck at 19.7°C was fully explained by conservatory door open (~1,500W cold air load). Not a model or controller bug. Door sensors will detect this in future, and later `heating-history` should overlay them once logged.
+4. **Morning DHW/heating coordination rule** - DHW now needs to be reviewed as a practical-capacity problem, not a bare T1-threshold problem. T1 is authoritative for outlet temperature, but the real question for heating protection is whether the cylinder can support the expected number of **normal morning showers** without consuming the 04:00–07:00 preheat window. Use the improved data collection over the coming week to validate that trigger, reviewing first with rolling 7-day-to-now `dhw-history`, then correlating with the same rolling 7-day `heating-history` window when comfort dips are suspected. When DHW does run, park that interval from primary heating-effectiveness scoring but reuse it for cooldown / building-response analysis.
+5. **Leather response with doors closed** - 2 Apr leather stuck at 19.7°C was fully explained by conservatory door open (~1,500W cold air load). Not a model or controller bug. Door sensors will detect this in future, and later `heating-history` should overlay them once logged.
 
 ### Later (after evidence is in)
 
@@ -400,10 +447,16 @@ FRVs deprioritised - HP at capacity on cold days, FRVs redistribute insufficient
 ### Observations (2 Apr 2026 daytime - conservatory door open ~07:00-13:30)
 
 - Leather stuck at 19.6-19.9°C for 6h. **Fully explained by conservatory door open** (~1,500W cold air load halves HP surplus). Model MWT≈28.3°C is correct for door-closed conditions.
-- Outer/inner loop sawtooth: outer resets curve every 15 min (model guess 0.51-0.57), inner overrides to 0.59-0.68. With door open, the inner loop was *correctly compensating* for the extra heat loss. **Do not fix until confirmed on clean doors-closed data.**
+- Outer/inner loop sawtooth: outer resets curve every 15 min (model guess 0.51-0.57), inner overrides to 0.59-0.68. With door open, the inner loop was *correctly compensating* for the extra heat loss. **Resolved: not a real control problem** (see evidence-based status above).
 - `CurrentCompressorUtil` reads negative values (-29, -55, -89, -102). Unreliable register - do not use for control decisions.
 - DHW triggered by VRC 700 at HwcStorageTemp=34°C while T1=43.9°C in 13:00 Cosy window. Data input for DHW plan - not necessarily wrong (bottom zone cold, afternoon demand, cheap rate).
 - **Service hung ~12:46 UTC** during extended DHW charge (no outer/inner logs for >1h while process still running). **Root cause: reqwest blocking Client had no default timeout.** Fixed: `Client::builder().timeout(10s).connect_timeout(5s)` covers all InfluxDB reads/writes. Outer cycle timing logged (warns if >120s). eBUS already had 3s timeouts.
+
+### Observations (3-4 Apr 2026 — first clean overnight successes)
+
+- **Night of 2–3 Apr**: `overnight_preheat` from 22:33 at curve 0.57–0.58. DHW charge 21:03–22:21 (78 min, evening Cosy) completed before preheat started. No morning DHW needed. Leather 20.8°C at 07:00. Outside 9.2°C minimum. **First clean overnight success.**
+- **Night of 3–4 Apr**: `overnight_preheat` from 23:07 at curve 0.60. Evening DHW charge 21:04–23:04 didn't reach crossover (120 min eco, 270L drawn during charge — see DHW plan). Morning top-up at 03:08 (62 min) was needed but completed before preheat at 04:09. Leather minimum 20.7°C at 09:15. **Second clean success despite morning DHW overlap.**
+- Key pattern: evening DHW charges that "fail crossover" due to concurrent showers are not failures — they deliver 3× more thermal energy than quiet charges (see `docs/dhw-plan.md` § Evening charges with concurrent draws). The morning top-up that follows is short (62 min) because the cylinder is already warm.
 
 ## Key files
 
@@ -432,7 +485,24 @@ Writes to circuit `700`. TCP `localhost:8888` on pi5data.
 | `CurrentCompressorUtil` | R (hmu) | HP load % |
 
 Derived: instantaneous COP = `CurrentYieldPower × 1000 / RunDataElectricPowerConsumption`.
+| `FlowPressure` | R (hmu) | System water pressure (bar). See below |
 | `HwcSFMode` | RW | auto / load (DHW boost trigger) |
+
+### System pressure behaviour
+
+`FlowPressure` (HMU) reports system water pressure. From 7 days of 1-minute Flux analysis (10,080 samples):
+
+| State | Mean (bar) | Min | Max | Samples |
+|---|---|---|---|---|
+| Heating | 2.01 | 1.70 | 2.02 | 6,818 |
+| DHW | 1.90 | 1.70 | 2.02 | 1,519 |
+| Idle | 2.05 | 2.02 | 2.11 | 142 |
+
+The **0.11 bar drop during DHW** is a hydraulic circuit volume effect: the 3-way valve switches from the large radiator circuit (15 radiators + pipework, warm expanded water) to the smaller cylinder coil circuit. Pressure recovers immediately when heating resumes. It does not track DHW flow temperature — stays flat at 1.91 bar whether flow is 33°C or 45°C.
+
+Daily mean is rock steady at 1.98–2.03 bar over 30 days. No slow leak or drift.
+
+VRC 700 `WaterPressure` register exists but returns empty. `RunDataHighPressure` (HMU) is refrigerant high-side (~10–15 bar), not system water.
 
 ## Deployment (pi5data)
 

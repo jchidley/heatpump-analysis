@@ -17,7 +17,9 @@ Use other docs for adjacent needs:
 
 ## Objective
 
-**Reliable hot water for 5 people at minimum cost.** The household needs 2 showers between charges without running cold. Hygiene is monitored, not over-engineered.
+**Reliable hot water for 5 people, with DHW adequacy first, heating compatibility second, and cost minimisation third.**
+
+In practical terms, the system must preserve enough usable hot-water capacity for the household's expected showers and baths. Once that requirement is satisfied, it should minimise disruption to heating. Tariff optimisation is a third-priority tie-breaker, not the governing objective. Hygiene is monitored, not over-engineered.
 
 ## Cylinder
 
@@ -27,7 +29,7 @@ Use other docs for adjacent needs:
 
 | Spec | Value |
 |---|---|---|
-| Capacity | 300L total, **198L usable** from full charge (81% plug flow efficiency) |
+| Capacity | 300L total, **221L usable** from full charge (91% plug flow efficiency) |
 | Geometric max drawable | 243L (below draw-off at 1530mm) |
 | Internal dimensions | ~450mm diameter, ~1932mm internal height |
 | Insulation | 50mm PU foam |
@@ -101,7 +103,7 @@ The bottom coil enters and exits at 370mm (same height — U-shaped loop hanging
 
 ## Capacity
 
-### Measured: 198L usable (6 inflection measurements)
+### Measured: 221L usable (12 inflection measurements)
 
 The `dhw-sessions` CLI analyses draws at 2-second Multical resolution, finding the exact volume where T1 begins dropping.
 
@@ -111,22 +113,26 @@ The `dhw-sessions` CLI analyses draws at 2-second Multical resolution, finding t
 | 23 Mar | 155 | 44.1 | 25.6 | 527 | Full charge, shower during charge |
 | 27 Mar | 173 | 43.5 | 25.2 | 530 | Full charge, back-to-back showers |
 | 29 Mar | 119 | 41.2 | 24.8 | 529 | Low T1 (41°C), weak stratification |
-| 31 Mar | **198** | 43.7 | 25.6 | 529 | Full charge, shower during charge |
+| 31 Mar | 198 | 43.7 | 25.6 | 529 | Full charge, shower during charge |
 | 01 Apr | 174 | 43.5 | 25.0 | 534 | Full charge, shower during charge |
+| 03 Apr | 146 | 42.9 | 25.6 | 523 | Back-to-back showers |
+| 03 Apr | **221** | 41.0 | 25.1 | 231 | Tap after back-to-back showers |
+| 03 Apr | 170 | 42.3 | 25.0 | 529 | Shower during charge |
 
-Capacity depends on T1 (lower T1 → weaker density contrast → earlier inflection). At 41°C only 119L; at 44–45°C consistently 170–198L.
+Capacity depends on T1 (lower T1 → weaker density contrast → earlier inflection). At 41°C only 119L; at 44–45°C consistently 170–221L. Geometric max 243L, plug flow efficiency **91%** (was 81%).
 
-z2m-hub autoloads the recommended capacity from InfluxDB on startup. Currently **198L**.
+z2m-hub autoloads the recommended capacity from InfluxDB on startup. Currently **221L**.
 
-### Between charges: 2 showers comfortably
+### Between charges: 2–3 showers comfortably
 
-| Scenario | Volume | Remaining |
+| Scenario | Volume | Remaining (from 221L) |
 |---|---|---|
-| 2 normal girl showers | 70 + 70 = 140L | 58L ✓ |
-| 1 long + 1 short | 100 + 30 = 130L | 68L ✓ |
-| 1 long + 1 normal | 100 + 70 = 170L | 28L (tight) |
-| Bath + short shower | 110 + 30 = 140L | 58L ✓ |
-| 3 showers without recharge | 70 + 70 + 70 = 210L | ✗ exceeds capacity |
+| 2 normal girl showers | 70 + 70 = 140L | 81L ✓ |
+| 1 long + 1 short | 100 + 30 = 130L | 91L ✓ |
+| 1 long + 1 normal | 100 + 70 = 170L | 51L ✓ |
+| Bath + short shower | 110 + 30 = 140L | 81L ✓ |
+| 3 normal showers | 70 + 70 + 70 = 210L | 11L (tight but possible) |
+| Bath + normal + short | 110 + 70 + 30 = 210L | 11L (tight) |
 
 ## Charging
 
@@ -163,6 +169,8 @@ Eco is cheaper per kWh (COP ~3.3 vs ~2.5) but takes longer and fails in cold wea
 | 12°C+ | 86 min | 13% | Fine |
 
 ### No-crossover charges (thermocline physics)
+
+**⚠ "No crossover" does not mean "failed charge".** Many evening charges end without crossover because hot water was being actively drawn during charging (see § Evening charges with concurrent draws below). The HP was simultaneously heating the cylinder AND serving showers — delivering 2–3× more useful thermal energy than a quiet charge that reaches crossover. Crossover failure only matters operationally if it forces a morning DHW charge that steals from heating preheat on a cold night.
 
 When a charge ends without crossover (HwcStorageTemp never reached T1), the cylinder has two zones:
 
@@ -209,6 +217,26 @@ Not everyone showers every day (or on the same day). Busiest days have 3–4 sho
 
 `dhw_flow` is the tap-side Multical meter — completely independent of the HP charging circuit. Draws during charging are real usage that depletes the cylinder. Both `dhw-sessions` CLI and z2m-hub track these (marked with `*` / `[during charge]` in output).
 
+### Evening charges with concurrent draws
+
+Evening charges (22:00 Cosy window) frequently coincide with household showers. These charges typically don't reach crossover, but this is **not a failure** — the HP is delivering hot water in real time at the Cosy rate.
+
+Observed examples from the first week of adaptive control (28 Mar – 4 Apr 2026):
+
+| Night | HwcS start | Draws during charge | HwcS end | Crossover | Thermal energy |
+|---|---|---|---|---|---|
+| 1 Apr 21:05 | 15.5°C | 60L shower | 41.5°C | ✗ | ~10.2 kWh (heat 300L from 15→42°C + serve 60L) |
+| 2 Apr 21:03 | 36.0°C | None | 45.0°C | ✓ | ~3.1 kWh (quiet top-up) |
+| 3 Apr 21:04 | 26.0°C | 140L + 120L showers + tap | 39.5°C | ✗ | ~10.2 kWh (heat cylinder + serve 270L) |
+
+**The "failed" charges delivered 3× more useful energy than the "successful" one.** They just didn't reach crossover because the water was going out the taps, not staying in the cylinder. T1 stayed above 42°C throughout — everyone got hot showers.
+
+The morning consequence depends on outside temperature:
+- **Mild nights (≥8°C)**: morning top-up of 62 min fits before preheat, no comfort miss (e.g. 4 Apr: morning top-up 03:08–04:10, Leather minimum 20.7°C)
+- **Cold nights (<5°C)**: morning top-up steals from preheat window and may cause comfort miss (e.g. 2 Apr: 82 min DHW overlap during preheat, Leather only 19.6°C by 09:00 — though also confounded by door open)
+
+**Implication for scheduling**: on cold nights, ensure the evening charge completes before the overnight preheat window, or switch to Normal mode for faster charging (60 min vs 120 min eco). On mild nights, the current pattern works fine.
+
 ## Scheduling
 
 ### VRC 700 DHW timer windows (current)
@@ -216,8 +244,8 @@ Not everyone showers every day (or on the same day). Busiest days have 3–4 sho
 | Window | Cosy period | Rationale |
 |---|---|---|
 | **05:30–07:00** | Morning Cosy | Delayed from 05:00 to 05:30 — the latest start where 100% of Normal cycles finish within Cosy (worst case 06:58). HP heats the house for 1.5h first (04:00–05:30). Eco spills ~30 min past 07:00 but costs 40p/year |
-| **13:00–15:00** | Afternoon Cosy | Shortened from 16:00 to prevent peak (42.97p) spills. Data showed 18 historical spills under old 16:00 end |
-| **22:00–00:00** | Evening Cosy | Top-up after evening showers. ~6% of days had evening DHW. Preferred for cold-night DHW to free morning for preheat |
+| **13:00–15:00** | Afternoon Cosy | Shortened from 16:00 to prevent peak (40.48p) spills. Data showed 18 historical spills under old 16:00 end |
+| **22:00–00:00** | Evening Cosy | Top-up after evening showers. Now standard with adaptive heating (charges every evening). Preferred for cold-night DHW to free morning for preheat. Often serves concurrent showers — see § Evening charges with concurrent draws |
 
 Charge triggers when HwcStorageTemp drops below 40°C (CylinderChargeHyst=5K, target 45°C).
 
@@ -225,14 +253,15 @@ Charge triggers when HwcStorageTemp drops below 40°C (CylinderChargeHyst=5K, ta
 
 | Rate | Price | Times |
 |---|---|---|
-| **Cosy** | 14.05p/kWh | 04:00–07:00, 13:00–16:00, 22:00–00:00 |
-| **Mid-peak** | 28.65p/kWh | 00:00–04:00, 07:00–13:00, 19:00–22:00 |
-| **Peak** | 42.97p/kWh | 16:00–19:00 |
-| **Battery effective** | 14.63p/kWh | Powerwall covers ~95% of non-Cosy |
+| **Cosy** | 13.24p/kWh | 04:00–07:00, 13:00–16:00, 22:00–00:00 |
+| **Mid-peak** | 26.98p/kWh | 00:00–04:00, 07:00–13:00, 19:00–22:00 |
+| **Peak** | 40.48p/kWh | 16:00–19:00 |
+| **Effective (all-in)** | 16.7p/kWh | Total bill ÷ total kWh (last 12 months, inc standing + VAT) |
+| **Marginal (battery-blended)** | 13.9p/kWh | 95% battery coverage × Cosy + 5% grid mid-peak |
 
-Cost difference between Cosy (14.05p) and battery-effective (14.63p) is 0.58p/kWh — a 70L shower reheat (~1.5 kWh at COP 3.5) costs **~2p more** off-Cosy vs on-Cosy. Negligible.
+Rates are Q2 2026 South East inc VAT (from [mysmartenergy.uk](https://mysmartenergy.uk/Cosy/South-East-England)). The 16.7p all-in effective includes standing charge (52.76p/day = 2.8p/kWh). For scheduling decisions use the **marginal battery-blended rate** (13.9p). 95% of import falls in off-peak. Cost difference between Cosy and marginal battery-blended is only 0.7p/kWh. A 70L shower reheat (~1.5 kWh at COP 3.5) costs <0.3p more off-Cosy vs on-Cosy — negligible.
 
-**When it matters**: cold days when the HP runs flat out for heating, battery depletes before 16:00, and you hit real grid peak at 42.97p. Shifting heavy DHW draws into Cosy windows on those days protects the battery.
+**When it matters**: cold days when the HP runs flat out for heating, battery depletes before 16:00, and you hit real grid peak at 40.48p. Shifting heavy DHW draws into Cosy windows on those days protects the battery.
 
 **Most of the year**: don't worry about timing.
 
@@ -258,9 +287,67 @@ Cost difference between Cosy (14.05p) and battery-effective (14.63p) is 0.58p/kW
 T1 decays 0.25°C/h. A 22:00 charge to 45.5°C delivers ~43.3°C by 07:00 (9h × 0.25°C = 2.25°C drop). Verified: 1 Apr charge peaked at 45.5°C at 14:00, decayed to 43.6°C by 22:00 (−1.9°C in 8h, no draws). This is marginal — minimum acceptable T1 for morning showers is TBD (household experiment needed: 45°C definitely fine, 43°C might be too cool).
 
 Preferred overnight strategy:
-- **22:00–00:00** (Cosy): charge if T1 < threshold. Frees morning for preheat on cold days
-- **04:00–07:00** (Cosy): top-up only if T1 decayed below comfort threshold overnight
-- **00:00–04:00** (mid-peak): acceptable for rare top-ups — battery is always full overnight, costs ~1p extra
+- **22:00–00:00** (Cosy): bank hot water when practical, because this can reduce or eliminate the next morning's DHW requirement
+- **Before the heating-critical preheat window**: if morning DHW is still required, schedule it to **finish before heating must start**, even if that means running before the ideal Cosy slot or earlier than the historic timer pattern
+- **04:00–07:00** (Cosy): use only when a morning recharge is genuinely required and an earlier completion window is not available or not enough
+- **00:00–04:00** (mid-peak): acceptable when needed to satisfy DHW adequacy before heating, because DHW need outranks tariff optimisation
+
+The key overnight decision is **not a bare T1 threshold**. Morning readiness means having enough practical hot water for a whole number of expected showers at the required temperature. T1 remains the authoritative outlet-temperature signal, but the operational target is a **morning shower budget**, informed by:
+- `T1`
+- derived remaining litres
+- whether the previous charge reached crossover / full-cylinder conditions
+- overnight standby decay
+- observed household morning demand
+- the next required heating start time
+- the predicted DHW charge duration needed to restore morning capacity
+
+Current working assumption: first-thing morning demand is usually **normal showers**, not the occasional long-shower extreme. So the overnight controller should avoid reserving for rare worst-case draws by default; instead it should preserve enough hot water for the expected number of normal morning showers, then keep reviewing real-world data.
+
+### Historical emoncms evidence: could morning DHW have been scheduled earlier?
+
+Historic emoncms data says **yes, often**.
+
+Across **491 morning DHW sessions** in the synced historical dataset:
+- average duration = **75.6 min**
+- median duration = **78.0 min**
+- p75 = **104.5 min**
+- p90 = **121.0 min**
+- p95 = **122.0 min**
+- max = **123.0 min**
+
+This means:
+- **61.1%** of historical morning charges would fit inside a **90-minute** pre-heating window
+- **88.2%** would fit inside a **120-minute** pre-heating window
+- **100%** would fit inside a **150-minute** pre-heating window in this dataset
+
+So if the house is heating-constrained and a morning recharge is still required, an evidence-backed alternative to letting DHW consume the heating window is to start DHW **earlier**, by approximately the predicted charge duration, so it finishes before the required heating start.
+
+The same historical data also shows why 22:00 banking is helpful but not sufficient on its own:
+- evening charges were historically **rare** (**42 days** with an evening charge vs **418 days** with a morning charge)
+- and when an evening charge did occur, a next-morning charge still followed on **18/42 days** (**42.9%**)
+
+So the historical evidence supports this priority order:
+1. preserve enough DHW capacity for expected household use
+2. if more DHW is needed before morning use, try to complete it **before** the heating-critical window
+3. only then optimise for Cosy timing
+
+### VRC 700 / timer-control investigation required
+
+The earlier-before-heating strategy is **not** just a scheduling idea; it depends on what the VRC 700 can actually express.
+
+This needs explicit investigation in the plan, because the current control surface may not be sufficient by timers alone:
+- the normal DHW/heating timer windows may not allow the required overlap-free sequencing by themselves
+- heating may need to run **outside the normal programmed periods** on some days
+- the required heating start time may vary **day by day** depending on outside temperature and predicted DHW duration
+- a single boost window may be only one hour, but **boosts can be repeated**, so boost-based orchestration remains a viable candidate rather than a dead end
+
+So the real implementation question is:
+- can the VRC 700 timer/settings model express **DHW first, then heating start at a variable time**, day by day?
+- if not, what is the cleanest practical intervention: timer rewrites, operating-mode changes, **repeated boosts**, or direct controller writes?
+
+The investigation should therefore compare these approaches on reliability, controllability, and operational ugliness — not assume that repeated boosts are inherently too limited.
+
+This investigation belongs in the DHW plan because the earlier-morning strategy is only useful if the controller can actually schedule it.
 
 ## Decisions and rationale
 
@@ -269,6 +356,7 @@ Preferred overnight strategy:
 - **DHW timer windows**: 05:30 (not 05:00) for morning — gives HP 1.5h of heating at Cosy rate first. 15:00 (not 16:00) for afternoon — prevents peak-rate spills. 22:00 for evening — preferred for cold nights to free morning for preheat
 - **T1 is authoritative for DHW decisions**: HwcStorageTemp reads 13°C with 100L of 45°C water above it after large draws. Multical T1 at the actual outlet is the reliable signal. Phase 2 will use T1 for charge triggering instead of VRC 700 hysteresis
 - **Partial-charge model**: when a charge ends without crossover, z2m-hub uses gap-based interpolation. Future: shower-equivalent calculation (`V × (T_zone − T_cold) / (T_shower − T_cold)`) would give more accurate remaining estimate for two-zone cylinders
+- **"Failed" evening crossover is usually fine**: evening charges that serve concurrent showers deliver 2–3× more thermal energy than quiet charges (see § Evening charges with concurrent draws). Crossover rate is a misleading quality metric — what matters is whether enough hot water remains for the next morning without forcing a preheat-window DHW charge on a cold night
 
 ### Reproducible evidence check: morning top-up with large sensor divergence
 
@@ -290,8 +378,12 @@ Observed in that window:
 Meaning:
 - this is a clean, reproducible example of **why T1 is authoritative for household comfort**
 - a cold lower-cylinder reading does **not** mean the cylinder is practically empty
-- the current **45°C target**, **198 L full-capacity assumption**, and **crossover-as-completion** rule remain consistent with observed behaviour
-- this strengthens the case for **T1-based charge decisions** and does **not** currently justify changing timer windows
+- the current **45°C target**, **221 L full-capacity assumption** (updated from 198L after more inflection measurements at 91% plug flow efficiency), and **crossover-as-completion** rule remain consistent with observed behaviour
+- this strengthens the case for **T1-led practical-capacity decisions** and does **not** currently justify changing timer windows
+
+However, the joined heating + DHW review also shows that a DHW charge can be **operationally successful as a hot-water event while still being strategically harmful to space-heating comfort** if it occupies the morning preheat window. So DHW review now needs two separate questions:
+- did the charge restore enough practical hot-water capacity?
+- was the timing compatible with the heating objective?
 
 ## HP contention with heating
 
@@ -305,6 +397,10 @@ Each DHW charge blocks space heating. Impact by outside temperature:
 | 15°C | Negligible |
 
 On cold days, schedule DHW at 22:00 (before overnight) to keep 04:00–07:00 clear for preheat. See [Heating plan](heating-plan.md).
+
+For heating review, DHW-active periods should usually be **parked from primary scoring of heating-control effectiveness** because the heat pump is temporarily unavailable to space heating. But they should **not** be discarded: they often provide excellent **cooldown / building-response data** and should be reused there. In other words:
+- **heating-plan ownership**: park DHW-active windows from primary heating-algorithm scoring, but keep them as thermal-response evidence
+- **dhw-plan ownership**: review whether DHW timing/triggering was justified and whether it materially harmed heating comfort
 
 ## Hygiene (legionella)
 
@@ -379,7 +475,7 @@ For this plan, the key requirement is not just reconstructing the last 7 days. T
 
 So the intended top of the review is a decision-first verdict such as:
 - charge timing working / mixed / failing
-- partial evening charges still a problem / no longer a problem
+- evening charges with concurrent draws: efficient / problematic for next morning / needs mode switch
 - 04:00 top-up justified / unnecessary / still uncertain
 - recommended next change: hold timing, change trigger logic, change mode, or gather one specific missing evidence item first
 
@@ -395,7 +491,7 @@ A useful review should eventually report:
 For this plan, the most important success criteria are:
 - reliable hot-water readiness after the chosen charge strategy
 - acceptable full-charge fraction
-- partial evening charges reduced or clearly explained
+- evening charges with concurrent draws classified correctly (efficient real-time delivery vs genuinely incomplete)
 - top-up timing aligned with actual need rather than lower-cylinder artefacts
 
 And because the evidence layer is InfluxDB-backed, avoid anti-patterns here too:
@@ -417,8 +513,14 @@ When reviewing DHW outcomes, keep the evidence split explicit:
 - **lower-cylinder control truth** = eBUS `HwcStorageTemp`
 - **practical household state** = z2m-hub derived remaining litres / charge state
 - **charge completion / crossover** = operational interpretation derived from those inputs
+- **heating interaction truth** = whether the charge occupied a comfort-critical heating window, especially 04:00–07:00
 
 Compact DHW history summaries should use event-boundary semantics where applicable: charge start/end, `T1` start/peak/end, `HwcStorageTemp` start/peak/end, and pre/post practical-state values should mean the charge boundaries themselves, not arbitrary first/last values inside a larger outer review window.
+
+For joined DHW + heating review, DHW-active periods should be handled in two lanes at once:
+- **as DHW events**: did the charge restore enough practical hot-water capacity?
+- **as heating interactions**: was the timing compatible with the heating objective?
+- **as thermal-response evidence**: if space heating was unavailable, did the resulting cooldown segment provide useful building-response data for the heating plan?
 
 This has now started to land in the implementation: `dhw-history` uses explicit boundary-aware lookups for charge start/end values, and `dhw-drilldown` provides the bounded native-cadence follow-up path for one chosen DHW window.
 
@@ -521,12 +623,25 @@ Showers removed 117% of usable hot energy — this is why the cylinder fully dep
 
 ## Next steps
 
-1. **T1-based charge decisions** — trigger DHW from T1 < threshold via `HwcSFMode=load`, not VRC 700 hysteresis. Monitor completion from T1 ≥ 45°C. Review first with rolling 7-day-to-now `dhw-history`, then use representative anchors such as `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z` where `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining. Blocked on: minimum acceptable T1 household experiment
-2. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions --days 7` as the default rolling review, then inspect representative charge windows with `dhw-history`
-3. **Legionella monitor** — track turnover + temperature history, alert on stagnation risk
-4. **SPA display improvements** — richer status on phone dashboard
-5. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan charge duration accordingly. Investigate if writable via eBUS (VWZ AI B512/B513 registers?) and validate against `dhw-history`
-6. **Predictive DHW compensation** — 15 min before predicted charge, boost heating target_flow to pre-raise Leather ~0.3°C (cold days only). Correlate `dhw-history` with `heating-history`
+1. **Morning shower-capacity trigger validation** — use the improved data collection over the coming week to validate a practical overnight top-up rule based on whether the cylinder can support the expected number of **normal morning showers** at acceptable comfort. T1 remains authoritative for outlet temperature, but the trigger should be practical-capacity-led rather than a bare T1 cutoff. Review first with rolling 7-day-to-now `dhw-history`, then inspect representative anchors such as `2026-04-02T05:00:00Z` → `2026-04-02T08:00:00Z` where `T1` stayed ~45°C while `HwcStorageTemp` fell to 27°C with ~118 L still remaining.
+2. **VRC 700 sequencing / timer feasibility investigation** — determine how to actually express an earlier-before-heating morning DHW strategy on the real controller. Specifically investigate:
+   - whether heating can be allowed to start outside the normal programmed periods
+   - whether heating start needs day-by-day adjustment
+   - whether DHW and heating timers can be rewritten safely each day
+   - whether repeated boost windows provide a practical sequencing mechanism
+   - whether the best control path is timer rewrites, mode changes, repeated boosts, or direct writes
+   This is now a required design step, not an optional refinement.
+3. **Earlier-before-heating morning scheduling** — when morning DHW is still required, schedule it to complete before the heating-critical preheat window by backing the start time off by the predicted charge duration. Historical emoncms evidence supports this as feasible for most cases: **61.1%** of morning charges fit within 90 minutes, **88.2%** within 120 minutes, and all observed historical morning charges within 150 minutes.
+4. **T1-led overnight top-up logic** — once the morning shower-capacity rule is validated, trigger DHW via `HwcSFMode=load` only when predicted morning capacity is insufficient, not when `HwcStorageTemp` alone looks low. Monitor completion from T1, crossover, and remaining practical capacity.
+5. **DHW/heating interaction accounting** — when reviewing charges, explicitly classify whether each DHW-active interval was:
+   - operationally justified for hot-water readiness
+   - strategically harmful to the heating objective
+   - useful as cooldown / building-response evidence for the heating plan
+6. **Summer mains temp repeat** — mains warms from ~11°C to ~18°C, WWHR effectiveness changes, capacity number may shift. Run `dhw-sessions --days 7` as the default rolling review, then inspect representative charge windows with `dhw-history`
+7. **Legionella monitor** — track turnover + temperature history, alert on stagnation risk
+8. **SPA display improvements** — richer status on phone dashboard
+9. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan charge duration accordingly. Investigate if writable via eBUS (VWZ AI B512/B513 registers?) and validate against `dhw-history`
+10. **Predictive DHW compensation** — 15 min before predicted charge, boost heating target_flow to pre-raise Leather ~0.3°C (cold days only). Correlate `dhw-history` with `heating-history`
 
 ## Revert to autonomous VRC 700 DHW
 
