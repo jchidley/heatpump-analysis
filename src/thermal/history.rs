@@ -291,7 +291,7 @@ pub fn heating_history_summary(
         COMFORT_MIN_C,
     )?
     .into_iter()
-    .filter(|p| period_intersects_waking_hours(p, &since_dt, &until_dt))
+    .flat_map(|p| clip_period_to_waking_hours(&p))
     .collect::<Vec<_>>();
     let dhw_overlap_periods = query_measurement_above_threshold_periods_compact(
         &ctx,
@@ -1832,25 +1832,54 @@ fn period_duration_seconds(period: &Period) -> i64 {
     (end - start).num_seconds()
 }
 
-fn period_intersects_waking_hours(
-    period: &Period,
-    _since: &DateTime<FixedOffset>,
-    _until: &DateTime<FixedOffset>,
-) -> bool {
+/// Clip a period to waking hours (07:00–23:00), potentially splitting across
+/// midnight boundaries. Returns zero or more periods representing only the
+/// waking-hours portion.
+fn clip_period_to_waking_hours(period: &Period) -> Vec<Period> {
     let Ok(start) = parse_dt(&period.start) else {
-        return false;
+        return vec![];
     };
     let Ok(end) = parse_dt(&period.end) else {
-        return false;
+        return vec![];
     };
-    let mut current = start;
-    while current < end {
-        if is_waking_time(current.time()) {
-            return true;
-        }
-        current += chrono::TimeDelta::minutes(5);
+    if end <= start {
+        return vec![];
     }
-    false
+
+    let mut result = Vec::new();
+    // Walk day-by-day through the period
+    let mut day_start = start.date_naive();
+    let end_date = end.date_naive();
+    let tz = *start.offset();
+
+    while day_start <= end_date {
+        let waking_start = day_start
+            .and_hms_opt(WAKING_START_HOUR, 0, 0)
+            .unwrap()
+            .and_local_timezone(tz)
+            .single();
+        let waking_end = day_start
+            .and_hms_opt(WAKING_END_HOUR, 0, 0)
+            .unwrap()
+            .and_local_timezone(tz)
+            .single();
+
+        if let (Some(ws), Some(we)) = (waking_start, waking_end) {
+            let clipped_start = start.max(ws);
+            let clipped_end = end.min(we);
+            if clipped_start < clipped_end {
+                let dur_min =
+                    (clipped_end - clipped_start).num_seconds() as f64 / 60.0;
+                result.push(Period {
+                    start: clipped_start.to_rfc3339(),
+                    end: clipped_end.to_rfc3339(),
+                    duration_minutes: dur_min,
+                });
+            }
+        }
+        day_start += chrono::Duration::days(1);
+    }
+    result
 }
 
 fn is_waking_time(time: NaiveTime) -> bool {
