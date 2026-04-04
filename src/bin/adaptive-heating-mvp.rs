@@ -1169,6 +1169,7 @@ fn plan_overnight(
             if reheat_h + 0.5 <= remaining_hours {
                 best_start = coast_hours;
                 best_projected = projected;
+                break; // Found the latest safe start — maximum coast time
             }
         }
         // If reheat not possible (deficit) or too slow, try earlier start
