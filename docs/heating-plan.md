@@ -365,12 +365,12 @@ From 35 DHW-cooling and 27 post-DHW reheat segments (15-min resolution, 16 days 
 
 **Net effect**: the two errors reinforce each other. The model thinks the house cools fast AND reheats fast, so it panics and starts heating immediately — but the real house barely cools overnight and also reheats slowly. Result: zero coasting on every night, wasting 3-5h of heating per mild night.
 
-**Caveats on the empirical numbers**:
-- τ=45h is from **short DHW segments** (50-120 min). Surrounding rooms are still warm from recent heating. True overnight τ (5-8h, no heating) may be shorter as surrounding rooms also cool. The calibrated model τ=15h was from genuine overnight cooldowns — it may be more appropriate for overnight use.
-- K=20,600 from post-DHW reheat captures non-linear effects (thermal lag through walls, modulating compressor, radiator warmup time). The model K=7,500 was from 2 preheat-to-morning segments.
+**Notes on the empirical numbers**:
+- τ=45h is the empirical cooling rate when heating stops in a warm house — exactly the condition at overnight coast start. The initial condition (all rooms warm from recent heating) is the same whether heating stops for a 90-min DHW charge or a 5-hour overnight coast. The model τ=15h appears to be simply wrong for this use case.
+- K=20,600 from post-DHW reheat captures the real system response including thermal lag through walls, modulating compressor, and radiator warmup time. The model K=7,500 was from only 2 data points.
 - The reheat segments are mostly mild weather (8-12°C, n=15). Cold-weather reheat data is thin.
 
-**Recommended approach**: rather than blindly replacing model constants, each overnight is now an experiment. Record predicted vs actual cooling and reheat, and converge the parameters over 10+ nights across 0-15°C. The `break` fix (commit e11cbd6) was the immediate blocker — the planner will now actually coast, producing real overnight data to calibrate against.
+**Recommended approach**: update τ and K toward empirical values. Each overnight is now an experiment: record predicted vs actual cooling/reheat, compare to Met Office forecast, and refine. The `break` fix (commit e11cbd6) was the immediate blocker — the planner will now actually coast, producing real overnight data to validate against.
 
 ## Away mode
 
