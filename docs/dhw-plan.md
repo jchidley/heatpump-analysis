@@ -2,6 +2,8 @@
 
 **Objective**: Reliable hot water for 5 people. Priority: (1) DHW adequacy, (2) heating compatibility, (3) cost.
 
+Reference data (cylinder spec, WWHR, charge traces, usage profile): [DHW reference](dhw-reference.md)
+
 ## Cylinder
 
 **Kingspan Albion 300L** (AUXSN300ERP). 221L usable (91% plug flow efficiency). 45°C target. Standing loss 13W. T1 decay 0.25°C/h.

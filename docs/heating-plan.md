@@ -2,6 +2,8 @@
 
 **Objective**: Leather 20–21°C during waking hours (07:00–23:00) at minimum cost. Overnight temperature is not a target — it dips and recovers by 07:00.
 
+Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating reference](heating-reference.md)
+
 ## Constraints
 
 | Constraint | Value | Source |
