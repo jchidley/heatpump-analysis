@@ -360,17 +360,26 @@ From 35 DHW-cooling and 27 post-DHW reheat segments (15-min resolution, 16 days 
 
 | Parameter | Model | Empirical | Ratio | Effect on planner |
 |---|---|---|---|---|
-| τ (cooling time constant) | 15.0h | ~45h (median 49.7h) | 3× slower | Model overpredicts overnight cooling |
+| τ (cooling time constant) | 15.0h | ~50h (median, from both sources) | 3.3× slower | Model overpredicts overnight cooling |
 | K (reheat: surplus W per °C/h) | 7,500 | ~20,600 (median) | 2.7× slower | Model overpredicts reheat speed |
 
-**Net effect**: the two errors reinforce each other. The model thinks the house cools fast AND reheats fast, so it panics and starts heating immediately — but the real house barely cools overnight and also reheats slowly. Result: zero coasting on every night, wasting 3-5h of heating per mild night.
+**Net effect**: the model thinks the house cools fast AND reheats fast, so it panics and starts heating immediately. The real house barely cools overnight. Result: zero coasting, wasting 3-5h of heating per mild night.
 
-**Notes on the empirical numbers**:
-- τ=45h is the empirical cooling rate when heating stops in a warm house — exactly the condition at overnight coast start. The initial condition (all rooms warm from recent heating) is the same whether heating stops for a 90-min DHW charge or a 5-hour overnight coast. The model τ=15h appears to be simply wrong for this use case.
-- K=20,600 from post-DHW reheat captures the real system response including thermal lag through walls, modulating compressor, and radiator warmup time. The model K=7,500 was from only 2 data points.
-- The reheat segments are mostly mild weather (8-12°C, n=15). Cold-weather reheat data is thin.
+**Two independent data sources agree on τ ≈ 50h:**
 
-**Recommended approach**: update τ and K toward empirical values. Each overnight is now an experiment: record predicted vs actual cooling/reheat, compare to Met Office forecast, and refine. The `break` fix (commit e11cbd6) was the immediate blocker — the planner will now actually coast, producing real overnight data to validate against.
+| Source | τ mean | τ median | n |
+|---|---|---|---|
+| Calibration nights (no heating, 4 nights, 24-28 Mar) | 48h | 51h | 18 segments |
+| DHW mini-experiments (90 days of charges) | 44h | 50h | 35 segments |
+| Model assumption | 15h | — | — |
+
+Best single overnight observation: Night 2, 23:07→03:02 (3.9h continuous, no heating), Leather dropped 20.82→20.12°C = 0.18°C/h, giving τ = **65.8h**.
+
+The model τ=15h may correspond to the whole-house response (house τ=25.8h from thermal model), not Leather specifically. But Leather is the controlled variable for overnight planning.
+
+Every DHW charge is a mini cooling experiment. Every heating restart is a mini reheat experiment. These accumulate over months and provide far more empirical data than the 2-point calibration the planner was originally built on.
+
+**Recommended approach**: update τ and K toward empirical values. Each overnight is now an experiment: record predicted vs actual cooling/reheat, compare to Met Office forecast, and refine. The `break` fix (commit e11cbd6) was the immediate blocker — the planner now actually coasts, producing real overnight data to validate against.
 
 ## Away mode
 

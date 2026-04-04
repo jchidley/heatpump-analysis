@@ -999,7 +999,11 @@ fn calculate_required_curve(
 
 /// House effective thermal time constant for leather room (hours).
 /// Calibrated from Night 1/Night 2 (24-26 Mar 2026).
-const LEATHER_TAU_H: f64 = 15.0;
+/// Leather cooling time constant (hours).
+/// Empirical: τ≈50h from both calibration nights (n=18) and DHW segments (n=35).
+/// Best single overnight (3.9h, Night 2): τ=65.8h.
+/// Was 15.0h — wrong by 3.3×, caused planner to never coast.
+const LEATHER_TAU_H: f64 = 50.0;
 
 /// HP max thermal output (W) — 5kW Arotherm Plus.
 const HP_MAX_OUTPUT_W: f64 = 5000.0;
