@@ -1,4 +1,4 @@
-<!-- code-truth: 8d79935 -->
+<!-- code-truth: 1c2a44a -->
 
 # Architecture
 
@@ -137,6 +137,10 @@ The outer loop only uses live flow-return ΔT when `RunDataStatuscode` contains 
 ### Inner loop floor guard contract
 
 When `Hc1HeatCurve < 0.25`, the inner loop halves its gain and doubles its deadband. This prevents hunting near the curve floor where each 0.01 curve ≈ 0.20°C flow change (verified by measurement).
+
+### Overnight planner empirical constants
+
+`LEATHER_TAU_H = 50.0` and `REHEAT_RATE = 7500` in `adaptive-heating-mvp.rs` are hardcoded constants that drive the overnight coast/preheat decision. τ=50h is empirically validated (53 segments). K=7500 is from only 2 data points — empirical K≈20,600 from 27 segments suggests the model overpredicts reheat speed. Each coast-then-preheat night validates these.
 
 ### Config duplication
 

@@ -3,9 +3,9 @@
 > Scope: implementation overview derived from source. For operating policy and deployment truth, see `../heating-plan.md`, `../dhw-plan.md`, `../../deploy/SECRETS.md`, and `../../AGENTS.md`.
 
 ```yaml
-commit: 8d79935
+commit: 1c2a44a
 branch: main
-commit_date: 2026-04-02
+commit_date: 2026-04-04
 working_tree: clean
 ```
 
@@ -84,6 +84,17 @@ Exposes `pub mod thermal` as library crate. Enables `adaptive-heating-mvp` binar
 ### Heat curve exponent updated
 
 Best fit 1.25 (was 1.27) from expanded 17-point pilot data. VRC 700 formula: `flow = setpoint + curve × (setpoint - outside)^1.25`.
+
+### Overnight planner fixes + empirical τ (2026-04-04)
+
+- **Break bug**: planner scanned coast times from max→0 but never broke on first match — always chose coast=0 (heat immediately). Fixed with `break`.
+- **τ updated**: `LEATHER_TAU_H` changed from 15.0 to 50.0 (empirical, from 53 cooling segments: 18 calibration-night + 35 DHW). Two independent sources agree on median ~50h.
+- **K=7500 flagged**: empirical K≈20,600 from 27 reheat segments. Not yet updated in code — each coast night validates.
+- **Comfort miss clipping**: `clip_period_to_waking_hours()` replaces `period_intersects_waking_hours()` filter. Comfort misses now trimmed to 07:00–23:00 (overnight cooling is expected, not a miss).
+
+### Plan docs restructured (2026-04-04)
+
+`docs/heating-plan.md` and `docs/dhw-plan.md` rewritten as LLM working memory (tables + commands). Domain reference data extracted to `docs/heating-reference.md` and `docs/dhw-reference.md`.
 
 ## Repository Size
 

@@ -1,4 +1,4 @@
-<!-- code-truth: 8d79935 -->
+<!-- code-truth: 1c2a44a -->
 
 # Repository Map
 
@@ -77,11 +77,12 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 | `influx.rs` | 352 | Flux query builders |
 | `display.rs` | 993 | CLI output, **equilibrium solver**, **MWT bisection**, **control table generation** |
 | `report.rs` | 44 | Table printer and RMSE |
+| `history.rs` | ~2230 | Heating/DHW history reconstruction from InfluxDB. Comfort miss detection (clipped to 07:00–23:00 waking hours), DHW overlap detection, controller event extraction |
 | `dhw_sessions.rs` | ~1050 | DHW draw/charge session analysis: inflection detection, draw type classification (bath/shower/tap), HWC tracking, during-charge draw detection |
 
 ## Standalone Binaries
 
-### `src/bin/adaptive-heating-mvp.rs` (1,428 lines)
+### `src/bin/adaptive-heating-mvp.rs` (~2,030 lines)
 
 Live V2 adaptive heating controller. Two-loop architecture:
 
@@ -122,8 +123,10 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 
 | Document | Concern |
 |----------|---------|
-| `docs/heating-plan.md` | Heating control: two-loop architecture, overnight planner, away mode, physical improvements |
-| `docs/dhw-plan.md` | DHW: cylinder spec, charging, scheduling, capacity, T1-based decisions |
+| `docs/heating-plan.md` | Heating strategy, constraints, parameters, next steps (LLM working memory) |
+| `docs/dhw-plan.md` | DHW: strategy, scheduling, capacity, decisions (LLM working memory) |
+| `docs/dhw-reference.md` | DHW domain reference: cylinder spec, WWHR, charge traces, usage, z2m-hub algorithm |
+| `docs/heating-reference.md` | Heating domain reference: VRC 700, tuning, eBUS registers, deployment |
 | `docs/pico-ebus-plan.md` | Pico W eBUS adapter build plan |
 | `docs/vrc700-settings-audit.md` | VRC 700 settings, timer encoding, eBUS commands |
 | `docs/dhw-plan.md` | (see above) |
@@ -156,8 +159,8 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | **Adaptive heating config** | `model/adaptive-heating-mvp.toml` |
 | **Adaptive heating modes/API** | `src/bin/adaptive-heating-mvp.rs` (HTTP handlers + Mode enum) |
 | **Adaptive heating baseline** | `model/adaptive-heating-mvp.toml` `[baseline]` + `restore_baseline()` |
-| **Heating control / phase plan** | `docs/heating-plan.md` |
-| **DHW scheduling + duration model** | `docs/dhw-plan.md` |
+| **Heating strategy + constraints** | `docs/heating-plan.md` (plan) + `docs/heating-reference.md` (reference) |
+| **DHW scheduling + duration model** | `docs/dhw-plan.md` (plan) + `docs/dhw-reference.md` (reference) |
 | **DHW session analysis** | `src/thermal/dhw_sessions.rs` |
 | **Mobile dashboard** | `~/github/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
 | eBUS polling | `scripts/ebusd-poll.sh` on pi5data |
