@@ -38,7 +38,7 @@ Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating
 | Peak | 40.48p | 16:00–19:00 |
 | Marginal (battery-blended) | 13.9p | Use this for scheduling decisions |
 
-Q2 2026 South East inc VAT. 95% of import is off-peak via Powerwall. Real value of Cosy alignment: **protecting battery for peak hours on cold days**.
+Q2 2026 South East inc VAT. All-in effective 16.7p (from 6,908 kWh, ~£1,151, 12 months inc standing 52.76p/day). 95% of import is off-peak via Powerwall. Real value of Cosy alignment: **protecting battery for peak hours on cold days**.
 
 ## Control approach
 
@@ -56,7 +56,7 @@ Converges in 1–2 ticks. No runtime learning (EMA ran away — see AGENTS.md). 
 | Mode | Behaviour |
 |---|---|
 | `occupied` | Full comfort targeting |
-| `away` | 15°C frost protection, warm-up ramp before return |
+| `away` | 15°C frost protection (curve 0.30, ~£0.50/day vs ~£2.50). Week away saves ~£14. Warm-up ramp before return |
 | `disabled` / `monitor-only` | No eBUS writes |
 
 API: port 3031. `/mode/occupied`, `/mode/away`, `/kill` (baseline restore).
@@ -79,7 +79,7 @@ Coast after 23:00 (curve 0.10), then preheat at latest safe time for Leather ≥
 | τ (cooling) | **50h** | 50h median | 53 segments | ✅ Updated |
 | K (reheat: surplus W per °C/h) | 7,500 | ~20,600 median | 27 segments | ⚠ Not yet updated — each coast night validates |
 
-Two independent sources agree on τ≈50h: calibration nights (median 51h, n=18) and DHW mini-experiments (median 50h, n=35). Every DHW charge is a cooling experiment; every heating restart is a reheat experiment.
+Two independent sources agree on τ≈50h: calibration nights (median 51h, n=18) and DHW mini-experiments (median 50h, n=35). Best single overnight (Night 2, 3.9h continuous no-heating): τ=65.8h. Every DHW charge is a cooling experiment; every heating restart is a reheat experiment.
 
 ### Heating recovery by outside temperature
 

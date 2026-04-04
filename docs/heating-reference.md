@@ -26,6 +26,7 @@ Inverse: `curve = (target_flow - setpoint) / (setpoint - outside)^1.25`
 |---|---|
 | Gain | 0.05 (halved to 0.025 below curve 0.25) |
 | Deadband | 0.5°C (doubled to 1.0°C below curve 0.25) |
+| Convergence | 1–2 ticks |
 | Max step | 0.20 |
 | Curve clamp | 0.10–4.00 |
 | Convergence | 1–2 ticks |
@@ -73,6 +74,12 @@ Future: `SetModeOverride` to HMU bypasses VRC 700. Message format decoded (D1C e
 Build: `source ~/.cargo/env && cd ~/adaptive-heating-mvp && cargo build --release`
 
 Deploy source: `scp src/bin/adaptive-heating-mvp.rs pi5data:~/adaptive-heating-mvp/src/main.rs`
+
+## Logging
+
+Every decision logged to:
+- **InfluxDB** (`adaptive_heating_mvp` measurement): target_flow, curve, flow_desired, room temps, outside, action, mode, tariff
+- **Local JSONL** on pi5data: full decision context for debugging
 
 ## Resolved observations
 

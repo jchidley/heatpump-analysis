@@ -15,6 +15,7 @@ Domain reference for the 300L cylinder, sensors, charging behaviour, and measure
 | Cold feed | **Dip pipe** from 490mm connection to bottom (~0mm) — all cold water enters at bottom regardless of WWHR |
 | Internal expansion | Air bubble at top (floating baffle, no external vessel). ~46mm→25mm as water heats 10→45°C |
 | Standing heat loss | 13W measured (vs 93W rated — stratification + air bubble insulates top) |
+| T1 decay rate | 0.25°C/h (σ=0.02, 20 observations). Measured: T1 43.4→42.4°C over 4h |
 | Annual standby cost | ~£5/year at COP 3.9 |
 
 ### Connection heights (outside mm / internal mm)

@@ -49,10 +49,12 @@ From 12 inflection measurements at 2s Multical resolution. Depends on T1: at 41�
 
 **Crossover = full.** When HwcStorageTemp ≥ T1 at charge start, entire cylinder is heated. Confirmed 32+ cycles.
 
-| Mode | Avg duration | 120-min timeout rate | COP |
-|---|---|---|---|
-| Eco | 102 min | 40% (nearly all <5°C) | ~3.3 |
-| Normal | 60 min | 2% | ~2.5 |
+From 402 AM charges + 436 cycles ≥30 min:
+
+| Mode | Avg duration | Timeout rate | Electricity | COP |
+|---|---|---|---|---|
+| Eco | 102 min | 40% (<5°C) | 1.66 kWh | ~3.3 |
+| Normal | 60 min | 2% | 1.19 kWh | ~2.5 |
 
 Eco fails in cold weather. Seasonal manual switch (Nov–Mar → normal). `hmu HwcMode` is read-only via eBUS.
 
@@ -119,6 +121,8 @@ T1 decays 0.25°C/h. 22:00 charge at 45.5°C → ~43.3°C by 07:00. Marginal —
 | Max | 123 min |
 
 61% fit in 90 min, 88% in 120 min, 100% in 150 min. If morning DHW is needed before preheat, back off start time by predicted duration.
+
+Historical pattern: 418 days with morning charge vs 42 days with evening charge. When evening charge occurred, 43% still needed a morning follow-up.
 
 ### VRC 700 sequencing (investigation required)
 
