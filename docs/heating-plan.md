@@ -90,39 +90,33 @@ Heat continuously overnight at model-derived curve. **The real optimisation is f
 | 5-12°C | Minimum flow for best COP | Modest surplus |
 | ≥12°C | Bank heat in 22:00 Cosy, then reduce | Surplus > loss |
 
-### Next: empirical overnight optimiser
+### Next: unified model with overnight target optimisation
 
-The 466 nights all ran at curve=0.55 (flow 24-40°C). We don't know what happens at lower flow temps. The overnight planner should find the **minimum-cost strategy to deliver Leather ≥20°C at 07:00** from empirical data, not hardcoded τ/K constants.
+There is no separate "overnight model." The daytime thermal solver (`bisect_mwt_for_room` → target flow → inner loop) already computes the minimum flow temp to hold Leather at a target. Overnight is the same solver with a different target temperature.
 
-We already have the empirical data to build this:
+The question is: **what overnight Leather target, combined with morning preheat, delivers ≥20°C at 07:00 at minimum total cost?**
 
-| Data source | What it tells us | Where |
-|---|---|---|
-| 53 cooling segments (calibration + DHW) | Leather cooling rate vs outside temp, no heating | Calibration nights + every DHW charge |
-| 1067 heating samples | COP vs flow temp vs outside temp | emoncms SQLite |
-| Every DHW→heating transition | Leather reheat rate vs outside temp vs flow temp | emoncms SQLite |
+Candidate strategies are just different overnight target profiles:
+- Hold 20.5°C all night (current daytime target - highest cost, no recovery needed)
+- Hold 19.5°C all night (lower flow, better COP, 1°C morning recovery)
+- Hold 19.0°C (even lower flow, 1.5°C recovery needed)
+- Step profile: bank to 22°C in Cosy window, drop to 19°C, preheat from 05:00
+- Off (target = none), preheat from calculated start time
 
-**Build an overnight optimiser that:**
+For each: the existing model gives the flow temp, COP follows from flow temp × outside temp, and the Leather trajectory follows from the thermal solver. Total overnight cost = ∫ electricity dt.
 
-1. Fits empirical equations for cooling rate (from cooling segments) and reheat rate (from DHW→heating transitions) as functions of outside temp and flow temp
-2. Fits COP = f(flow_temp, outside_temp) from heating samples
-3. For a given night (forecast outside temp profile), simulates candidate strategies:
-   - Overheat to X°C in 22:00-00:00 Cosy, then off until preheat at time T
-   - Continuous at flow F°C all night
-   - Off until preheat at time T
-   - Combinations: heat to 22:00, reduce, preheat from T
-4. For each strategy, computes: predicted Leather at 07:00, total kWh electricity, cost at marginal rate
-5. Picks the cheapest strategy where Leather ≥20°C at 07:00 (with safety margin)
-6. Each real night validates the prediction - compare predicted vs actual Leather trajectory and kWh
+**Data situation:**
+- Historical (466 nights): all at SP=19, curve=0.55, MinFlow=20 - tells us COP and heat loss at those flow temps only
+- Adaptive controller (running since ~28 Mar): variable curves, MinFlow=19 - every outer cycle at every flow temp adds data across the full operating range
+- Going forward: every daytime AND nighttime cycle adds to the empirical dataset. There is no day/night distinction in the physics - only the desired temperature changes
 
-Use equations fitted to empirical data (not lookup tables - equations generalise across the parameter space). The calibration data, DHW cooling segments, and heating samples provide enough points to fit simple functional forms:
-- Cooling: exponential decay with empirically-fitted τ(outside_temp) and equilibrium(outside_temp)
-- Reheat: rate = f(surplus_W) where surplus = HP_output(flow_temp) - heat_loss(inside_temp, outside_temp)
-- COP: polynomial or Carnot-fraction fit to (flow_temp, outside_temp)
+**To implement:**
+1. Remove the separate overnight planner (coast/preheat/maintain logic, hardcoded τ/K)
+2. Run the daytime model 24/7 with a time-varying target: 20.5°C during 07:00-23:00, configurable overnight target
+3. Simulate candidate overnight targets using the thermal solver + empirical COP, pick the cheapest that delivers ≥20°C at 07:00
+4. Each real night validates the prediction. Adjust.
 
-The overnight planner then becomes: for each candidate strategy, integrate the Leather trajectory using these equations, compute electricity cost, pick the minimum.
-
-**Constraint**: morning DHW may steal 50-100 min of heating. The optimiser must account for DHW charge timing - either by scheduling DHW first (see [DHW plan](dhw-plan.md)) or by reserving enough headroom that a morning DHW charge doesn't cause a comfort miss.
+**Constraint**: morning DHW steals 50-100 min. The target profile must account for DHW timing - see [DHW plan](dhw-plan.md).
 
 ### Empirical parameters
 
@@ -188,7 +182,7 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 
 ## Next steps
 
-1. **Build empirical overnight optimiser** - see § Next: empirical overnight optimiser above. Fit cooling, reheat, and COP equations from existing data. Simulate candidate strategies. Pick minimum-cost path to Leather ≥20°C at 07:00.
+1. **Unify overnight with daytime model** - remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying Leather target. Simulate candidate overnight targets (20.5/19.5/19.0/off + preheat), pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
 2. **Morning DHW/heating coordination** - coupled with overnight strategy. DHW steals 50-100 min. Joint optimisation required. See [DHW plan](dhw-plan.md)
 3. **Fit door sensors** - 2× SNZB-04P (in hand). Stage 1: log only
 4. **Effective HTC validation** - 466 nights show ~190 W/K vs model 261 W/K. May partly explain why thermal model τ=15h was wrong - lower real heat loss means slower cooling
@@ -203,7 +197,7 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 
 - **SP=19 night mode**: eliminates Optimum Start, clean separation
 - **No runtime learning**: EMA ran away. Static calibration only
-- **Overnight strategy is an optimisation problem**: 466 nights at curve=0.55 don’t tell us minimum viable flow. Build empirical optimiser to find cheapest path to 20°C at 07:00 from cooling/reheat/COP data
+- **Overnight = daytime model with different target**: no separate planner needed. Same solver, same inner loop, just a lower Leather target overnight. The optimisation is choosing the target profile, not building a separate system
 - **V1 bang-bang rejected**: 15-min adjustments meaningless against τ=50h
 
 ## Key files
