@@ -191,11 +191,12 @@ Monitor, don't over-engineer. Cylinder turns over 171L/day. Track time since las
 
 ## Next steps
 
-1. **Morning shower-capacity trigger** — validate practical overnight top-up rule based on expected normal showers, not bare T1 cutoff
-2. **VRC 700 sequencing + earlier-morning scheduling** — investigate timer rewrites/boosts/direct writes for "DHW first, then heat". 61% of charges fit 90 min, 88% in 120 min
-3. **T1-led overnight top-up** — trigger via `HwcSFMode=load` only when predicted morning capacity insufficient
-4. **Summer mains temp repeat** — capacity may shift as mains warms from ~11°C to ~18°C
-5. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan duration
+1. **Joint overnight optimisation with heating** — the overnight heating optimiser (see [Heating plan § Next: empirical overnight optimiser](heating-plan.md)) must account for morning DHW timing. DHW steals 50–100 min of HP capacity. The cheapest path to Leather ≥20°C at 07:00 depends on whether a morning DHW charge is needed, and vice versa. Key inputs from DHW: predicted morning shower demand, T1 at 23:00, whether evening charge reached crossover.
+2. **Morning shower-capacity trigger** — validate practical overnight top-up rule based on expected normal showers, not bare T1 cutoff
+3. **VRC 700 sequencing** — investigate how to express "DHW first, then heat" day by day. 61% of charges fit 90 min, 88% in 120 min
+4. **T1-led overnight top-up** — trigger via `HwcSFMode=load` only when predicted morning capacity insufficient
+5. **Summer mains temp repeat** — capacity may shift as mains warms from ~11°C to ~18°C
+6. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan duration
 
 ### Later
 
