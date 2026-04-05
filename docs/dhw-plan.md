@@ -1,8 +1,10 @@
 # DHW Plan
 
+This is an explanation document: it records the DHW objective, the reasoning behind the current charging strategy, and the next decisions to test. For canonical current-state cylinder facts, scheduling rules, and infrastructure details, use `lat.md/`.
+
 **Objective**: Reliable hot water for 5 people. Priority: (1) DHW adequacy, (2) heating compatibility, (3) cost.
 
-Reference data (cylinder spec, WWHR, charge traces, usage profile): [DHW reference](dhw-reference.md)
+Supporting reference and measurements: [DHW reference](dhw-reference.md)
 
 ## Cylinder
 
@@ -56,7 +58,7 @@ From 402 AM charges + 436 cycles ≥30 min:
 | Eco | 102 min | 40% (<5°C) | 1.66 kWh | ~3.3 |
 | Normal | 60 min | 2% | 1.19 kWh | ~2.5 |
 
-Eco fails in cold weather. Seasonal manual switch (Nov–Mar → normal). `hmu HwcMode` is read-only via eBUS.
+Eco fails in cold weather. Seasonal manual switch (Nov–Mar → normal). `hmu HwcMode` is readable via eBUS for detection/status, but read-only for control — mode changes still have to be made on the aroTHERM controller.
 
 ### No-crossover charges
 
@@ -83,9 +85,9 @@ When charge ends without crossover: gap >3°C = sharp thermocline (capacity unch
 
 Draws during HP charging are tracked (Multical is tap-side, independent of HP circuit).
 
-## Scheduling
+## Current scheduling strategy
 
-### Current VRC 700 DHW timer windows
+### Present VRC 700 timer windows
 
 | Window | Rationale |
 |---|---|
@@ -104,12 +106,20 @@ Best heavy-draw window. Schedule bath + showers here. **Simple rule: if everyone
 ### Overnight strategy
 
 - **22:00–00:00** (Cosy): bank hot water to reduce/eliminate morning DHW
-- **Before preheat**: if morning DHW still needed, schedule to **finish before heating must start**
-- **04:00–07:00** (Cosy): only when morning recharge genuinely required
+- **Pre-emptive launch inside the allowed envelope**: if morning DHW is still needed, the controller should choose the best launch time rather than blindly wait for the timer window
+- **Morning timer window becomes fallback**: leave a timer envelope so the VRC 700 still recovers if automation misses, crashes, or loses data
 
-Key decision: **morning shower budget** — enough practical hot water for expected normal morning showers. Inputs: T1, remaining litres, crossover state, standby decay, next preheat start time.
+Key decision: **morning shower budget** — enough practical hot water for expected normal morning showers. Inputs: T1, remaining litres, crossover state, standby decay, expected morning usage, predicted charge duration, next heating need, and battery adequacy before the next Cosy window.
 
-T1 decays 0.19–0.25°C/h (measured). 22:00 charge at 45°C → ~43°C by 07:00. **Min acceptable T1 = 40°C** (empirical: lowest T1 at shower start across 60 days of data, no complaints). On clean crossover nights, morning DHW charge is unnecessary (T1 ≈ 43°C at 07:00 >> 40°C floor). Morning charge only needed when evening draws deplete the tank below the decay trajectory.
+T1 decays 0.19–0.25°C/h (measured). 22:00 charge at 45°C → ~43°C by 07:00. **Min acceptable T1 = 40°C** (empirical: lowest T1 at shower start across 60 days of data, no complaints). On clean crossover nights, morning DHW charge is unnecessary (T1 ≈ 43°C at 07:00 >> 40°C floor). Morning charge is only needed when evening draws deplete the tank below the decay trajectory.
+
+The real control question is not just whether the morning window is enabled. It is **when the unavoidable DHW event should happen**. The preferred sequence is:
+1. decide whether DHW is genuinely required before morning use,
+2. score candidate launch times (22:00 bank, battery-backed pre-emptive overnight launch, 04:00 Cosy launch, later fallback inside Cosy),
+3. actively trigger `HwcSFMode=load` at the chosen time,
+4. keep the timer window as a safety net rather than the primary decision maker.
+
+This matters because non-Cosy energy is not one price in practice. If the battery can cover the gap to the next Cosy window, an early non-Cosy launch costs only a small premium over Cosy. If the battery is low, the same launch may force expensive import. Heating + DHW is the biggest controllable winter load, so battery-aware timing here is the main house-level optimisation lever.
 
 ### Historical morning charge data (491 sessions)
 
@@ -124,9 +134,14 @@ T1 decays 0.19–0.25°C/h (measured). 22:00 charge at 45°C → ~43°C by 07:00
 
 Historical pattern: 418 days with morning charge vs 42 days with evening charge. When evening charge occurred, 43% still needed a morning follow-up.
 
-### VRC 700 sequencing (investigation required)
+### VRC 700 sequencing
 
-Need to determine how to express **DHW first, then heat at variable start time** day by day. Options: timer rewrites, boosts, mode changes, direct writes. Not yet investigated.
+Need to express **active DHW launch with timer fallback, then heat at variable start time** day by day. The likely architecture is:
+- timer windows define allowed/fallback envelopes,
+- controller sends pre-emptive `HwcSFMode=load` when the chosen launch time arrives,
+- heating model then uses the remaining cheap/battery-backed window as efficiently as possible.
+
+This is now a scheduling problem, not just a static timer problem. The sequencing decision should account for predicted charge duration, morning comfort risk, outside temperature, and battery adequacy before the next Cosy window.
 
 ## HP contention with heating
 
@@ -150,7 +165,7 @@ On cold days, schedule DHW at 22:00 to keep preheat window clear. DHW-active per
 
 2 Apr 05:00–08:00: after morning top-up (crossover=true), T1 stayed 45°C while HwcStorageTemp fell to 27°C. z2m-hub: 118L remaining. Confirms T1 authority, 221L capacity, crossover rule.
 
-## Review
+## How we review this plan
 
 ```bash
 date -u
@@ -160,9 +175,9 @@ cargo run --bin heatpump-analysis -- dhw-history --human   # readable
 cargo run --bin heatpump-analysis -- dhw-sessions --days 7 # capacity analysis
 ```
 
-Success = reliable hot-water readiness, evening concurrent draws classified correctly. See `docs/history-evidence-workflows.md` for full workflow. Evidence layers: T1 (comfort), HwcStorageTemp (control), z2m-hub remaining litres (practical), crossover (completion).
+Success = reliable hot-water readiness and correct interpretation of evening concurrent draws. See `docs/history-evidence-workflows.md` for the full workflow. Evidence layers: T1 (comfort), HwcStorageTemp (control), z2m-hub remaining litres (practical), crossover (completion).
 
-## Tooling
+## Supporting tooling
 
 ### z2m-hub (pi5data:3030)
 
@@ -189,14 +204,14 @@ curl -s http://pi5data:3030/api/dhw/status
 
 Monitor, don't over-engineer. Cylinder turns over 171L/day. Track time since last >55°C cycle; trigger hygiene cycle only on stagnation risk.
 
-## Next steps
+## Next decisions to test
 
-1. **Joint overnight optimisation with heating** — the unified overnight model (see [Heating plan § Next: unified model](heating-plan.md)) must account for morning DHW timing. DHW steals 50–100 min of HP capacity. The cheapest path to Leather ≥20°C at 07:00 depends on whether a morning DHW charge is needed, and vice versa. Key inputs from DHW: predicted morning shower demand, T1 at 23:00, whether evening charge reached crossover.
-2. **Morning DHW skip logic** — on clean crossover nights (T1 ≥ 45°C at charge end, no overnight draws), skip morning DHW entirely. Predicted T1 at 07:00 ≈ 43°C >> 40°C floor. Only schedule morning charge when predicted T1 at 07:00 < 40°C (e.g., big evening draws after last charge)
-3. **VRC 700 sequencing** — investigate how to express "DHW first, then heat" day by day. 61% of charges fit 90 min, 88% in 120 min
-4. **T1-led overnight top-up** — trigger via `HwcSFMode=load` only when predicted T1 at 07:00 < 40°C
-5. **Summer mains temp repeat** — capacity may shift as mains warms from ~11°C to ~18°C
-6. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan duration
+1. **Battery-aware DHW event scheduler** — for each required charge, score candidate launch times (22:00 bank, battery-backed overnight pre-emptive launch, 04:00 Cosy launch, later fallback inside Cosy). Cost = marginal electricity cost + heating comfort penalty, with battery adequacy before the next Cosy window determining whether non-Cosy kWh are cheap or expensive.
+2. **Need detection from T1 + practical capacity** — decide whether a DHW event is required at all before scheduling it. Use predicted T1, remaining usable litres, crossover state, standby decay, and expected morning demand.
+3. **Eco/normal mode integration** — read `hmu HwcMode` directly from eBUS for scheduler inputs, status, history, and duration expectations. Do not infer from max flow temp unless the eBUS register is unavailable.
+4. **Timer windows as fallback envelopes** — keep a broad morning DHW window for resilience, but make active `HwcSFMode=load` launches the primary control path.
+5. **Joint overnight optimisation with heating** — the unified overnight model (see [Heating plan § Next: unified model](heating-plan.md)) must account for DHW launch timing. DHW steals 50–100 min of HP capacity. The cheapest path to Leather ≥20°C at 07:00 depends on whether a morning DHW charge is needed, and when it runs.
+6. **Summer mains temp repeat** — capacity may shift as mains warms from ~11°C to ~18°C.
 
 ### Later
 

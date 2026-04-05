@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::Json;
-use chrono::{DateTime, Local, NaiveTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveTime, Timelike, Utc, Weekday};
 use clap::{Parser, Subcommand, ValueEnum};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -342,6 +342,12 @@ struct RuntimeState {
     /// True when Z1OpMode=off for coast (needs restore to night before heating)
     #[serde(default)]
     heating_off: bool,
+    /// Last weekday for which the controller rewrote the morning DHW timer.
+    #[serde(default)]
+    last_dhw_timer_weekday: Option<String>,
+    /// Whether the last rewritten morning DHW timer kept the 04:00–07:00 window.
+    #[serde(default)]
+    last_dhw_timer_morning_enabled: Option<bool>,
 }
 
 impl Default for RuntimeState {
@@ -354,6 +360,8 @@ impl Default for RuntimeState {
             target_flow_c: None,
             last_calc_outside_c: None,
             heating_off: false,
+            last_dhw_timer_weekday: None,
+            last_dhw_timer_morning_enabled: None,
         }
     }
 }
@@ -843,6 +851,116 @@ fn classify_tariff_period(now: NaiveTime) -> String {
     }
 }
 
+fn hours_until_time(now: NaiveTime, target: NaiveTime) -> f64 {
+    let now_minutes = now.hour() as f64 * 60.0 + now.minute() as f64;
+    let target_minutes = target.hour() as f64 * 60.0 + target.minute() as f64;
+    if target_minutes >= now_minutes {
+        (target_minutes - now_minutes) / 60.0
+    } else {
+        (1440.0 - now_minutes + target_minutes) / 60.0
+    }
+}
+
+fn predict_t1_at_time(current_t1_c: f64, now: NaiveTime, target: NaiveTime) -> f64 {
+    current_t1_c - hours_until_time(now, target) * DHW_T1_DECAY_C_PER_H
+}
+
+fn weekday_name(weekday: Weekday) -> &'static str {
+    match weekday {
+        Weekday::Mon => "Monday",
+        Weekday::Tue => "Tuesday",
+        Weekday::Wed => "Wednesday",
+        Weekday::Thu => "Thursday",
+        Weekday::Fri => "Friday",
+        Weekday::Sat => "Saturday",
+        Weekday::Sun => "Sunday",
+    }
+}
+
+fn target_dhw_timer_weekday(now: DateTime<Local>, waking: NaiveTime) -> Weekday {
+    if now.time() < waking {
+        now.weekday()
+    } else {
+        now.weekday().succ()
+    }
+}
+
+fn morning_dhw_windows_enabled(config: &Config) -> Vec<TimeWindow> {
+    let waking = parse_time(&config.model.waking_start)
+        .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap());
+    let mut windows: Vec<TimeWindow> = config
+        .dhw
+        .cosy_windows
+        .iter()
+        .filter(|window| {
+            let end = parse_time(&window.end);
+            end != Some(waking)
+        })
+        .cloned()
+        .collect();
+    windows.sort_by_key(|window| parse_time(&window.start));
+    windows
+}
+
+fn dhw_timer_payload(config: &Config, morning_enabled: bool) -> String {
+    let mut windows = config.dhw.cosy_windows.clone();
+    windows.sort_by_key(|window| parse_time(&window.start));
+    if !morning_enabled {
+        windows = morning_dhw_windows_enabled(config);
+    }
+
+    let mut parts = Vec::with_capacity(6);
+    for window in windows.into_iter().take(3) {
+        parts.push(window.start);
+        parts.push(window.end);
+    }
+    while parts.len() < 6 {
+        parts.push("-:-".to_string());
+    }
+    parts.join(";")
+}
+
+fn sync_morning_dhw_timer(
+    config: &Config,
+    state: &mut RuntimeState,
+    now: DateTime<Local>,
+    dhw_t1: Option<f64>,
+) -> Result<Option<String>> {
+    let waking = parse_time(&config.model.waking_start)
+        .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap());
+    let Some(t1) = dhw_t1 else {
+        return Ok(None);
+    };
+
+    let predicted_t1 = predict_t1_at_time(t1, now.time(), waking);
+    let morning_enabled = predicted_t1 < config.dhw.charge_trigger_c;
+    let weekday = target_dhw_timer_weekday(now, waking);
+    let weekday_name = weekday_name(weekday).to_string();
+
+    if state.last_dhw_timer_weekday.as_deref() == Some(weekday_name.as_str())
+        && state.last_dhw_timer_morning_enabled == Some(morning_enabled)
+    {
+        return Ok(None);
+    }
+
+    let payload = dhw_timer_payload(config, morning_enabled);
+    let register = format!("HwcTimer_{weekday_name}");
+    let result = ebusd_write(config, "700", &register, &payload)?;
+
+    state.last_dhw_timer_weekday = Some(weekday_name.clone());
+    state.last_dhw_timer_morning_enabled = Some(morning_enabled);
+
+    Ok(Some(format!(
+        "{}={} -> {} (predicted T1 at {} {:.1}°C => morning window {})",
+        register,
+        payload,
+        result,
+        waking.format("%H:%M"),
+        predicted_t1,
+        if morning_enabled { "enabled" } else { "skipped" }
+    )))
+}
+
 // ---------------------------------------------------------------------------
 // Baseline restore (Phase 1a: only Z1OpMode + Hc1HeatCurve)
 // ---------------------------------------------------------------------------
@@ -869,6 +987,28 @@ fn restore_baseline(config: &Config) -> Result<Vec<String>> {
         "Hc1MinFlowTempDesired=20 -> {}",
         ebusd_write(config, "700", "Hc1MinFlowTempDesired", "20")?
     ));
+    results.push(format!(
+        "HwcSFMode=auto -> {}",
+        ebusd_write(config, "700", "HwcSFMode", "auto")?
+    ));
+    let payload = dhw_timer_payload(config, true);
+    for weekday in [
+        Weekday::Mon,
+        Weekday::Tue,
+        Weekday::Wed,
+        Weekday::Thu,
+        Weekday::Fri,
+        Weekday::Sat,
+        Weekday::Sun,
+    ] {
+        let register = format!("HwcTimer_{}", weekday_name(weekday));
+        results.push(format!(
+            "{}={} -> {}",
+            register,
+            payload,
+            ebusd_write(config, "700", &register, &payload)?
+        ));
+    }
     Ok(results)
 }
 
@@ -1013,6 +1153,10 @@ fn calculate_required_curve(
 /// Best single overnight (3.9h, Night 2): τ=65.8h.
 /// Was 15.0h — wrong by 3.3×, caused planner to never coast.
 const LEATHER_TAU_H: f64 = 50.0;
+
+/// Cylinder-top T1 standby decay used for morning DHW skip logic.
+/// Measured overnight on clean crossover nights.
+const DHW_T1_DECAY_C_PER_H: f64 = 0.25;
 
 /// HP max thermal output (W) — 5kW Arotherm Plus.
 const HP_MAX_OUTPUT_W: f64 = 5000.0;
@@ -1301,6 +1445,10 @@ fn run_outer_cycle(
 
     // --- DHW service ---
     if state.mode != Mode::Disabled && state.mode != Mode::MonitorOnly {
+        if let Some(timer_write) = sync_morning_dhw_timer(config, &mut state, now_local, dhw_t1)? {
+            writes.push(timer_write);
+        }
+
         let cosy_now = in_any_window(config, now_time);
         if cosy_now && !is_dhw {
             if let Some(storage) = hwc_storage_temp {
@@ -1561,6 +1709,9 @@ fn run_outer_cycle(
         let mut guard = runtime.lock().unwrap();
         guard.target_flow_c = state.target_flow_c;
         guard.last_calc_outside_c = model_forecast_outside;
+        guard.heating_off = state.heating_off;
+        guard.last_dhw_timer_weekday = state.last_dhw_timer_weekday.clone();
+        guard.last_dhw_timer_morning_enabled = state.last_dhw_timer_morning_enabled;
         save_runtime_state(&config.state_file, &guard)?;
     }
 

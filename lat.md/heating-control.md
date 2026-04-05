@@ -1,6 +1,6 @@
 # Heating Control
 
-V2 model-predictive controller for the Vaillant aroTHERM Plus. Two-loop architecture with overnight planner.
+V2 model-predictive controller for the Vaillant aroTHERM Plus. Two-loop architecture with overnight planner plus T1-led morning DHW timer rewrites.
 
 ## Control Objective
 
@@ -15,6 +15,10 @@ VRC 700 treated as a black box. `Z1OpMode=night` (SP=19) on startup eliminates O
 Runs every 900s ([[src/bin/adaptive-heating-mvp.rs#run_outer_cycle]]). Open-Meteo forecast + live thermal solver ([[src/thermal/display.rs#bisect_mwt_for_room]]) → target flow temp → initial curve guess via [[src/bin/adaptive-heating-mvp.rs#calculate_required_curve]].
 
 Uses forecast temperature, solar irradiance, and humidity. `ForecastCache` refreshes every 3600s. When compressor is not actively heating, falls back to `default_delta_t_c` (4.0°C) instead of live flow-return ΔT — prevents target oscillation when flow ≈ return.
+
+Before DHW boost decisions, the same loop predicts cylinder-top T1 at waking time and calls [[src/bin/adaptive-heating-mvp.rs#sync_morning_dhw_timer]]. If predicted T1 at 07:00 is ≥40°C, it rewrites the relevant `HwcTimer_<Weekday>` to drop the 04:00–07:00 morning window; otherwise it restores the full three-window Cosy schedule.
+
+This timer rewrite is an interim implementation, not the target design. The intended next step is an active battery-aware DHW event scheduler that decides whether a charge is required, reads `hmu HwcMode` as an eBUS input, uses battery adequacy before the next Cosy window as a cost input, chooses the best launch time, and leaves timer windows as fallback rails.
 
 ### Inner Loop
 
@@ -37,7 +41,7 @@ Startup sequence establishes clean control state. Shutdown restores VRC 700 to a
 
 **Startup**: `Z1OpMode=night` (value 3) + `Hc1MinFlowTempDesired=19`. Night mode uses `Z1NightTemp` (19°C) permanently — flat setpoint, no timer transitions. MinFlow lowered from 20→19 to remove the hidden floor that prevented genuine coast (curve 0.10 at MinFlow=20 still produced 20°C+ flow).
 
-**Shutdown** ([[src/bin/adaptive-heating-mvp.rs#restore_baseline]]): `Z1OpMode=auto` + `Hc1HeatCurve=0.55` + `Hc1MinFlowTempDesired=20`. VRC 700 resumes timer control with factory defaults.
+**Shutdown** ([[src/bin/adaptive-heating-mvp.rs#restore_baseline]]): `Z1OpMode=auto` + `Hc1HeatCurve=0.55` + `Hc1MinFlowTempDesired=20` + `HwcSFMode=auto`, and all `HwcTimer_<Weekday>` registers are restored to the three-window Cosy baseline. VRC 700 resumes timer control with factory defaults.
 
 ## Modes
 
@@ -105,6 +109,8 @@ The question: what Leather trajectory from 23:00 to 07:00 delivers ≥20°C at 0
 
 Morning DHW contention is largely eliminated: on clean crossover nights (T1 ≥45°C at charge end, no overnight draws), T1 decays to ~43°C by 07:00 — well above the 40°C empirical floor (see [[domain#DHW Cylinder#Cylinder Sensors]]). Morning charge only needed when evening draws deplete the tank. This simplifies overnight trajectory optimisation on most nights to a pure heating problem.
 
+When DHW is required, the controller should treat it as an event-scheduling problem rather than a static timer choice: decide whether a charge is needed, score candidate launch times by heating penalty plus battery-aware marginal electricity cost, actively launch the chosen event, and leave timer windows as fallback rails. Heating + DHW is the dominant controllable winter load, so this scheduler is the main house-level optimisation lever rather than a minor tariff tweak.
+
 ## Pilot History
 
 Key findings from V1 and V2 deployment that shaped the current design.
@@ -125,6 +131,7 @@ The controller writes to a small set of VRC 700 registers via ebusd TCP.
 | `Z1OpMode` | 0=off, 1=auto, 2=day, 3=night |
 | `Hc1MinFlowTempDesired` | Flow temp floor (19 during operation, 20 on restore) |
 | `HwcSFMode` | DHW boost (auto / load) |
+| `HwcTimer_<Weekday>` | Enable/skip morning DHW top-up per day based on predicted T1 |
 
 Future: `SetModeOverride` to HMU bypasses VRC 700. Message format decoded (D1C encoding). Requires outpacing the 700's 30-second writes.
 

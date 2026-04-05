@@ -1,8 +1,13 @@
 # heatpump-analysis
 
-Analyse heat pump performance from [emoncms.org](https://emoncms.org) monitoring data. Downloads data to a local SQLite database, classifies operating states (heating, DHW, defrost), and produces COP breakdowns, temperature correlations, degree day analysis, and comparisons against manufacturer spec and pre-HP gas consumption.
+Analyse heat pump performance from [emoncms.org](https://emoncms.org) monitoring data. The project downloads monitoring data to a local SQLite database, classifies operating states, runs thermal and DHW analysis, and supports live heating-control experiments.
 
-Built for a **Vaillant Arotherm Plus 5kW** with emonHP monitoring bundle.
+Built for a **Vaillant Arotherm Plus 5kW** with the emonHP monitoring bundle.
+
+This README is a signpost for human readers:
+- use it for quick start, command discovery, and navigation
+- use `docs/` for human explanations and task guides
+- use `lat.md/` for canonical current-state project truth
 
 ## Quick Start
 
@@ -24,7 +29,7 @@ Set `EMONCMS_APIKEY` environment variable to avoid passing `--apikey` each time.
 
 All operating thresholds, feed IDs, house data, and reference data are in `config.toml` — edit that file to change parameters without recompiling.
 
-## Commands
+## CLI reference
 
 | Command | Description |
 |---------|-------------|
@@ -114,32 +119,29 @@ cargo run -- --all-data design-comparison
 
 ## Documentation
 
-### Strategy and plans
-- **[docs/heating-plan.md](docs/heating-plan.md)** — Heating control strategy, constraints, next steps
-- **[docs/dhw-plan.md](docs/dhw-plan.md)** — DHW strategy, scheduling, cylinder model, next steps
-- **[docs/README.md](docs/README.md)** — Documentation guide (how to find the right doc)
+Start with **[docs/README.md](docs/README.md)** for the human docs map.
 
-### Understanding the system
-- **[docs/explanation.md](docs/explanation.md)** — How the operating model works (state machine, flow rates, gap filling)
-- **[docs/hydraulic-analysis.md](docs/hydraulic-analysis.md)** — Pump curves, flow rate degradation, y-filter diagnosis
-- **[docs/house-layout.md](docs/house-layout.md)** — Room connectivity, door states, radiators, pipe topology, sensors
-- **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — Room thermal model: methodology, calibration, equilibrium, moisture
+### Canonical current-state project truth
+- **[lat.md/](lat.md/)** — architecture, domain rules, constraints, infrastructure, controller behaviour, and history-evidence boundaries. Validated by `lat check`.
 
-### Reference
-- **[docs/heating-reference.md](docs/heating-reference.md)** — VRC 700 tuning, eBUS registers, deployment
-- **[docs/dhw-reference.md](docs/dhw-reference.md)** — Cylinder spec, WWHR, charge traces, usage patterns
-- **[docs/vrc700-settings-audit.md](docs/vrc700-settings-audit.md)** — VRC 700 settings, timer encoding, eBUS commands
-- **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit
+### Human-oriented plans and deep dives
+- **[docs/heating-plan.md](docs/heating-plan.md)** — heating strategy and decision rationale
+- **[docs/dhw-plan.md](docs/dhw-plan.md)** — DHW strategy and decision rationale
+- **[docs/explanation.md](docs/explanation.md)** — rationale behind the operating-state model
+- **[docs/hydraulic-analysis.md](docs/hydraulic-analysis.md)** — y-filter / flow-rate evidence and diagnosis
+- **[docs/house-layout.md](docs/house-layout.md)** — detailed room-by-room building notes
+- **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — thermal-model methodology and experiment results
+- **[docs/heating-reference.md](docs/heating-reference.md)** — supporting heating reference details and evidence
+- **[docs/dhw-reference.md](docs/dhw-reference.md)** — supporting DHW reference details and evidence
+- **[docs/vrc700-settings-audit.md](docs/vrc700-settings-audit.md)** — full VRC 700 audit trail and timer-encoding investigation
+- **[docs/history-evidence-workflows.md](docs/history-evidence-workflows.md)** — step-by-step retrospective analysis workflows
+
+### Operations and implementation maps
+- **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — operational setup/runbook detail beyond the lat summary
+- **[docs/emon-installation-runbook.md](docs/emon-installation-runbook.md)** — rebuild/provisioning procedures for emon devices
+- **[docs/code-truth/](docs/code-truth/)** — derived-from-code implementation maps
+- **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus data audit
 - **[docs/pico-ebus-plan.md](docs/pico-ebus-plan.md)** — Pico W eBUS adapter build plan
-
-### Operations
-- **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Monitoring infrastructure (devices, MQTT, eBUS, InfluxDB, Grafana)
-- **[docs/emon-installation-runbook.md](docs/emon-installation-runbook.md)** — How to rebuild/provision emon devices
-- **[docs/history-evidence-workflows.md](docs/history-evidence-workflows.md)** — Step-by-step historical evidence recipes
-
-### Structured knowledge
-- **[lat.md/](lat.md/)** — Agent-facing knowledge graph (architecture, domain, constraints). Validated by `lat check`.
-- **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
 
 ## About This Code
 

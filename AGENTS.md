@@ -112,6 +112,8 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 - emoncms dashboard: `https://emoncms.org/app/view?name=MyHeatpump&readkey=1b00410c57d5df343ede7c09e6aab34f`
 - Read API key (read-only): `1b00410c57d5df343ede7c09e6aab34f`
 
+`AGENTS.md` is now intentionally compact. The canonical current-state architecture, domain rules, infrastructure inventory, controller behaviour, and gotchas live in `lat.md/`.
+
 ## Commands
 
 | Task | Command |
@@ -147,48 +149,21 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 
 ## Where To Read Next
 
-Use `lat.md/` for architecture, constraints, domain facts, calibration values, and infrastructure details.
+Use `lat.md/` for current project truth and `docs/code-truth/` for code location maps.
 
-- `lat.md/constraints.md` — boundaries + code gotchas
-- `lat.md/domain.md` — operating states, DHW cylinder, household usage
-- `lat.md/heating-control.md` — adaptive controller, overnight logic, modes
-- `lat.md/infrastructure.md` — hosts, MQTT, eBUS, baseline VRC 700 settings
-- `lat.md/architecture.md` — module dependencies, data flow, implicit contracts
-- `lat.md/history-evidence.md` — heating-history, dhw-history, history-review boundaries
+- `lat.md/constraints.md` — boundaries, gotchas, eBUS timer rules, duplicated values
+- `lat.md/domain.md` — operating states, house model, DHW cylinder, tariff, feeds
+- `lat.md/heating-control.md` — adaptive controller, overnight logic, modes, pilot history
+- `lat.md/infrastructure.md` — hosts, MQTT, eBUS stack, room sensors, baseline VRC 700 settings
+- `lat.md/architecture.md` — binaries, data flow, config split, implicit contracts
+- `lat.md/history-evidence.md` — default review window and history-review boundaries
 - `docs/code-truth/` — file map, architecture, patterns, decisions
 
-## Operational Facts
+## Fast reminders
 
-- Central hub: `pi5data` (`10.0.1.230`) runs Mosquitto, InfluxDB, Telegraf, Grafana, ebusd, z2m-hub, adaptive-heating-mvp
-- Zigbee2MQTT WebSocket: `ws://emonpi:8080/api`
-- MQTT creds: `emonpi` / `emonpimqtt2016`
-- InfluxDB token on pi5data: `/etc/adaptive-heating-mvp.env` (see `deploy/SECRETS.md`)
-- Adaptive heating API: `http://pi5data:3031`; phone dashboard proxy: `http://pi5data:3030`
-- `heating-monitoring-setup.md` = full infra overview; `docs/emon-installation-runbook.md` = rebuild/recovery
+- Thermal/history commands: `cargo run --bin heatpump-analysis -- ...`
+- Adaptive controller API: `http://pi5data:3031` (phone proxy `http://pi5data:3030`)
+- Infrastructure rebuild/recovery: `heating-monitoring-setup.md`, `docs/emon-installation-runbook.md`
+- Secrets and tokens: `deploy/SECRETS.md`
 
-## High-Value Gotchas
-
-- All domain constants belong in `config.toml` — edit there, not in code
-- Two binaries: use `cargo run --bin heatpump-analysis -- ...` for thermal/history commands
-- `thermal_geometry.json` is the room/geometry source of truth; `config.toml` radiator data must match
-- `StatuscodeNum` is unreliable for DHW detection; use flow-based classification / `last()` on status when needed
-- eBUS timer end time must be `-:-`, never `00:00`
-- Write control commands to VRC 700 (`-c 700`), not HMU; direct HMU writes get overwritten
-- `gaps.rs` bypasses `db.rs` and writes SQLite directly
-- `octopus.rs` reads `~/github/octopus/data/` directly; do not modify that repo from here
-- `scripts/dhw-auto-trigger.py` is legacy/buggy — do not deploy
-- `src/bin/cosy-scheduler.rs` is reference-only; binary removed from pi5data
-- Historical review default: start with `heating-history`, `dhw-history`, or `history-review` over the last 7 days ending now
-
-## Boundaries
-
-- Don't change operating state thresholds without re-validating the full dataset
-- Don't mix simulated and real data by default
-- Don't commit `heatpump.db` or API keys
-- Don't modify `~/github/octopus/` from this project
-- Don't modify monitoring infrastructure from here — use SSH to devices directly
-- Don't tune Cd or landing ACH independently — they are jointly calibrated
-- Rust thermal outputs are authoritative when a CLI command exists; Python is for exploratory analysis only
-- Thresholds are 5kW-specific; don't assume they transfer to a 7kW unit
-- 45°C max flow on heating; no heating above 17°C outside
-- No runtime learning in control logic; static calibration only
+For operational facts, gotchas, and hard boundaries, prefer `lat.md/` instead of duplicating them here.

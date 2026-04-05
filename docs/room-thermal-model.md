@@ -1,5 +1,7 @@
 # Room-by-Room Thermal Model
 
+This is the detailed methodology and experiment log behind the thermal model. The canonical current-state summary of calibrated parameters, constraints, and solver responsibilities lives in `lat.md/thermal-model.md`.
+
 ## Purpose
 
 Calibrate a thermal network model of the house using room temperature sensors, then use it to:

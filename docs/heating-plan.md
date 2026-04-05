@@ -1,10 +1,12 @@
 # Heating Plan
 
+This is an explanation document: it records the heating objective, the reasoning behind the current control approach, and the next decisions to test. For canonical current-state controller behaviour, constraints, and infrastructure facts, use `lat.md/`.
+
 **Objective**: Leather 20-21°C during waking hours (07:00-23:00) at minimum cost. Overnight temperature is not a target - it dips and recovers by 07:00.
 
-Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating reference](heating-reference.md)
+Supporting reference and field notes: [Heating reference](heating-reference.md)
 
-## Constraints
+## Decision constraints
 
 | Constraint | Value | Source |
 |---|---|---|
@@ -41,7 +43,7 @@ Leather dropped 0.8–1.3°C overnight at curve=0.55 (flow 24–40°C). Lower fl
 
 Q2 2026 South East inc VAT. All-in effective 16.7p (from 6,908 kWh, ~£1,151, 12 months inc standing 52.76p/day). 95% of import is off-peak via Powerwall. Battery covers overnight at near-Cosy rates.
 
-## Control approach
+## Current control approach
 
 Two-loop model-predictive control. `Z1OpMode=night` (SP=19, no Optimum Start). VRC 700 treated as black box - inner loop closes on `Hc1ActualFlowTempDesired`.
 
@@ -118,6 +120,8 @@ For each: integrate flow temp → COP → electricity over the night. Pick the c
 
 **Constraint**: morning DHW steals 50-100 min. The target profile must account for DHW timing - see [DHW plan](dhw-plan.md). **On clean crossover nights (T1 ≥45°C at charge end, no overnight draws), morning DHW is unnecessary** — T1 decays to ~43°C by 07:00, well above the 40°C empirical floor. This eliminates the main overnight contention on most nights.
 
+The harder case is when morning DHW is genuinely required. Then the decision is not just whether to keep a morning timer window, but **when the DHW event should happen**. The controller should treat timer windows as fallback envelopes, actively launch `HwcSFMode=load` at the chosen time, and score candidate times by both heating penalty and battery-aware marginal electricity cost. If the battery can bridge to the next Cosy window, an early non-Cosy DHW event is only a small premium over Cosy; if not, it may force expensive import.
+
 ### Empirical parameters
 
 | Parameter | Code | Empirical | Notes |
@@ -151,7 +155,9 @@ On cold days schedule DHW at 22:00 to keep preheat window clear. See [DHW plan](
 | 2. Analyse | Correlate door state with Leather trajectory | 1-2 weeks |
 | 3. Integrate | Conservatory open → hold curve. Closed → immediate recalc. Both open → target Aldora | After data |
 
-## Review
+## How we review this plan
+
+Use historical evidence to judge whether the strategy is working:
 
 ```bash
 date -u
@@ -160,7 +166,7 @@ cargo run --bin heatpump-analysis -- heating-history          # JSON
 cargo run --bin heatpump-analysis -- heating-history --human   # readable
 ```
 
-Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an experiment. Park DHW/door confounders, don't discard them. See `docs/history-evidence-workflows.md` for full workflow.
+Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an experiment. Park DHW and door confounders rather than pretending they did not happen. See `docs/history-evidence-workflows.md` for the full review workflow.
 
 ## Physical improvements
 
@@ -171,22 +177,24 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 | 3 | Jack&Carol bay draught-strip | ~£30 | 60-150W |
 | 4 | EWI on SE wall (~30m2) | ~£5k | 19% demand reduction |
 
-## Current state
+## Current position
 
 | Component | Status |
 |---|---|
 | V2 two-loop control | ✅ Inner loop converges in 1 tick |
 | V2 live solver | ✅ Daytime comfort maintained in clean windows |
 | V2 overnight | 🟡 466 historical nights all at curve=0.55 (uninformative for optimisation). Separate overnight planner to be replaced with unified model + target trajectory. See § Next. |
-| T1-based DHW | 🟡 T1 queried. Min acceptable T1 = 40°C (empirical). Skip logic not yet implemented |
+| T1-based DHW | 🟡 T1 queried. Min acceptable T1 = 40°C (empirical). Morning timer skip logic exists as an interim step, but the target design is an active battery-aware DHW event scheduler with timer fallback. |
 | Door sensors | ⚪ Hardware in hand |
 
-## Next steps
+## Next decisions to test
 
-1. **Unify overnight with daytime model** - remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying target trajectory. Simulate candidate shapes (flat hold, slow ramp, bank+coast, off+preheat) offline, pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
-2. **Morning DHW skip logic** - on clean crossover nights, skip morning DHW (T1 ≈43°C at 07:00 >> 40°C floor). Only schedule when predicted T1 < 40°C. Eliminates main overnight contention. See [DHW plan](dhw-plan.md)
-3. **Fit door sensors** - 2× SNZB-04P (in hand). Stage 1: log only
-4. **Effective HTC validation** - 466 nights show ~190 W/K vs model 261 W/K. May partly explain why thermal model τ=15h was wrong - lower real heat loss means slower cooling
+1. **Battery-aware joint heating/DHW scheduler** - treat heating + DHW as the dominant winter load and score candidate DHW event times by battery-aware marginal electricity cost plus heating comfort penalty. Timer windows become fallback rails, not the primary decision maker.
+2. **Unify overnight with daytime model** - remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying target trajectory. Simulate candidate shapes (flat hold, slow ramp, bank+coast, off+preheat) offline, pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
+3. **Need detection for morning DHW** - use predicted T1 and practical capacity to decide whether a DHW event is required at all. The current morning timer skip logic is only an interim implementation of this broader rule. See [DHW plan](dhw-plan.md)
+4. **Eco/normal mode integration** - read `hmu HwcMode` directly from eBUS for scheduler inputs, status, and duration expectations.
+5. **Fit door sensors** - 2× SNZB-04P (in hand). Stage 1: log only
+6. **Effective HTC validation** - 466 nights show ~190 W/K vs model 261 W/K. May partly explain why thermal model τ=15h was wrong - lower real heat loss means slower cooling
 
 ### Later
 
@@ -199,6 +207,7 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 - **SP=19 night mode**: eliminates Optimum Start, clean separation
 - **No runtime learning**: EMA ran away. Static calibration only
 - **Overnight = daytime model with target trajectory**: no separate planner needed. Same solver, same inner loop. The optimisation is the target trajectory shape (ramp, flat, bank+coast), not a separate system
+- **DHW timing is an event-scheduling problem**: decide whether a charge is required, then choose the best launch time using battery-aware marginal cost and heating contention. Timer windows are fallback envelopes, not the main control logic
 - **V1 bang-bang rejected**: 15-min adjustments meaningless against τ=50h
 
 ## Key files

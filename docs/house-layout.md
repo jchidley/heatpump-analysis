@@ -1,6 +1,6 @@
 # House Layout & Building Physics
 
-Explanation of the building fabric, room connectivity, heating distribution, ventilation, and sensor coverage at 6 Rhodes Avenue, London N22.
+Detailed building-fabric and room-to-room notes for the thermal model. The condensed current house facts used elsewhere in the repo now live in `lat.md/domain.md`; this document keeps the full survey detail.
 
 ## Room Connectivity
 

@@ -1,6 +1,6 @@
 # Heating Reference Data
 
-Domain reference for the control surface, tuning constants, and VRC 700 behaviour. Loaded by agents when reasoning about control changes. For operating policy and decisions, see [Heating plan](heating-plan.md).
+Supporting reference and evidence for heating-control work. The canonical current-state controller behaviour, modes, baseline settings, and constraints now live in `lat.md/heating-control.md`, `lat.md/infrastructure.md`, and `lat.md/constraints.md`. For operating policy and decisions, see [Heating plan](heating-plan.md).
 
 ## VRC 700 heat curve formula
 
@@ -43,43 +43,31 @@ Inverse: `curve = (target_flow - setpoint) / (setpoint - outside)^1.25`
 
 ## Writable eBUS registers
 
-| Register | Purpose |
-|---|---|
-| `Hc1HeatCurve` | Primary control lever (0.10–4.00) |
-| `Z1OpMode` | 0=off, 1=auto, 2=day, **3=night** |
-| `Z1DayTemp` / `Z1NightTemp` | Room setpoint |
-| `Hc1MaxFlowTempDesired` / `Hc1MinFlowTempDesired` | Flow temp bounds |
-| `HwcSFMode` | DHW boost (auto / load) |
-| `HwcTempDesired` | DHW target temp |
-| `Z1QuickVetoTemp` | Temporary override |
+For the canonical control surface and write rules, use `lat.md/heating-control.md` and `lat.md/constraints.md`.
 
-Future: `SetModeOverride` to HMU bypasses VRC 700. Message format decoded (D1C encoding).
+Extra reference notes that are still useful here:
+
+- `Z1QuickVetoTemp` is a temporary override surface, but it is not part of the normal adaptive-controller loop.
+- `SetModeOverride` to the HMU is a future bypass option; the message format is decoded, but the VRC 700 currently overwrites direct HMU writes.
 
 ## System pressure
 
 `FlowPressure` (HMU): 2.01 bar heating, 1.90 bar DHW (hydraulic circuit volume effect — 3-way valve), 2.05 bar idle. Rock steady 1.98–2.03 bar daily mean over 30 days. `WaterPressure` (700) returns empty. `RunDataHighPressure` (HMU) is refrigerant, not water.
 
-## Deployment (pi5data)
+## Deployment and logging
 
-| Component | Location |
-|---|---|
-| Binary | `/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp` |
-| Config | `/home/jack/adaptive-heating-mvp/model/adaptive-heating-mvp.toml` |
-| Thermal geometry | `/home/jack/adaptive-heating-mvp/data/canonical/thermal_geometry.json` |
-| Systemd unit | `/etc/systemd/system/adaptive-heating-mvp.service` |
-| Secrets | `/etc/adaptive-heating-mvp.env` (root:root 0600) |
-| State | `/home/jack/.local/state/adaptive-heating-mvp/state.toml` |
-| Decision log | `/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl` |
+Canonical deployment paths and service expectations are maintained in `lat.md/infrastructure.md` and `lat.md/architecture.md`.
+
+The extra operator detail kept here is:
+
+- Binary path on pi5data: `/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp`
+- State file: `/home/jack/.local/state/adaptive-heating-mvp/state.toml`
+- Decision log: `/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl`
+- Decision metrics are also written to the `adaptive_heating_mvp` InfluxDB measurement
 
 Build: `source ~/.cargo/env && cd ~/adaptive-heating-mvp && cargo build --release`
 
 Deploy source: `scp src/bin/adaptive-heating-mvp.rs pi5data:~/adaptive-heating-mvp/src/main.rs`
-
-## Logging
-
-Every decision logged to:
-- **InfluxDB** (`adaptive_heating_mvp` measurement): target_flow, curve, flow_desired, room temps, outside, action, mode, tariff
-- **Local JSONL** on pi5data: full decision context for debugging
 
 ## Resolved observations
 

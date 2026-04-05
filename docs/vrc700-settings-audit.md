@@ -1,5 +1,7 @@
 # VRC 700 Settings Audit — 30 March 2026
 
+This file keeps the audit trail, root-cause investigation, and recovery details behind the VRC 700 configuration. The canonical current baseline settings and timer rules now live in `lat.md/infrastructure.md` and `lat.md/constraints.md`.
+
 ## System components
 
 Three units on the eBUS, plus external sensors:

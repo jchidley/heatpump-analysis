@@ -88,7 +88,8 @@ DHW timer windows aligned to Cosy tariff. All end times use `-:-` not `00:00`.
 | HwcOpMode | auto | Timer-driven |
 | HwcTempDesired | 45°C | Optimal per analysis |
 | HwcSFMode | auto | Must be auto for timers. Boost = `load`, should auto-revert |
-| HwcTimer (all days) | 05:30;07:00;13:00;15:00;22:00;-:- | Three Cosy windows. **End = -:- not 00:00** |
+| HwcMode (hmu) | eco / normal | Readable via eBUS for status and scheduler inputs, but read-only from external masters |
+| HwcTimer (all days) | 05:30;07:00;13:00;15:00;22:00;-:- | Three Cosy windows. **End = -:- not 00:00**. Adaptive control may temporarily rewrite one weekday to `13:00;15:00;22:00;-:-;-:-;-:-` when predicted T1 at 07:00 is ≥40°C |
 | CylinderChargeHyst | 5K | Triggers at 40°C |
 | MaxCylinderChargeTime | 120 min | |
 | HwcLockTime | 60 min | Anti-cycle lockout |

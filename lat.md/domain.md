@@ -74,7 +74,7 @@ Crossover (HwcStorageTemp ≥ T1 at charge start) = definitive "full" signal. Co
 | Eco | 102 min | 40% (<5°C) | 1.66 kWh | ~3.3 |
 | Normal | 60 min | 2% | 1.19 kWh | ~2.5 |
 
-Eco fails in cold weather (95% timeout below 2°C). Seasonal manual switch Nov–Mar → normal. CylinderChargeHyst=5K (triggers at 40°C).
+Eco fails in cold weather (95% timeout below 2°C). Seasonal manual switch Nov–Mar → normal. `hmu HwcMode` is the authoritative eco/normal status signal on eBUS for scheduler inputs and history, but remains read-only from external masters. CylinderChargeHyst=5K (triggers at 40°C).
 
 No-crossover charges are not always failures. Evening charges serving concurrent showers deliver 2–3× more thermal energy than quiet charges — water goes out the taps, not into the cylinder. Crossover failure only matters if it forces a morning DHW charge that steals preheat on a cold night.
 
@@ -115,7 +115,7 @@ VRC 700 timer windows aligned to Cosy tariff. DHW timing difference is <0.3p/sho
 
 ⚠ Timer end times use `-:-` (TTM byte `0x90`), never `00:00`. See [[constraints#eBUS Timer Encoding]].
 
-Overnight strategy: charge at 22:00 Cosy, monitor T1, top up at 04:00 Cosy only when predicted T1 at 07:00 < 40°C. On clean crossover nights, morning DHW is unnecessary (T1 ≈43°C at 07:00 >> 40°C floor).
+Overnight strategy: charge at 22:00 Cosy, then only schedule a further DHW event if predicted T1 / practical capacity at 07:00 falls below the comfort floor. The controller should score candidate launch times (22:00 bank, battery-backed overnight pre-emptive launch, 04:00 Cosy launch, later fallback inside Cosy) and use timer windows as fallback envelopes rather than the primary decision maker. Current code only implements interim T1-led morning timer rewrites; active event scheduling is the intended next step. On clean crossover nights, morning DHW is unnecessary (T1 ≈43°C at 07:00 >> 40°C floor).
 
 ### HP Contention with Heating
 
@@ -139,7 +139,7 @@ Octopus Cosy tariff with three off-peak windows and a Powerwall battery. 95% of 
 - **All-in effective rate**: 16.7p/kWh (6,908 kWh, ~£1,151, 12 months inc standing + VAT)
 - **Marginal battery-blended rate**: 13.9p/kWh (95% battery coverage)
 
-For scheduling decisions use marginal rate (13.9p), not all-in (16.7p which includes 2.8p/kWh standing charge amortisation). Annual saving: £565 (46%) vs gas combi at current tariff. Octopus data in `~/github/octopus/`, refresh via `cd ~/github/octopus && npm run cli -- refresh`.
+For scheduling decisions use marginal rate (13.9p), not all-in (16.7p which includes 2.8p/kWh standing charge amortisation). But the important operational distinction is battery state: battery-backed non-Cosy kWh are only a small premium over Cosy, while grid-exposed non-Cosy kWh are much more expensive. Heating + DHW is the dominant controllable winter load, so battery adequacy before the next Cosy window is a key input to scheduling. Tariff tables live in `~/github/octopus/`; battery adequacy for scheduling should be sourced from `~/github/energy-hub/` rather than inferred from tariff alone.
 
 ## Feeds
 

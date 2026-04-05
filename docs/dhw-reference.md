@@ -1,6 +1,6 @@
 # DHW Reference Data
 
-Domain reference for the 300L cylinder, sensors, charging behaviour, and measured usage. Loaded by agents when reasoning about DHW capacity, charging, or cylinder physics. For operating policy and decisions, see [DHW plan](dhw-plan.md).
+Supporting reference and evidence for DHW reasoning. The canonical current-state cylinder rules, sensors, scheduling, and household assumptions now live in `lat.md/domain.md` and `lat.md/infrastructure.md`. For operating policy and decisions, see [DHW plan](dhw-plan.md).
 
 ## Cylinder specification
 
@@ -153,6 +153,8 @@ Quiet days: 40–120L. Not everyone showers daily; busiest days have 3–4 showe
 | Showers removed (180L, 44.5−25°C) | 4.1 kWh (117% of usable — why cylinder fully depleted) |
 
 ## z2m-hub remaining-litres algorithm
+
+The condensed current rule summary is maintained in `lat.md/domain.md`; this section keeps the more detailed operational notes.
 
 - **During charge** (bc_flow > 900): watch for HwcStorage ≥ T1 at charge start. On crossover: `remaining = full_litres`
 - **After charge (crossover)**: `remaining = full_litres`, `effective_temp = T1`

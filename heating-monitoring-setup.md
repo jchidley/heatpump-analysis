@@ -2,6 +2,8 @@
 
 *Date: 2026-03-19, updated 2026-03-20 (emonpi rebuild, MQTT architecture, backups)*
 
+This file is now the operational deep-dive and runbook. The canonical current device inventory, data path summary, eBUS stack, room-sensor summary, secrets pointer, and baseline VRC 700 settings live in `lat.md/infrastructure.md`.
+
 ## Overview
 
 Central monitoring of a Vaillant heat pump system using eBUS, MBUS heat meter, Multical DHW meter, and emon ecosystem devices. Data collected on pi5data via MQTT → InfluxDB → Grafana.

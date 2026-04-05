@@ -1,6 +1,6 @@
 # How the Operating Model Works
 
-This document explains how the tool classifies heat pump operating states and why the approach was chosen.
+This document explains the reasoning behind the operating-state model. For the current canonical thresholds, house facts, and DHW scheduling assumptions, see `lat.md/domain.md` and `lat.md/constraints.md`.
 
 ## The Vaillant Arotherm Plus
 
@@ -20,11 +20,13 @@ For the 5kW, the diverter valve switching produces a clear bimodal distribution:
 
 ## Four Operating States
 
-| State | How it's detected | What's happening |
-|-------|-------------------|------------------|
-| **Idle** | Electrical power ≤ 50W | Compressor off, system standby |
-| **Heating** | Flow rate 14.0–14.5 L/min, positive heat output | Space heating via radiators |
-| **DHW** | Flow rate ≥ 15.0 L/min (enter) / < 14.7 (exit), positive heat output | Charging the hot water cylinder |
+The live thresholds and warnings are maintained in `lat.md/domain.md` because they are shared project truth. The model still resolves four states:
+
+| State | Detection signal | What's happening |
+|-------|------------------|------------------|
+| **Idle** | Low electrical power / no active circulation | Compressor off, system standby |
+| **Heating** | Heating-circuit flow band plus positive heat output | Space heating via radiators |
+| **DHW** | Higher diverter-valve flow band plus positive heat output | Charging the hot water cylinder |
 | **Defrost** | Negative heat output or negative delta-T | Reverse cycle melting ice off the outdoor unit |
 
 ### Why not use flow temperature?
@@ -89,7 +91,7 @@ The outside temperature feed's lower resolution matters for gap-filling: the tem
 
 ### DHW scheduling
 
-DHW timer windows are set via eBUS on the VRC 700: **05:30–07:00, 13:00–15:00, 22:00–00:00** (aligned to Octopus Cosy tariff periods). Morning DHW starts at 05:30 to give the HP 1.5h of house heating first (04:00–05:30) at Cosy rate. DHW mode is eco (mild season) or normal (cold season, switched manually on the Arotherm controller). See `docs/dhw-plan.md` for the full DHW scheduling rationale.
+The current DHW timer windows and rules are maintained in `lat.md/domain.md` / `lat.md/infrastructure.md`, with strategy rationale in `docs/dhw-plan.md`. The key reasoning here is unchanged: the morning window is delayed so the heat pump can heat the house first during the Cosy cheap period, and seasonal eco/normal mode choice still matters.
 
 Previously (before 29 Mar 2026), DHW triggered at ~05:05 and ~13:05 daily under the old VRC 700 schedule.
 
@@ -97,11 +99,12 @@ Previously, an emergency DHW auto-trigger script on pi5data forced a cylinder re
 
 ### eBUS and Multical metering (added March 2026)
 
-In addition to the emonHP bundle, the system now has:
-- **eBUS adapter** — decodes internal HP communication (operating mode, compressor speed, target flow temp, cylinder temp, COP calculations). eBUS provides real-time HP state, but **`StatuscodeNum` is unreliable for DHW detection** — code 134 appears during both off/frost standby AND active DHW charging. The Rust thermal model uses `BuildingCircuitFlow` (L/h) instead: > 900 = DHW, 780–900 = heating, < 100 = off.
-- **Multical DHW meter** on emondhw — measures the secondary (tap water) side of the cylinder, giving T1 (hot out), T2 (cold in), flow rate, and thermal power. This enables end-to-end DHW efficiency tracking.
+The current eBUS stack, device inventory, and sensor semantics are maintained in `lat.md/infrastructure.md` and `lat.md/domain.md`. The essential reasoning point for this document is:
 
-Both feed into InfluxDB on pi5data via MQTT bridges. DHW remaining litres tracking is handled by z2m-hub (`~/github/z2m-hub/`), which polls ebusd directly via TCP, detects charge completion, and tracks usage via Multical volume register — writing `dhw.remaining_litres` to InfluxDB. See [dhw-plan.md](dhw-plan.md) for full details including cylinder specification, stratification model, temperature optimisation, and live monitoring setup.
+- **eBUS** gives live internal heat-pump state, but `StatuscodeNum` is not trustworthy for DHW detection.
+- **Multical** gives the independent tap-side DHW truth needed for comfort/capacity tracking.
+
+Together they made fused heating/DHW history possible and enabled the newer T1-led DHW logic described in `docs/dhw-plan.md`.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # History Evidence Workflows
 
-This document is the **how-to guide** for reconstructing historical evidence behind the heating and DHW plans.
+This document is the **how-to guide** for reconstructing historical evidence behind the heating and DHW plans. The canonical command boundaries and default review shape now live in `lat.md/history-evidence.md`; this file keeps the operator workflow and examples.
 
 Use this alongside:
 - `heating-plan.md` — space-heating strategy, questions to answer, and live heating checks

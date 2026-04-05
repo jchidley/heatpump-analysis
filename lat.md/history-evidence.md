@@ -29,6 +29,8 @@ Default output is machine-readable JSON. `--human` is a compact operator summary
 
 [[src/thermal/history.rs#dhw_history_summary]] summarises T1, `HwcStorageTemp`, estimated remaining litres, `HwcSFMode`, active charging state, and detected charge periods.
 
+This command does not yet summarise `hmu HwcMode` or battery adequacy. Those are intended scheduler inputs and must currently be reviewed separately when analysing why one DHW launch time was preferred over another.
+
 The key interpretation rule is that T1 and lower-cylinder storage temperature can diverge sharply after draws. Historical review therefore treats T1, remaining litres, and crossover evidence as separate signals rather than collapsing them into one number.
 
 For one nominated event at native detail, use `dhw-drilldown` instead of widening the whole review window.
