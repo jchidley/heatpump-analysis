@@ -900,17 +900,18 @@ fn run_history_review(
     let days = history_window_days(since, until)?;
     let config_path_str = config_path.to_string_lossy().to_string();
     let heating = match target {
-        HistoryReviewTarget::Heating | HistoryReviewTarget::Both => {
-            Some(thermal::heating_history_summary(config_path, since, until, false)?)
-        }
+        HistoryReviewTarget::Heating | HistoryReviewTarget::Both => Some(
+            thermal::heating_history_summary(config_path, since, until, false)?,
+        ),
         HistoryReviewTarget::Dhw => None,
     };
-    let dhw = match target {
-        HistoryReviewTarget::Dhw | HistoryReviewTarget::Both => {
-            Some(thermal::dhw_history_summary(config_path, since, until, false)?)
-        }
-        HistoryReviewTarget::Heating => None,
-    };
+    let dhw =
+        match target {
+            HistoryReviewTarget::Dhw | HistoryReviewTarget::Both => Some(
+                thermal::dhw_history_summary(config_path, since, until, false)?,
+            ),
+            HistoryReviewTarget::Heating => None,
+        };
 
     let mut review_warnings = Vec::new();
     let dhw_sessions = match target {
@@ -920,9 +921,9 @@ fn run_history_review(
             );
             None
         }
-        HistoryReviewTarget::Dhw | HistoryReviewTarget::Both if !no_sessions => {
-            Some(thermal::dhw_sessions_json_summary(&config_path_str, days, true)?)
-        }
+        HistoryReviewTarget::Dhw | HistoryReviewTarget::Both if !no_sessions => Some(
+            thermal::dhw_sessions_json_summary(&config_path_str, days, true)?,
+        ),
         _ => None,
     };
 
@@ -1029,7 +1030,8 @@ fn heating_history_verdict(summary: &thermal::HeatingHistorySummary) -> HistoryV
     let comfort_miss_count = summary.events.comfort_miss_periods.len();
     let dhw_overlap_count = summary.events.dhw_overlap_periods.len();
     let has_core_comfort = summary.leather_c.is_some();
-    let has_controller_intent = !summary.controller_events.is_empty() || summary.target_flow_c.is_some();
+    let has_controller_intent =
+        !summary.controller_events.is_empty() || summary.target_flow_c.is_some();
 
     let mut success_criteria_checked = vec![
         "waking-hours comfort misses are acceptably rare".to_string(),
@@ -1037,9 +1039,8 @@ fn heating_history_verdict(summary: &thermal::HeatingHistorySummary) -> HistoryV
         "DHW overlap is not materially undermining comfort".to_string(),
     ];
     if summary.events.likely_preheat_start.is_some() {
-        success_criteria_checked.push(
-            "overnight preheat start is visible in controller evidence".to_string(),
-        );
+        success_criteria_checked
+            .push("overnight preheat start is visible in controller evidence".to_string());
     }
 
     let mut supporting_evidence = Vec::new();
@@ -1051,7 +1052,9 @@ fn heating_history_verdict(summary: &thermal::HeatingHistorySummary) -> HistoryV
             ));
         }
     }
-    supporting_evidence.push(format!("comfort miss periods detected: {comfort_miss_count}"));
+    supporting_evidence.push(format!(
+        "comfort miss periods detected: {comfort_miss_count}"
+    ));
     supporting_evidence.push(format!("DHW overlap periods detected: {dhw_overlap_count}"));
     supporting_evidence.push(format!(
         "controller events recorded: {}",
@@ -1108,7 +1111,8 @@ fn heating_history_verdict(summary: &thermal::HeatingHistorySummary) -> HistoryV
 
     HistoryVerdict {
         status,
-        change_under_review: "adaptive heating overnight planner and coupled heating control".to_string(),
+        change_under_review: "adaptive heating overnight planner and coupled heating control"
+            .to_string(),
         success_criteria_checked,
         supporting_evidence,
         confounders,
@@ -1197,7 +1201,8 @@ fn dhw_history_verdict(summary: &thermal::DhwHistorySummary) -> HistoryVerdict {
 
     HistoryVerdict {
         status,
-        change_under_review: "T1-informed DHW timing and charge-completion interpretation".to_string(),
+        change_under_review: "T1-informed DHW timing and charge-completion interpretation"
+            .to_string(),
         success_criteria_checked,
         supporting_evidence,
         confounders,

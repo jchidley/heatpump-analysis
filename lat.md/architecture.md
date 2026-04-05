@@ -12,6 +12,8 @@ The project produces three binaries from a single Cargo workspace with a library
 
 `src/lib.rs` exposes `pub mod thermal` so the adaptive controller can call solver functions as a library dependency. `thermal_geometry.json` must be deployed alongside the binary.
 
+- **`ebus-core`** (library crate, `ebus-core/`): `no_std` eBUS protocol primitives — CRC-8, address classification, byte stuffing, telegram parsing, SYN-delimited framing. Ported from yuhu-ebus. 22 tests. Not yet integrated into the main workspace — standalone crate for future Pico W firmware.
+
 ## Module Dependencies
 
 Analysis and thermal modules are decoupled. They share no config and use different data sources.
@@ -56,7 +58,9 @@ InfluxDB (pi5data, bucket "energy") → `thermal/influx.rs` → calibration/vali
 
 ### Live Control Path
 
-Open-Meteo forecast → outer loop → [[src/thermal/display.rs#bisect_mwt_for_room]] → target flow → inner loop → eBUS `Hc1HeatCurve` write. Decision logs to InfluxDB + local JSONL.
+Open-Meteo forecast drives the outer loop, which solves a trajectory-aware target flow and may launch DHW based on T1 plus Powerwall telemetry.
+
+The path is: Open-Meteo forecast → outer loop → trajectory-aware [[src/thermal/display.rs#bisect_mwt_for_room]] solve → target flow → inner loop → eBUS `Hc1HeatCurve` write. The same outer loop queries Influx for DHW T1 plus the `energy-hub` headroom topic `emon/tesla/discretionary_headroom_to_next_cosy_kWh` (alongside raw Powerwall telemetry for observability) and logs decisions to InfluxDB + local JSONL.
 
 Mobile controls: phone → z2m-hub (:3030) `/api/heating/*` → HTTP proxy → adaptive-heating-mvp (:3031) `/mode/*`, `/status`, `/kill`.
 
@@ -76,6 +80,16 @@ Four active config artifacts define four separate concerns.
 | `artifacts/thermal/regression-thresholds.toml` | `thermal-regression-check` | Artifact regression gates |
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
+
+## Documentation Topology
+
+Markdown in this repo has distinct roles to avoid conflicting truths.
+
+- `lat.md/` holds current structured truth for architecture, domain rules, constraints, infrastructure, and controller behaviour
+- `docs/` and top-level markdown provide human explanations, runbooks, reference evidence, and historical audits; they should point back to `lat.md/` for live facts
+- when first-party docs are condensed, durable operator/reference detail should stay in the active docs and old wording can be recovered from git history rather than a permanent mirror
+- `docs/code-truth/` maps implementation structure from source and is useful for file discovery, not for live operating policy
+- vendored submodule docs remain upstream references and are not reconciled against project `lat.md/`
 
 ## Implicit Contracts
 

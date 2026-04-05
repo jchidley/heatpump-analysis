@@ -1,6 +1,6 @@
 # VRC 700 Settings Audit — 30 March 2026
 
-This file keeps the audit trail, root-cause investigation, and recovery details behind the VRC 700 configuration. The canonical current baseline settings and timer rules now live in `lat.md/infrastructure.md` and `lat.md/constraints.md`.
+This file keeps the audit trail, root-cause investigation, and recovery details behind the VRC 700 configuration. The canonical current baseline settings and timer rules now live in [`lat.md/infrastructure.md`](../lat.md/infrastructure.md) and [`lat.md/constraints.md`](../lat.md/constraints.md).
 
 ## System components
 
@@ -35,7 +35,7 @@ The eBUS register values are correct. The VRC 700's internal scheduling engine i
 
 ## Known-good target configuration
 
-These are the settings derived from the heating and DHW plans (`docs/heating-plan.md`, `docs/dhw-plan.md`). If the controller needs to be reset, re-enter these values.
+These are the settings derived from the [Heating plan](heating-plan.md) and [DHW plan](dhw-plan.md). If the controller needs to be reset, re-enter these values.
 
 ### Heating — Zone 1
 

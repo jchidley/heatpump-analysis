@@ -1,0 +1,15 @@
+[package]
+name = "ebus-core"
+version = "0.1.0"
+edition = "2021"
+description = "eBUS protocol primitives (CRC, framing, telegram parsing) — no_std compatible"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["std"]
+std = []
+# Enable defmt formatting for embedded targets
+defmt = ["dep:defmt"]
+
+[dependencies]
+defmt = { version = "0.3", optional = true }

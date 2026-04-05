@@ -6,7 +6,7 @@ description = "Analyse Vaillant Arotherm heat pump data from emoncms.org — sta
 
 [dependencies]
 polars = { version = "0.46", features = ["lazy", "pivot", "dtype-datetime", "fmt", "round_series", "temporal", "csv", "strings"] }
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }

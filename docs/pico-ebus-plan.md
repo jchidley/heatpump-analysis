@@ -6,6 +6,18 @@ Replace ebusd and john30's closed-source ESP32 firmware with our own
 Rust/Embassy firmware on a Pi Pico W. Log all raw eBUS telegrams to
 InfluxDB via MQTT. Send commands via MQTT when needed. No ebusd dependency.
 
+## Current related truth in `lat.md`
+
+This document is a future build plan. The current live eBUS stack and controller assumptions are documented in `lat.md`.
+
+- [`lat.md/infrastructure.md#eBUS Stack`](../lat.md/infrastructure.md#ebus-stack) — the live ESP32 → ebusd → MQTT stack and the planned Pico W replacement
+- [`lat.md/architecture.md#eBUS Availability`](../lat.md/architecture.md#ebus-availability) — current controller dependency on ebusd TCP availability
+- [`lat.md/constraints.md#eBUS Timer Encoding`](../lat.md/constraints.md#ebus-timer-encoding) — timer byte semantics already learned from VRC 700 work
+- [`lat.md/constraints.md#eBUS Control Flow`](../lat.md/constraints.md#ebus-control-flow) — why writes must go via the VRC 700 rather than directly to the HMU
+- [`lat.md/heating-control.md#Writable eBUS Registers`](../lat.md/heating-control.md#writable-ebus-registers) — the current write surface used by the live controller
+
+When this Pico-based replacement becomes operational truth rather than a plan, the corresponding current-state details should move into `lat.md`.
+
 ## Why
 
 john30's ESP32 firmware (`ebusd-esp` and `ebusd-esp32` repos) is

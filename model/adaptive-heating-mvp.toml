@@ -39,6 +39,11 @@ hwc_op_mode = "auto"
 [topics]
 leather_temp = "emon/emonth2_23/temperature"
 aldora_temp = "zigbee2mqtt/aldora_temp_humid"
+dhw_t1 = "emon/multical/dhw_t1"
+tesla_soc_pct = "emon/tesla/soc_pct"
+tesla_battery_w = "emon/tesla/battery_W"
+tesla_home_w = "emon/tesla/home_W"
+tesla_headroom_to_next_cosy_kwh = "emon/tesla/discretionary_headroom_to_next_cosy_kWh"
 
 [dhw]
 charge_trigger_c = 40.0

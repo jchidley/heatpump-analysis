@@ -34,6 +34,9 @@ Non-obvious code behaviours that have caused bugs or confusion.
 - `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
+- `Hc1ActualFlowTempDesired` reads 0.0 during HP standby — inner loop must guard against this or it ramps the curve to max
+- Cross-compiling for pi5data (aarch64): use `aarch64-unknown-linux-musl` target, not `gnu` (GLIBC version mismatch). `reqwest` must use `rustls-tls` feature.
+- ebusd container has no persistent volumes — `docker restart` re-downloads config CSVs from CDN. If CDN is unreachable, message definitions are lost. Always use `docker compose restart` (recreates properly) not bare `docker restart`.
 
 ## Sensor Gotchas
 

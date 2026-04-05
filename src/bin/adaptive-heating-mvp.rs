@@ -91,6 +91,18 @@ struct Topics {
     /// Multical T1: cylinder top / hot water outlet temperature
     #[serde(default = "default_dhw_t1_topic")]
     dhw_t1: String,
+    /// Powerwall state of charge from energy-hub Tesla collector.
+    #[serde(default = "default_tesla_soc_topic")]
+    tesla_soc_pct: String,
+    /// Powerwall instantaneous battery power (+ve = discharging into home).
+    #[serde(default = "default_tesla_battery_power_topic")]
+    tesla_battery_w: String,
+    /// Whole-home demand at the Powerwall boundary.
+    #[serde(default = "default_tesla_home_power_topic")]
+    tesla_home_w: String,
+    /// Explicit discretionary battery headroom signal from energy-hub.
+    #[serde(default = "default_tesla_headroom_topic")]
+    tesla_headroom_to_next_cosy_kwh: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +205,18 @@ fn default_geometry_path() -> PathBuf {
 }
 fn default_dhw_t1_topic() -> String {
     "emon/multical/dhw_t1".to_string()
+}
+fn default_tesla_soc_topic() -> String {
+    "emon/tesla/soc_pct".to_string()
+}
+fn default_tesla_battery_power_topic() -> String {
+    "emon/tesla/battery_W".to_string()
+}
+fn default_tesla_home_power_topic() -> String {
+    "emon/tesla/home_W".to_string()
+}
+fn default_tesla_headroom_topic() -> String {
+    "emon/tesla/discretionary_headroom_to_next_cosy_kWh".to_string()
 }
 fn default_forecast_url() -> String {
     "https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London".to_string()
@@ -348,6 +372,9 @@ struct RuntimeState {
     /// Whether the last rewritten morning DHW timer kept the 04:00–07:00 window.
     #[serde(default)]
     last_dhw_timer_morning_enabled: Option<bool>,
+    /// Last active DHW scheduler slot already launched via HwcSFMode=load.
+    #[serde(default)]
+    last_dhw_scheduler_slot: Option<String>,
 }
 
 impl Default for RuntimeState {
@@ -362,6 +389,7 @@ impl Default for RuntimeState {
             heating_off: false,
             last_dhw_timer_weekday: None,
             last_dhw_timer_morning_enabled: None,
+            last_dhw_scheduler_slot: None,
         }
     }
 }
@@ -408,6 +436,10 @@ struct StatusHeating {
 struct StatusDhw {
     t1_c: Option<f64>,
     hwc_storage_c: Option<f64>,
+    battery_soc_pct: Option<f64>,
+    battery_power_w: Option<f64>,
+    battery_home_w: Option<f64>,
+    battery_headroom_to_next_cosy_kwh: Option<f64>,
     target_c: f64,
     trigger_c: f64,
     likely_active: bool,
@@ -440,6 +472,12 @@ struct DecisionLog {
     hwc_storage_temp_c: Option<f64>,
     /// Multical T1: actual hot water outlet temperature at cylinder top
     dhw_t1_c: Option<f64>,
+    hwc_mode: Option<String>,
+    battery_soc_pct: Option<f64>,
+    battery_power_w: Option<f64>,
+    battery_home_w: Option<f64>,
+    battery_headroom_to_next_cosy_kwh: Option<f64>,
+    battery_adequate_to_next_cosy: Option<bool>,
     run_status: Option<String>,
     compressor_util: Option<f64>,
     elec_consumption_w: Option<f64>,
@@ -492,6 +530,10 @@ fn default_config() -> Config {
             leather_temp: "emon/emonth2_23/temperature".to_string(),
             aldora_temp: "zigbee2mqtt/aldora_temp_humid".to_string(),
             dhw_t1: default_dhw_t1_topic(),
+            tesla_soc_pct: default_tesla_soc_topic(),
+            tesla_battery_w: default_tesla_battery_power_topic(),
+            tesla_home_w: default_tesla_home_power_topic(),
+            tesla_headroom_to_next_cosy_kwh: default_tesla_headroom_topic(),
         },
         dhw: DhwConfig {
             cosy_windows: vec![
@@ -651,29 +693,34 @@ fn parse_f64(s: Result<String>) -> Option<f64> {
 // InfluxDB queries
 // ---------------------------------------------------------------------------
 
-fn query_latest_room_temp(client: &Client, config: &Config, topic: &str) -> Result<Option<f64>> {
+fn query_latest_topic_value(
+    client: &Client,
+    config: &Config,
+    topic: &str,
+    field: &str,
+    lookback: &str,
+) -> Result<Option<f64>> {
     let token = influx_token(&config.influx_token_env)?;
+    let flux = format!(
+        "from(bucket: \"{}\") |> range(start: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> last() |> keep(columns: [\"_value\"])",
+        config.influx_bucket, lookback, topic, field
+    );
+    query_single_value(client, config, &token, &flux)
+}
+
+fn query_latest_room_temp(client: &Client, config: &Config, topic: &str) -> Result<Option<f64>> {
     let field = if topic == "emon/emonth2_23/temperature" {
         "value"
     } else {
         "temperature"
     };
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: -2h) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> last() |> keep(columns: [\"_value\"])",
-        config.influx_bucket, topic, field
-    );
-    query_single_value(client, config, &token, &flux)
+    query_latest_topic_value(client, config, topic, field, "-2h")
 }
 
 /// Query latest DHW T1 (cylinder top) from InfluxDB Multical data.
 /// Uses _field="value" (emon measurement format, not zigbee).
 fn query_latest_dhw_t1(client: &Client, config: &Config) -> Result<Option<f64>> {
-    let token = influx_token(&config.influx_token_env)?;
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: -2h) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"value\") |> last() |> keep(columns: [\"_value\"])",
-        config.influx_bucket, config.topics.dhw_t1
-    );
-    query_single_value(client, config, &token, &flux)
+    query_latest_topic_value(client, config, &config.topics.dhw_t1, "value", "-2h")
 }
 
 fn query_single_value(
@@ -733,6 +780,16 @@ fn write_influx_decision(client: &Client, config: &Config, entry: &DecisionLog) 
         influx_field("outside_temp_c", entry.outside_temp_c),
         influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
         influx_field("dhw_t1_c", entry.dhw_t1_c),
+        influx_field("battery_soc_pct", entry.battery_soc_pct),
+        influx_field("battery_power_w", entry.battery_power_w),
+        influx_field("battery_home_w", entry.battery_home_w),
+        influx_field(
+            "battery_headroom_to_next_cosy_kwh",
+            entry.battery_headroom_to_next_cosy_kwh,
+        ),
+        entry
+            .battery_adequate_to_next_cosy
+            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 })),
         influx_field("compressor_util", entry.compressor_util),
         influx_field("elec_consumption_w", entry.elec_consumption_w),
         influx_field("yield_power_kw", entry.yield_power_kw),
@@ -957,7 +1014,11 @@ fn sync_morning_dhw_timer(
         result,
         waking.format("%H:%M"),
         predicted_t1,
-        if morning_enabled { "enabled" } else { "skipped" }
+        if morning_enabled {
+            "enabled"
+        } else {
+            "skipped"
+        }
     )))
 }
 
@@ -1068,8 +1129,9 @@ struct ModelCalculation {
 ///
 /// End-to-end: target_leather → required MWT (live solver) → required flow (MWT + ΔT/2)
 ///             → required curve (heat curve formula, initial guess only)
-fn calculate_required_curve(
+fn calculate_required_curve_for_target(
     config: &Config,
+    target_leather_c: f64,
     outside_temp: f64,
     live_delta_t: Option<f64>,
     forecast: Option<&ForecastHour>,
@@ -1089,7 +1151,7 @@ fn calculate_required_curve(
     // Step 1: Solve for required MWT using thermal physics model
     let required_mwt = match heatpump_analysis::thermal::bisect_mwt_for_room(
         "leather",
-        model.target_leather_c,
+        target_leather_c,
         effective_outside,
         effective_solar, // irr_sw
         0.0,             // irr_ne (not available from forecast)
@@ -1117,7 +1179,8 @@ fn calculate_required_curve(
     });
 
     let reason = format!(
-        "{} outside={:.1}°C solar={:.0}W/m² → MWT={} flow={} curve={}",
+        "target={:.1}°C {} outside={:.1}°C solar={:.0}W/m² → MWT={} flow={} curve={}",
+        target_leather_c,
         source,
         effective_outside,
         effective_solar,
@@ -1140,6 +1203,204 @@ fn calculate_required_curve(
         required_curve,
         reason,
     }
+}
+
+fn calculate_required_curve(
+    config: &Config,
+    outside_temp: f64,
+    live_delta_t: Option<f64>,
+    forecast: Option<&ForecastHour>,
+) -> ModelCalculation {
+    calculate_required_curve_for_target(
+        config,
+        config.model.target_leather_c,
+        outside_temp,
+        live_delta_t,
+        forecast,
+    )
+}
+
+const OVERNIGHT_TARGET_DROP_C: f64 = 1.0;
+const OVERNIGHT_COAST_MARGIN_C: f64 = 0.3;
+const DHW_NORMAL_ELEC_KWH: f64 = 2.4;
+const DHW_ECO_ELEC_KWH: f64 = 1.9;
+
+#[derive(Debug, Clone)]
+struct BatteryHeadroom {
+    discretionary_headroom_kwh: f64,
+    dhw_event_kwh: f64,
+    adequate_to_next_cosy: bool,
+}
+
+#[derive(Debug, Clone)]
+struct DhwScheduleDecision {
+    slot_key: String,
+    launch_now: bool,
+    battery_adequate_to_next_cosy: Option<bool>,
+    reason: String,
+}
+
+fn overnight_target_leather(model: &ModelConfig, now: NaiveTime) -> f64 {
+    let waking_start = parse_time(&model.waking_start)
+        .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap());
+    let waking_end =
+        parse_time(&model.waking_end).unwrap_or_else(|| NaiveTime::from_hms_opt(23, 0, 0).unwrap());
+
+    if now >= waking_start && now < waking_end {
+        return model.target_leather_c;
+    }
+
+    let overnight_floor = (model.target_leather_c - OVERNIGHT_TARGET_DROP_C).max(model.setpoint_c);
+    let total_hours = hours_until_time(waking_end, waking_start).max(0.5);
+    let elapsed_hours = if now >= waking_end {
+        hours_until_time(waking_end, now)
+    } else {
+        hours_until_time(waking_end, NaiveTime::from_hms_opt(23, 59, 59).unwrap())
+            + hours_until_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap(), now)
+    }
+    .clamp(0.0, total_hours);
+
+    overnight_floor + (model.target_leather_c - overnight_floor) * (elapsed_hours / total_hours)
+}
+
+fn should_coast_overnight(
+    model: &ModelConfig,
+    now: NaiveTime,
+    current_leather_c: f64,
+    outside_c: f64,
+    target_leather_c: f64,
+) -> bool {
+    if is_waking_hours(model, now) {
+        return false;
+    }
+    if outside_c < 2.0 {
+        return false;
+    }
+    if hours_until_time(
+        now,
+        parse_time(&model.waking_start)
+            .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap()),
+    ) <= 0.5
+    {
+        return false;
+    }
+    current_leather_c >= target_leather_c + OVERNIGHT_COAST_MARGIN_C
+}
+
+fn estimate_dhw_event_kwh(hwc_mode: Option<&str>) -> f64 {
+    if hwc_mode
+        .map(|mode| mode.to_lowercase().contains("eco"))
+        .unwrap_or(false)
+    {
+        DHW_ECO_ELEC_KWH
+    } else {
+        DHW_NORMAL_ELEC_KWH
+    }
+}
+
+fn assess_battery_headroom(
+    discretionary_headroom_kwh: Option<f64>,
+    hwc_mode: Option<&str>,
+) -> Option<BatteryHeadroom> {
+    let discretionary_headroom_kwh = discretionary_headroom_kwh?;
+    let dhw_event_kwh = estimate_dhw_event_kwh(hwc_mode);
+    let adequate_to_next_cosy = discretionary_headroom_kwh >= dhw_event_kwh;
+
+    Some(BatteryHeadroom {
+        discretionary_headroom_kwh,
+        dhw_event_kwh,
+        adequate_to_next_cosy,
+    })
+}
+
+fn current_dhw_slot(now: NaiveTime) -> Option<&'static str> {
+    let t = |hh: u32, mm: u32| NaiveTime::from_hms_opt(hh, mm, 0).unwrap();
+    if now >= t(22, 0) {
+        Some("evening_bank")
+    } else if now < t(4, 0) {
+        Some("overnight_battery")
+    } else if now < t(7, 0) {
+        Some("cosy_morning")
+    } else if now >= t(13, 0) && now < t(16, 0) {
+        Some("afternoon_fallback")
+    } else {
+        None
+    }
+}
+
+fn plan_dhw_schedule(
+    config: &Config,
+    now: DateTime<Local>,
+    outside_c: Option<f64>,
+    dhw_t1: Option<f64>,
+    hwc_storage_c: Option<f64>,
+    hwc_mode: Option<&str>,
+    battery: Option<&BatteryHeadroom>,
+) -> Option<DhwScheduleDecision> {
+    let slot = current_dhw_slot(now.time())?;
+    let waking = parse_time(&config.model.waking_start)
+        .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap());
+    let predicted_t1 = dhw_t1.map(|t1| predict_t1_at_time(t1, now.time(), waking));
+    let trigger = config.dhw.charge_trigger_c;
+    let t1_needs_charge = predicted_t1.map(|t1| t1 < trigger);
+    let storage_needs_charge = hwc_storage_c.map(|t| t < trigger - 2.0);
+    let needs_charge = t1_needs_charge.or(storage_needs_charge).unwrap_or(false);
+    if !needs_charge {
+        return None;
+    }
+
+    let outside = outside_c.unwrap_or(6.0);
+    let deficit = predicted_t1
+        .map(|t1| (trigger - t1).max(0.0))
+        .unwrap_or(0.0);
+    let eco_mode = hwc_mode
+        .map(|mode| mode.to_lowercase().contains("eco"))
+        .unwrap_or(false);
+    let battery_ok = battery.map(|b| b.adequate_to_next_cosy);
+    let launch_now = match slot {
+        "evening_bank" => true,
+        "overnight_battery" => {
+            outside < 2.0 || deficit >= 1.5 || eco_mode || battery_ok == Some(true)
+        }
+        "cosy_morning" => true,
+        "afternoon_fallback" => true,
+        _ => false,
+    };
+
+    let battery_summary = match battery {
+        Some(b) => format!(
+            "headroom_signal={:.2}kWh dhw={:.2}kWh adequate={}",
+            b.discretionary_headroom_kwh,
+            b.dhw_event_kwh,
+            b.adequate_to_next_cosy,
+        ),
+        None => "headroom_signal=unavailable".to_string(),
+    };
+
+    let reason = format!(
+        "slot={} predicted_T1@{}={} trigger={:.1}°C outside={:.1}°C hwc_mode={} {}{}",
+        slot,
+        waking.format("%H:%M"),
+        predicted_t1
+            .map(|v| format!("{:.1}°C", v))
+            .unwrap_or_else(|| "unknown".to_string()),
+        trigger,
+        outside,
+        hwc_mode.unwrap_or("unknown"),
+        battery_summary,
+        if launch_now {
+            " → launch now"
+        } else {
+            " → wait for next Cosy slot"
+        }
+    );
+
+    Some(DhwScheduleDecision {
+        slot_key: format!("{}:{}", now.format("%Y-%m-%d"), slot),
+        launch_now,
+        battery_adequate_to_next_cosy: battery_ok,
+        reason,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1415,7 +1676,43 @@ fn run_outer_cycle(
         .ok()
         .flatten();
     let hwc_storage_temp = parse_f64(ebusd_read(config, "700", "HwcStorageTemp"));
+    let hwc_mode = ebusd_read(config, "hmu", "HwcMode").ok();
     let dhw_t1 = query_latest_dhw_t1(client, config).ok().flatten();
+    let battery_soc_pct = query_latest_topic_value(
+        client,
+        config,
+        &config.topics.tesla_soc_pct,
+        "value",
+        "-30m",
+    )
+    .ok()
+    .flatten();
+    let battery_power_w = query_latest_topic_value(
+        client,
+        config,
+        &config.topics.tesla_battery_w,
+        "value",
+        "-30m",
+    )
+    .ok()
+    .flatten();
+    let battery_home_w =
+        query_latest_topic_value(client, config, &config.topics.tesla_home_w, "value", "-30m")
+            .ok()
+            .flatten();
+    let battery_headroom_to_next_cosy_kwh = query_latest_topic_value(
+        client,
+        config,
+        &config.topics.tesla_headroom_to_next_cosy_kwh,
+        "value",
+        "-30m",
+    )
+    .ok()
+    .flatten();
+    let battery_adequacy = assess_battery_headroom(
+        battery_headroom_to_next_cosy_kwh,
+        hwc_mode.as_deref(),
+    );
 
     let tariff_period = classify_tariff_period(now_time);
 
@@ -1449,17 +1746,26 @@ fn run_outer_cycle(
             writes.push(timer_write);
         }
 
-        let cosy_now = in_any_window(config, now_time);
-        if cosy_now && !is_dhw {
-            if let Some(storage) = hwc_storage_temp {
-                if storage < config.dhw.charge_trigger_c {
+        if !is_dhw {
+            if let Some(dhw_plan) = plan_dhw_schedule(
+                config,
+                now_local,
+                outside_temp,
+                dhw_t1,
+                hwc_storage_temp,
+                hwc_mode.as_deref(),
+                battery_adequacy.as_ref(),
+            ) {
+                if dhw_plan.launch_now
+                    && state.last_dhw_scheduler_slot.as_deref() != Some(dhw_plan.slot_key.as_str())
+                {
                     let res = ebusd_write(config, "700", "HwcSFMode", "load")?;
-                    action = "dhw_boost".to_string();
-                    reason = format!(
-                        "cosy window and HwcStorageTemp {:.1}C below trigger {:.1}C",
-                        storage, config.dhw.charge_trigger_c
-                    );
+                    action = "dhw_schedule_launch".to_string();
+                    reason = dhw_plan.reason.clone();
                     writes.push(format!("HwcSFMode=load -> {}", res));
+                    state.last_dhw_scheduler_slot = Some(dhw_plan.slot_key);
+                } else if action == "hold" {
+                    reason = dhw_plan.reason;
                 }
             }
         }
@@ -1496,22 +1802,42 @@ fn run_outer_cycle(
 
         match state.mode {
             Mode::Occupied => {
-                // Get forecast for current hour
                 let forecast = get_forecast_for_hour(client, config, forecast_cache, current_hour);
-
+                let leather = leather_temp.unwrap_or(config.model.target_leather_c);
                 let waking = is_waking_hours(&config.model, now_time);
-                let preheating = is_preheat_time(&config.model, now_time);
+                let target_leather = if waking {
+                    config.model.target_leather_c
+                } else {
+                    overnight_target_leather(&config.model, now_time)
+                };
 
-                if waking || preheating {
-                    // Restore heating if we were coasting with Z1OpMode=off
+                if should_coast_overnight(&config.model, now_time, leather, outside, target_leather)
+                {
+                    state.target_flow_c = None;
+                    if !state.heating_off {
+                        let res = ebusd_write(config, "700", "Z1OpMode", "off")?;
+                        writes.push(format!("Z1OpMode=off -> {}", res));
+                        state.heating_off = true;
+                    }
+                    action = "overnight_coast".to_string();
+                    reason = format!(
+                        "trajectory target {:.1}°C, leather {:.1}°C, outside {:.1}°C => coast",
+                        target_leather, leather, outside
+                    );
+                } else {
                     if state.heating_off {
                         let res = ebusd_write(config, "700", "Z1OpMode", "night")?;
                         writes.push(format!("Z1OpMode=night (restore from coast) -> {}", res));
                         state.heating_off = false;
                     }
-                    // --- Daytime / preheat: model-predictive control ---
-                    let calc =
-                        calculate_required_curve(config, outside, live_dt, forecast.as_ref());
+
+                    let calc = calculate_required_curve_for_target(
+                        config,
+                        target_leather,
+                        outside,
+                        live_dt,
+                        forecast.as_ref(),
+                    );
 
                     model_forecast_outside = calc.forecast_outside_c;
                     model_forecast_solar = calc.forecast_solar_w_m2;
@@ -1520,13 +1846,11 @@ fn run_outer_cycle(
                     model_required_curve = calc.required_curve;
 
                     if let Some(target_flow) = calc.required_flow {
-                        // Store target_flow for inner loop
                         state.target_flow_c = Some(target_flow);
 
                         if let Some(target_curve) = calc.required_curve {
                             let change = (target_curve - current_curve).abs();
                             if change > config.model.curve_deadband {
-                                // Write the initial curve guess
                                 let res = ebusd_write(
                                     config,
                                     "700",
@@ -1535,13 +1859,15 @@ fn run_outer_cycle(
                                 )?;
                                 writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
                                 curve_after = Some(target_curve);
-                                action = if preheating {
-                                    "preheat_model".to_string()
-                                } else {
+                                action = if waking {
                                     "daytime_model".to_string()
+                                } else {
+                                    "overnight_model".to_string()
                                 };
-                                reason =
-                                    format!("target_flow={:.1}°C: {}", target_flow, calc.reason);
+                                reason = format!(
+                                    "trajectory target {:.1}°C target_flow={:.1}°C: {}",
+                                    target_leather, target_flow, calc.reason
+                                );
 
                                 if target_curve > CURVE_WARN_THRESHOLD {
                                     warn!(
@@ -1551,98 +1877,21 @@ fn run_outer_cycle(
                                 }
                             } else {
                                 action = "hold".to_string();
-                                reason = format!("target_flow={:.1}°C, model curve {:.2} within deadband of current {:.2}: {}",
-                                    target_flow, target_curve, current_curve, calc.reason);
+                                reason = format!(
+                                    "trajectory target {:.1}°C target_flow={:.1}°C, model curve {:.2} within deadband of current {:.2}: {}",
+                                    target_leather,
+                                    target_flow,
+                                    target_curve,
+                                    current_curve,
+                                    calc.reason
+                                );
                             }
                         }
                     } else {
                         action = "hold".to_string();
-                        reason = format!("model returned no target: {}", calc.reason);
-                    }
-                } else {
-                    // --- Overnight: Phase 2 planner ---
-                    let waking = parse_time(&config.model.waking_start)
-                        .unwrap_or(NaiveTime::from_hms_opt(7, 0, 0).unwrap());
-
-                    // Get overnight forecast hours
-                    let overnight_forecast: Vec<ForecastHour> = (0..24)
-                        .filter_map(|h| {
-                            let fh = get_forecast_for_hour(
-                                client,
-                                config,
-                                forecast_cache,
-                                (current_hour + h) % 24,
-                            );
-                            // Only include hours until waking
-                            if h as f64 <= 12.0 {
-                                fh
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-
-                    let leather = leather_temp.unwrap_or(20.0);
-                    let plan = plan_overnight(
-                        leather,
-                        &overnight_forecast,
-                        now_time,
-                        waking,
-                        &config.model,
-                    );
-
-                    // Restore heating if we were coasting with Z1OpMode=off
-                    if state.heating_off && (plan.maintain_heating || plan.preheat_start_hours_from_now <= 0.25) {
-                        let res = ebusd_write(config, "700", "Z1OpMode", "night")?;
-                        writes.push(format!("Z1OpMode=night (restore from coast) -> {}", res));
-                        state.heating_off = false;
-                    }
-
-                    if plan.maintain_heating {
-                        // Cold night: maintain heating, inner loop tracks
-                        state.target_flow_c = Some(plan.preheat_target_flow);
-                        let target_curve = plan.overnight_heating_curve;
-                        if (target_curve - current_curve).abs() > config.model.curve_deadband {
-                            let res = ebusd_write(
-                                config,
-                                "700",
-                                "Hc1HeatCurve",
-                                &format!("{:.2}", target_curve),
-                            )?;
-                            writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
-                            curve_after = Some(target_curve);
-                        }
-                        action = "overnight_maintain".to_string();
-                        reason = plan.reason;
-                    } else if plan.preheat_start_hours_from_now <= 0.25 {
-                        // Time to preheat: set target_flow, inner loop tracks
-                        state.target_flow_c = Some(plan.preheat_target_flow);
-                        let target_curve = plan.preheat_curve;
-                        if (target_curve - current_curve).abs() > config.model.curve_deadband {
-                            let res = ebusd_write(
-                                config,
-                                "700",
-                                "Hc1HeatCurve",
-                                &format!("{:.2}", target_curve),
-                            )?;
-                            writes.push(format!("Hc1HeatCurve={:.2} -> {}", target_curve, res));
-                            curve_after = Some(target_curve);
-                        }
-                        action = "overnight_preheat".to_string();
-                        reason = plan.reason;
-                    } else {
-                        // Coasting: turn heating OFF, inner loop idle
-                        state.target_flow_c = None;
-                        if !state.heating_off {
-                            // Turn off heating circuit
-                            let res = ebusd_write(config, "700", "Z1OpMode", "off")?;
-                            writes.push(format!("Z1OpMode=off -> {}", res));
-                            state.heating_off = true;
-                        }
-                        action = "overnight_coast".to_string();
                         reason = format!(
-                            "coast {:.1}h then preheat: {}",
-                            plan.preheat_start_hours_from_now, plan.reason
+                            "model returned no target for trajectory {:.1}°C: {}",
+                            target_leather, calc.reason
                         );
                     }
                 }
@@ -1712,6 +1961,7 @@ fn run_outer_cycle(
         guard.heating_off = state.heating_off;
         guard.last_dhw_timer_weekday = state.last_dhw_timer_weekday.clone();
         guard.last_dhw_timer_morning_enabled = state.last_dhw_timer_morning_enabled;
+        guard.last_dhw_scheduler_slot = state.last_dhw_scheduler_slot.clone();
         save_runtime_state(&config.state_file, &guard)?;
     }
 
@@ -1724,6 +1974,12 @@ fn run_outer_cycle(
         outside_temp_c: outside_temp,
         hwc_storage_temp_c: hwc_storage_temp,
         dhw_t1_c: dhw_t1,
+        hwc_mode,
+        battery_soc_pct,
+        battery_power_w,
+        battery_home_w,
+        battery_headroom_to_next_cosy_kwh,
+        battery_adequate_to_next_cosy: battery_adequacy.as_ref().map(|b| b.adequate_to_next_cosy),
         run_status: status,
         compressor_util,
         elec_consumption_w: elec_consumption,
@@ -1794,6 +2050,13 @@ fn run_inner_cycle(config: &Config, runtime: &Arc<Mutex<RuntimeState>>) -> Resul
         (Some(fd), Some(cb)) => (fd, cb),
         _ => return Ok(()), // missing readings, skip
     };
+
+    // When the HP is in standby, Hc1ActualFlowTempDesired reads 0.0.
+    // Without this guard the inner loop sees error = target - 0 ≈ 29°C
+    // and ramps the curve to 3+ before the next outer tick resets it.
+    if fd < 1.0 {
+        return Ok(());
+    }
 
     // Proportional feedback: error = target - actual
     let error = target_flow - fd;
@@ -1932,6 +2195,42 @@ fn build_status_snapshot(config: &Config, runtime: RuntimeState) -> StatusSnapsh
         .ok()
         .flatten();
     let t1_c = query_latest_dhw_t1(&client, config).ok().flatten();
+    let battery_soc_pct = query_latest_topic_value(
+        &client,
+        config,
+        &config.topics.tesla_soc_pct,
+        "value",
+        "-30m",
+    )
+    .ok()
+    .flatten();
+    let battery_power_w = query_latest_topic_value(
+        &client,
+        config,
+        &config.topics.tesla_battery_w,
+        "value",
+        "-30m",
+    )
+    .ok()
+    .flatten();
+    let battery_home_w = query_latest_topic_value(
+        &client,
+        config,
+        &config.topics.tesla_home_w,
+        "value",
+        "-30m",
+    )
+    .ok()
+    .flatten();
+    let battery_headroom_to_next_cosy_kwh = query_latest_topic_value(
+        &client,
+        config,
+        &config.topics.tesla_headroom_to_next_cosy_kwh,
+        "value",
+        "-30m",
+    )
+    .ok()
+    .flatten();
 
     let likely_active = run_status
         .as_deref()
@@ -1952,6 +2251,9 @@ fn build_status_snapshot(config: &Config, runtime: RuntimeState) -> StatusSnapsh
     }
     if t1_c.is_none() {
         warnings.push("DHW T1 unavailable".to_string());
+    }
+    if battery_headroom_to_next_cosy_kwh.is_none() {
+        warnings.push("battery headroom signal unavailable".to_string());
     }
     if current_curve.is_none() {
         warnings.push("current heat curve unavailable from eBUS".to_string());
@@ -1978,6 +2280,10 @@ fn build_status_snapshot(config: &Config, runtime: RuntimeState) -> StatusSnapsh
         dhw: StatusDhw {
             t1_c,
             hwc_storage_c,
+            battery_soc_pct,
+            battery_power_w,
+            battery_home_w,
+            battery_headroom_to_next_cosy_kwh,
             target_c: config.dhw.target_c,
             trigger_c: config.dhw.charge_trigger_c,
             likely_active,
@@ -2058,6 +2364,115 @@ async fn api_kill(State(state): State<ServiceState>) -> Json<serde_json::Value> 
     }))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn test_config() -> Config {
+        default_config()
+    }
+
+    #[test]
+    fn overnight_trajectory_ramps_toward_waking_target() {
+        let config = test_config();
+        let late_evening = NaiveTime::from_hms_opt(23, 0, 0).unwrap();
+        let prewake = NaiveTime::from_hms_opt(6, 0, 0).unwrap();
+        let waking = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+
+        let evening_target = overnight_target_leather(&config.model, late_evening);
+        let prewake_target = overnight_target_leather(&config.model, prewake);
+        let waking_target = overnight_target_leather(&config.model, waking);
+
+        assert!(evening_target < prewake_target);
+        assert!(prewake_target < waking_target);
+        assert!((waking_target - config.model.target_leather_c).abs() < 0.01);
+    }
+
+    #[test]
+    fn coast_only_when_above_trajectory_and_not_cold() {
+        let config = test_config();
+        let now = NaiveTime::from_hms_opt(1, 0, 0).unwrap();
+        let target = overnight_target_leather(&config.model, now);
+
+        assert!(should_coast_overnight(
+            &config.model,
+            now,
+            target + OVERNIGHT_COAST_MARGIN_C + 0.2,
+            6.0,
+            target,
+        ));
+        assert!(!should_coast_overnight(
+            &config.model,
+            now,
+            target + OVERNIGHT_COAST_MARGIN_C + 0.2,
+            1.0,
+            target,
+        ));
+    }
+
+    #[test]
+    fn battery_headroom_detects_when_signal_can_cover_dhw_event() {
+        let adequacy = assess_battery_headroom(Some(3.2), Some("normal"))
+            .expect("headroom signal should produce an adequacy assessment");
+
+        assert!(adequacy.adequate_to_next_cosy);
+        assert!(adequacy.discretionary_headroom_kwh > adequacy.dhw_event_kwh);
+    }
+
+    #[test]
+    fn battery_headroom_detects_when_signal_is_too_low() {
+        let adequacy = assess_battery_headroom(Some(1.0), Some("normal"))
+            .expect("headroom signal should produce an adequacy assessment");
+
+        assert!(!adequacy.adequate_to_next_cosy);
+        assert!(adequacy.discretionary_headroom_kwh < adequacy.dhw_event_kwh);
+    }
+
+    #[test]
+    fn dhw_scheduler_waits_until_morning_when_battery_cannot_bridge() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 5, 1, 0, 0).unwrap();
+        let battery = assess_battery_headroom(Some(1.0), Some("normal"));
+        let plan = plan_dhw_schedule(
+            &config,
+            now,
+            Some(6.0),
+            Some(40.6),
+            Some(41.0),
+            Some("normal"),
+            battery.as_ref(),
+        )
+        .expect("plan should exist when charge is needed");
+
+        assert!(!plan.launch_now);
+        assert_eq!(plan.battery_adequate_to_next_cosy, Some(false));
+        assert!(plan.reason.contains("wait for next Cosy slot"));
+    }
+
+    #[test]
+    fn dhw_scheduler_launches_overnight_when_battery_can_bridge() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 5, 1, 0, 0).unwrap();
+        let battery = assess_battery_headroom(Some(3.2), Some("normal"));
+        let plan = plan_dhw_schedule(
+            &config,
+            now,
+            Some(6.0),
+            Some(40.6),
+            Some(41.0),
+            Some("normal"),
+            battery.as_ref(),
+        )
+        .expect("plan should exist when charge is needed");
+
+        assert!(plan.launch_now);
+        assert_eq!(plan.battery_adequate_to_next_cosy, Some(true));
+        assert_eq!(plan.slot_key, "2026-04-05:overnight_battery");
+        assert!(plan.reason.contains("launch now"));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -2126,6 +2541,18 @@ async fn main() -> Result<()> {
                 }
                 if let Some(v) = snapshot.dhw.hwc_storage_c {
                     println!("hwc_storage_c: {:.1}", v);
+                }
+                if let Some(v) = snapshot.dhw.battery_soc_pct {
+                    println!("battery_soc_pct: {:.1}", v);
+                }
+                if let Some(v) = snapshot.dhw.battery_power_w {
+                    println!("battery_power_w: {:.0}", v);
+                }
+                if let Some(v) = snapshot.dhw.battery_home_w {
+                    println!("battery_home_w: {:.0}", v);
+                }
+                if let Some(v) = snapshot.dhw.battery_headroom_to_next_cosy_kwh {
+                    println!("battery_headroom_to_next_cosy_kwh: {:.2}", v);
                 }
                 println!(
                     "runtime_age_minutes: {}",

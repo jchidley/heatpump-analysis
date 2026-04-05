@@ -42,7 +42,7 @@ Three eBUS devices:
 
 ebusd config: `--enablehex`, `--enabledefine` are on. `grab result all` shows raw bus traffic including undecoded VWZ AI messages. eBUS coverage: 247 read + 216 write for VRC 700, 117 read + 14 passive for HMU, zero decoded for VWZ AI.
 
-Planned replacement: xyzroe eBus-TTL adapter → Pico W (Rust/Embassy firmware) → MQTT directly. See `docs/pico-ebus-plan.md`.
+Planned replacement: xyzroe eBus-TTL adapter → Pico W (Rust/Embassy firmware) → MQTT directly. See `docs/pico-ebus-plan.md`. Phase 1 complete: `ebus-core/` crate provides `no_std` CRC, address, byte-stuffing, telegram parsing, and SYN-delimited framing (22 tests). Next: Phase 2 (PIO UART on Pico W).
 
 ## Room Sensors
 

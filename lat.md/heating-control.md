@@ -1,6 +1,6 @@
 # Heating Control
 
-V2 model-predictive controller for the Vaillant aroTHERM Plus. Two-loop architecture with overnight planner plus T1-led morning DHW timer rewrites.
+V2 model-predictive controller for the Vaillant aroTHERM Plus. The live controller now runs the thermal solver across day and night with an active DHW launch scheduler plus timer fallback rails.
 
 ## Control Objective
 
@@ -12,13 +12,15 @@ VRC 700 treated as a black box. `Z1OpMode=night` (SP=19) on startup eliminates O
 
 ### Outer Loop
 
-Runs every 900s ([[src/bin/adaptive-heating-mvp.rs#run_outer_cycle]]). Open-Meteo forecast + live thermal solver ([[src/thermal/display.rs#bisect_mwt_for_room]]) → target flow temp → initial curve guess via [[src/bin/adaptive-heating-mvp.rs#calculate_required_curve]].
+Runs every 900s ([[src/bin/adaptive-heating-mvp.rs#run_outer_cycle]]). Open-Meteo forecast + live thermal solver ([[src/thermal/display.rs#bisect_mwt_for_room]]) → target flow temp → initial curve guess via [[src/bin/adaptive-heating-mvp.rs#calculate_required_curve_for_target]].
 
 Uses forecast temperature, solar irradiance, and humidity. `ForecastCache` refreshes every 3600s. When compressor is not actively heating, falls back to `default_delta_t_c` (4.0°C) instead of live flow-return ΔT — prevents target oscillation when flow ≈ return.
 
-Before DHW boost decisions, the same loop predicts cylinder-top T1 at waking time and calls [[src/bin/adaptive-heating-mvp.rs#sync_morning_dhw_timer]]. If predicted T1 at 07:00 is ≥40°C, it rewrites the relevant `HwcTimer_<Weekday>` to drop the 04:00–07:00 morning window; otherwise it restores the full three-window Cosy schedule.
+Space-heating demand is now generated from a continuous Leather trajectory instead of a separate overnight planner. During waking hours the trajectory target is the normal comfort setpoint. Overnight it ramps from roughly target−1°C at 23:00 back to the waking target by 07:00, with explicit coast allowed when actual Leather is already above the trajectory and outside temperature is not in the cold-deficit region.
 
-This timer rewrite is an interim implementation, not the target design. The intended next step is an active battery-aware DHW event scheduler that decides whether a charge is required, reads `hmu HwcMode` as an eBUS input, uses battery adequacy before the next Cosy window as a cost input, chooses the best launch time, and leaves timer windows as fallback rails.
+Before and alongside space-heating decisions, the same loop predicts cylinder-top T1 at waking time and calls [[src/bin/adaptive-heating-mvp.rs#sync_morning_dhw_timer]] so VRC 700 timer windows remain fallback rails. It reads `hmu HwcMode`, raw Powerwall telemetry for observability, and the explicit `energy-hub` headroom topic `emon/tesla/discretionary_headroom_to_next_cosy_kWh`. Overnight non-Cosy launches are now judged against that headroom signal rather than re-deriving battery adequacy locally from SoC and power flows. When the chosen slot is active and predicted T1 at 07:00 falls below the comfort floor, it actively launches DHW via `HwcSFMode=load`.
+
+The contract is now: `energy-hub` publishes discretionary battery headroom to the next Cosy window, while the heating controller decides whether that headroom is worth spending on DHW timing. The morning/afternoon/evening asymmetry remains an operational sense check, not the primary control law: the actual decision should remain model-based and telemetry-driven, with heuristics used only to sanity-check outputs and highlight suspicious conclusions.
 
 ### Inner Loop
 
@@ -32,6 +34,8 @@ Runs every ~60s ([[src/bin/adaptive-heating-mvp.rs#run_inner_cycle]]). Proportio
 | Curve clamp | 0.10–4.00 |
 
 Floor guard: halved gain + doubled deadband when `Hc1HeatCurve < 0.25` prevents hunting where 0.01 curve ≈ 0.20°C flow change.
+
+Standby guard: when `Hc1ActualFlowTempDesired < 1.0` the inner loop skips entirely. During HP standby this register reads 0.0, which without the guard causes `error ≈ 29°C` and ramps the curve to 3+ before the next outer tick resets it.
 
 When `target_flow_c` is `None` (overnight coast), the inner loop does nothing.
 
@@ -59,23 +63,22 @@ API on port 3031: `/status`, `/mode/{mode}`, `/kill` (baseline restore). Mobile 
 
 ## Overnight Strategy
 
-Overnight planner decides between coast, maintain, or preheat based on cooling simulation and reheat estimation.
+Overnight heating now follows the same live thermal solver as daytime control, but against a time-varying room target and a coast heuristic.
 
 ### Coast Mechanism
 
 Coast turns heating **off** via `Z1OpMode=off` — not a low curve. This was changed after discovering that curve 0.10 at SP=19 with `Hc1MinFlowTempDesired=20` still produced 20°C+ flow temp (the hidden floor prevented genuine coasting).
 
-`RuntimeState.heating_off` tracks when `Z1OpMode=off`. Two restore points write `Z1OpMode=night` to re-enable heating:
-1. Entering waking hours or preheat period
-2. During overnight when `maintain_heating` becomes true or preheat is ≤15 min away
+`RuntimeState.heating_off` tracks when `Z1OpMode=off`. The outer loop restores `Z1OpMode=night` before any active heating write, and leaves the system in `off` only while Leather is at least ~0.3°C above the overnight trajectory target, outside temperature is ≥2°C, and waking time is not imminent.
 
-### Planner Logic
+### Trajectory Logic
 
-Binary search ([[src/bin/adaptive-heating-mvp.rs#plan_overnight]]) for latest safe preheat start that delivers Leather ≥20°C by 07:00.
+`[[src/bin/adaptive-heating-mvp.rs#overnight_target_leather]]` defines the overnight room target as a continuous trajectory rather than a binary preheat schedule.
 
-- **Cooling simulation** ([[src/bin/adaptive-heating-mvp.rs#simulate_cooling]]): `projected = current − (current − outside) × (1 − exp(−hours/τ))` with τ=50h ([[src/bin/adaptive-heating-mvp.rs#LEATHER_TAU_H]], empirical, 53 segments)
-- **Reheat estimation** ([[src/bin/adaptive-heating-mvp.rs#estimate_reheat_hours]]): `hours = (target − projected) × thermal_mass / (K × 3600)` with K=7500 (empirical K≈20,600 from 27 segments — each coast night validates)
-- **Cold night override**: below 2°C outside, maintain heating at model-derived curve (HP in deficit, can't recover)
+- **Target shape**: Leather target ramps from roughly target−1°C after 23:00 back to the waking target by 07:00
+- **Continuous solve**: each outer-loop tick calls [[src/bin/adaptive-heating-mvp.rs#calculate_required_curve_for_target]] with the trajectory target, so the same solver path serves day and night
+- **Coast gate**: [[src/bin/adaptive-heating-mvp.rs#should_coast_overnight]] allows `Z1OpMode=off` only when Leather is above target and outside temperature is not in the <2°C deficit zone
+- **Cold night behaviour**: below 2°C outside, the coast gate stays closed and the model keeps heating active
 
 ### Empirical Parameters
 
@@ -101,15 +104,11 @@ COP improves significantly at lower flow temps (from 1,067 heating samples):
 
 The real optimisation is finding the minimum overnight curve where Leather reaches 20°C by 07:00.
 
-### Next: Unified Model
+### Active DHW Scheduling
 
-Replace the separate overnight planner with `bisect_mwt_for_room` running 24/7 on a time-varying target trajectory.
+Morning DHW contention is largely eliminated on clean crossover nights, so most nights remain a pure heating problem and only depleted evenings need another charge.
 
-The question: what Leather trajectory from 23:00 to 07:00 delivers ≥20°C at 07:00 at minimum electricity? Candidate shapes: flat hold, slow ramp, bank+coast, off+preheat.
-
-Morning DHW contention is largely eliminated: on clean crossover nights (T1 ≥45°C at charge end, no overnight draws), T1 decays to ~43°C by 07:00 — well above the 40°C empirical floor (see [[domain#DHW Cylinder#Cylinder Sensors]]). Morning charge only needed when evening draws deplete the tank. This simplifies overnight trajectory optimisation on most nights to a pure heating problem.
-
-When DHW is required, the controller should treat it as an event-scheduling problem rather than a static timer choice: decide whether a charge is needed, score candidate launch times by heating penalty plus battery-aware marginal electricity cost, actively launch the chosen event, and leave timer windows as fallback rails. Heating + DHW is the dominant controllable winter load, so this scheduler is the main house-level optimisation lever rather than a minor tariff tweak.
+The live controller now predicts T1 at 07:00, reads `hmu HwcMode`, and scores overnight non-Cosy launches against the explicit `energy-hub` headroom signal `emon/tesla/discretionary_headroom_to_next_cosy_kWh`. That signal represents spare discretionary battery kWh before the next Cosy window; the controller compares it with the expected DHW event kWh for eco vs normal mode. Timer windows are still maintained as fallback rails by [[src/bin/adaptive-heating-mvp.rs#sync_morning_dhw_timer]], so the VRC 700 can still catch a missed software launch. Raw Powerwall SoC / power topics remain useful for observability and operator review, but the scheduling decision no longer re-derives adequacy locally from them. Any period-specific heuristics should remain secondary sense checks on top of the model, not the decision source itself. Review at least one live cycle / overnight window before treating the new headroom signal as fully trusted operational input.
 
 ## Pilot History
 
@@ -120,6 +119,7 @@ Key findings from V1 and V2 deployment that shaped the current design.
 - **Curve 0.10 ≠ off** (4 Apr 2026): first coast night was confounded — HP still cycling at curve 0.10 due to MinFlowTemp=20 floor. Led to Z1OpMode=off for genuine coast.
 - **τ correction** (4 Apr 2026): `LEATHER_TAU_H` changed from 15→50. Missing `break` in planner meant coast=0 always won.
 - **Sawtooth flag false alarm**: `daytime_model` ↔ `hold` alternations during DHW charges, not real curve oscillation.
+- **Inner loop standby runaway** (5 Apr 2026): `Hc1ActualFlowTempDesired=0.0` during HP standby caused `error≈29°C`, ramping curve to 3.3+ before the next outer tick. Fixed with `fd < 1.0` guard. Also discovered: reqwest needs `rustls-tls` for aarch64 cross-compilation.
 
 ## Writable eBUS Registers
 
@@ -130,8 +130,8 @@ The controller writes to a small set of VRC 700 registers via ebusd TCP.
 | `Hc1HeatCurve` | Primary control lever (0.10–4.00, IEEE 754 float) |
 | `Z1OpMode` | 0=off, 1=auto, 2=day, 3=night |
 | `Hc1MinFlowTempDesired` | Flow temp floor (19 during operation, 20 on restore) |
-| `HwcSFMode` | DHW boost (auto / load) |
-| `HwcTimer_<Weekday>` | Enable/skip morning DHW top-up per day based on predicted T1 |
+| `HwcSFMode` | Active DHW launch lever (`auto` / `load`) |
+| `HwcTimer_<Weekday>` | Fallback rails; skip or keep the morning Cosy window based on predicted T1 |
 
 Future: `SetModeOverride` to HMU bypasses VRC 700. Message format decoded (D1C encoding). Requires outpacing the 700's 30-second writes.
 

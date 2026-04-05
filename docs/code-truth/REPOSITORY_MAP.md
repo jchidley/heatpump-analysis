@@ -8,10 +8,10 @@
 |------|---------|
 | `config.toml` | All domain constants, thresholds, feed IDs, house data, radiator inventory, Arotherm specs, gas-era history |
 | `Cargo.toml` | Dependencies and build configuration (three binaries: `heatpump-analysis`, `thermal-regression-check`, `adaptive-heating-mvp`) |
-| `AGENTS.md` | LLM agent context (canonical project documentation) |
-| `README.md` | Human-facing quick start, command reference, project philosophy |
+| `AGENTS.md` | Agent workflow and doc-routing rules; points to `lat.md/` for current project truth |
+| `README.md` | Human-facing quick start, command reference, and documentation signpost |
 | `heatpump.db` | SQLite database (gitignored, created by `sync`) |
-| `heating-monitoring-setup.md` | Full monitoring infrastructure documentation |
+| `heating-monitoring-setup.md` | Operational deep-dive and runbook detail beyond the `lat.md/` infrastructure summary |
 | `.gitmodules` | Six submodules: ebusd, avrdb_firmware, EmonScripts, emonhub, emoncms, emonPiLCD |
 
 ## Source Modules
@@ -123,10 +123,10 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 
 | Document | Concern |
 |----------|---------|
-| `docs/heating-plan.md` | Heating strategy, constraints, parameters, next steps (LLM working memory) |
-| `docs/dhw-plan.md` | DHW: strategy, scheduling, capacity, decisions (LLM working memory) |
-| `docs/dhw-reference.md` | DHW domain reference: cylinder spec, WWHR, charge traces, usage, z2m-hub algorithm |
-| `docs/heating-reference.md` | Heating domain reference: VRC 700, tuning, eBUS registers, deployment |
+| `docs/heating-plan.md` | Human entry point to heating strategy; defers current-state truth to `lat.md/heating-control.md` |
+| `docs/dhw-plan.md` | Human entry point to DHW strategy; defers current-state truth to `lat.md/domain.md` + `lat.md/heating-control.md` |
+| `docs/dhw-reference.md` | DHW reference and measurement evidence beyond the condensed `lat.md` summary |
+| `docs/heating-reference.md` | Heating reference and field evidence beyond the condensed `lat.md` summary |
 | `docs/pico-ebus-plan.md` | Pico W eBUS adapter build plan |
 | `docs/vrc700-settings-audit.md` | VRC 700 settings, timer encoding, eBUS commands |
 | `docs/dhw-plan.md` | (see above) |
@@ -173,8 +173,8 @@ Validated by `lat check`. Cross-linked with `[[wiki refs]]` to source code.
 | **Adaptive heating config** | `model/adaptive-heating-mvp.toml` |
 | **Adaptive heating modes/API** | `src/bin/adaptive-heating-mvp.rs` (HTTP handlers + Mode enum) |
 | **Adaptive heating baseline** | `model/adaptive-heating-mvp.toml` `[baseline]` + `restore_baseline()` |
-| **Heating strategy + constraints** | `docs/heating-plan.md` (plan) + `docs/heating-reference.md` (reference) |
-| **DHW scheduling + duration model** | `docs/dhw-plan.md` (plan) + `docs/dhw-reference.md` (reference) |
+| **Heating strategy + constraints** | `lat.md/heating-control.md` + `lat.md/constraints.md`, then `docs/heating-plan.md` / `docs/heating-reference.md` for human context |
+| **DHW scheduling + duration model** | `lat.md/domain.md` + `lat.md/heating-control.md`, then `docs/dhw-plan.md` / `docs/dhw-reference.md` for human context |
 | **DHW session analysis** | `src/thermal/dhw_sessions.rs` |
 | **Mobile dashboard** | `~/github/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
 | eBUS polling | `scripts/ebusd-poll.sh` on pi5data |

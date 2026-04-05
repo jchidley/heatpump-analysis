@@ -423,8 +423,7 @@ pub fn heating_history(
     } else {
         println!(
             "{}",
-            serde_json::to_string_pretty(&summary)
-                .map_err(ThermalError::ArtifactSerialize)?
+            serde_json::to_string_pretty(&summary).map_err(ThermalError::ArtifactSerialize)?
         );
     }
     Ok(())
@@ -602,8 +601,7 @@ pub fn dhw_history(
     } else {
         println!(
             "{}",
-            serde_json::to_string_pretty(&summary)
-                .map_err(ThermalError::ArtifactSerialize)?
+            serde_json::to_string_pretty(&summary).map_err(ThermalError::ArtifactSerialize)?
         );
     }
     Ok(())
@@ -1251,7 +1249,12 @@ fn query_dhw_charge_summaries_batched_compact(
         .iter()
         .enumerate()
         .map(|(idx, period)| -> ThermalResult<_> {
-            Ok((idx, period, parse_dt(&period.start)?, parse_dt(&period.end)?))
+            Ok((
+                idx,
+                period,
+                parse_dt(&period.start)?,
+                parse_dt(&period.end)?,
+            ))
         })
         .collect::<ThermalResult<Vec<_>>>()?;
 
@@ -1868,8 +1871,7 @@ fn clip_period_to_waking_hours(period: &Period) -> Vec<Period> {
             let clipped_start = start.max(ws);
             let clipped_end = end.min(we);
             if clipped_start < clipped_end {
-                let dur_min =
-                    (clipped_end - clipped_start).num_seconds() as f64 / 60.0;
+                let dur_min = (clipped_end - clipped_start).num_seconds() as f64 / 60.0;
                 result.push(Period {
                     start: clipped_start.to_rfc3339(),
                     end: clipped_end.to_rfc3339(),

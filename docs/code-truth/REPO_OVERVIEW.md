@@ -1,6 +1,6 @@
 # Repository Overview
 
-> Scope: implementation overview derived from source. For operating policy and deployment truth, see `../heating-plan.md`, `../dhw-plan.md`, `../../deploy/SECRETS.md`, and `../../AGENTS.md`.
+> Scope: implementation overview derived from source. For current operating truth, start in `../../lat.md/`; use `../heating-plan.md`, `../dhw-plan.md`, `../../deploy/SECRETS.md`, and `../../AGENTS.md` as complements.
 
 ```yaml
 commit: 0b91843
@@ -23,7 +23,7 @@ Three main functions:
 
 Beyond this repo:
 - **z2m-hub** (`~/github/z2m-hub/`) — Zigbee automations, DHW tracking/boost, mobile dashboard, and heating mode control proxy
-- **Monitoring infrastructure** — emonpi, emonhp, emondhw, pi5data (see `heating-monitoring-setup.md`)
+- **Monitoring infrastructure** — emonpi, emonhp, emondhw, pi5data (current summary in `../../lat.md/infrastructure.md`, deeper runbooks in `../../heating-monitoring-setup.md`)
 
 ## Key Technologies
 

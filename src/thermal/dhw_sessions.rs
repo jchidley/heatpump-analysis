@@ -1161,7 +1161,10 @@ pub fn dhw_sessions(
         DhwSessionsOutput::Human => output_human(&results, days, false),
         DhwSessionsOutput::Verbose => output_human(&results, days, true),
         DhwSessionsOutput::Json => {
-            println!("{}", serde_json::to_string_pretty(&json_summary(&results)).unwrap())
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json_summary(&results)).unwrap()
+            )
         }
     }
 

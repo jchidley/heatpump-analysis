@@ -1,77 +1,92 @@
 # Heating Reference Data
 
-Supporting reference and evidence for heating-control work. The canonical current-state controller behaviour, modes, baseline settings, and constraints now live in `lat.md/heating-control.md`, `lat.md/infrastructure.md`, and `lat.md/constraints.md`. For operating policy and decisions, see [Heating plan](heating-plan.md).
+Supporting reference and evidence for heating-control work. The canonical current-state controller behaviour, modes, baseline settings, and constraints live in [`../lat.md/heating-control.md`](../lat.md/heating-control.md), [`../lat.md/infrastructure.md`](../lat.md/infrastructure.md), and [`../lat.md/constraints.md`](../lat.md/constraints.md). For operating policy and narrative reasoning, see [Heating plan](heating-plan.md).
 
-## VRC 700 heat curve formula
+## What this file keeps
 
-```
+This file is for compact extra reference notes that are useful to humans but too detailed or too transient for the canonical `lat.md` summary.
+
+## VRC 700 heat-curve formula reference
+
+Useful as an intuition/initial-guess aid, not as the control law:
+
+```text
 flow_temp = setpoint + curve × (setpoint - outside)^1.25
 ```
 
-Exponent 1.25 is best-fit from pilot data (Vaillant says 1.10 — underpredicts by 2.5–3.1°C at curves ≥0.50).
+Inverse:
 
-Inverse: `curve = (target_flow - setpoint) / (setpoint - outside)^1.25`
+```text
+curve = (target_flow - setpoint) / (setpoint - outside)^1.25
+```
 
-## SP=19 rationale
+Why this remains only a reference note:
 
-- Curve 0.10 = genuinely zero rad output (no formula leakage)
-- Any overnight heating is a deliberate curve raise
-- Curves stay under 1.50 warning up to 15°C outside
+- Vaillant documentation suggests exponent `1.10`, but field fit is closer to `1.25`
+- the VRC 700 behaves like a black box with hidden floors and undocumented behaviour
+- the live controller closes the loop on `Hc1ActualFlowTempDesired`, not on this formula
 
-**VRC 700 is opaque.** Back-solving gives effective setpoint ~20°C (not 19 or 21). Hidden `Hc1MinFlowTempDesired`=20°C floor. Undocumented Optimum Start ramp (~3h before day timer). Night mode eliminates all of this. **Do not model the formula. Inner loop closes on `Hc1ActualFlowTempDesired`.**
+## SP=19 / night-mode rationale
 
-## Inner loop tuning
+The operational rules are in [`../lat.md/heating-control.md`](../lat.md/heating-control.md). The practical reasoning note preserved here is:
 
-| Parameter | Value |
-|---|---|
-| Gain | 0.05 (halved to 0.025 below curve 0.25) |
-| Deadband | 0.5°C (doubled to 1.0°C below curve 0.25) |
-| Convergence | 1–2 ticks |
-| Max step | 0.20 |
-| Curve clamp | 0.10–4.00 |
-| Convergence | 1–2 ticks |
+- running adaptive control with `Z1OpMode=night` and `SP=19` removes timer transitions and Optimum Start interference
+- a low curve is **not** equivalent to off if `Hc1MinFlowTempDesired` is still imposing a floor
+- this is why genuine coast uses `Z1OpMode=off`
 
-**ΔT stabilisation**: live flow-return ΔT only when `RunDataStatuscode` contains "Heating" + "Compressor". Otherwise `default_delta_t_c` = 4.0°C.
+## Inner-loop tuning notes
 
-**No runtime learning**: `room_offset` EMA ran away to +2.18°C overnight (learned cooling trend as "model error", suppressed preheat by ~8°C). Static calibration only.
+Canonical values live in [`../lat.md/heating-control.md#Inner Loop`](../lat.md/heating-control.md#inner-loop).
 
-## Comfort guard layers
+Field note retained here:
 
-1. **Hard constraints**: any heated room <18°C → raise curve. DHW active → don't adjust
-2. **COP optimisation**: gradient-follow toward better COP, stop when rooms cool
-3. **Context**: tariff, door states, occupancy, forecast
+- low-curve operation is where the controller is most likely to hunt, because each `0.01` curve step can move target flow by roughly `0.2°C`
 
-## Writable eBUS registers
+## Writable eBUS register notes
 
-For the canonical control surface and write rules, use `lat.md/heating-control.md` and `lat.md/constraints.md`.
+For the official write surface, use [`../lat.md/heating-control.md#Writable eBUS Registers`](../lat.md/heating-control.md#writable-ebus-registers) and [`../lat.md/constraints.md#eBUS Control Flow`](../lat.md/constraints.md#ebus-control-flow).
 
-Extra reference notes that are still useful here:
+Extra notes worth preserving here:
 
-- `Z1QuickVetoTemp` is a temporary override surface, but it is not part of the normal adaptive-controller loop.
-- `SetModeOverride` to the HMU is a future bypass option; the message format is decoded, but the VRC 700 currently overwrites direct HMU writes.
+- `Z1QuickVetoTemp` exists, but is not part of the normal adaptive-controller loop
+- `SetModeOverride` to the HMU remains a future bypass option; direct HMU control is not the current operating model
 
-## System pressure
+## System pressure note
 
-`FlowPressure` (HMU): 2.01 bar heating, 1.90 bar DHW (hydraulic circuit volume effect — 3-way valve), 2.05 bar idle. Rock steady 1.98–2.03 bar daily mean over 30 days. `WaterPressure` (700) returns empty. `RunDataHighPressure` (HMU) is refrigerant, not water.
+`FlowPressure` is the useful water-pressure register.
 
-## Deployment and logging
+- Heating: ~2.01 bar
+- DHW: ~1.90 bar
+- Idle: ~2.05 bar
 
-Canonical deployment paths and service expectations are maintained in `lat.md/infrastructure.md` and `lat.md/architecture.md`.
+Interpretation:
 
-The extra operator detail kept here is:
+- the small DHW dip is a hydraulic-circuit volume effect when the 3-way valve switches circuits
+- `WaterPressure` on the 700 returns empty
+- `RunDataHighPressure` is refrigerant pressure, not system water pressure
 
-- Binary path on pi5data: `/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp`
-- State file: `/home/jack/.local/state/adaptive-heating-mvp/state.toml`
-- Decision log: `/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl`
-- Decision metrics are also written to the `adaptive_heating_mvp` InfluxDB measurement
+## Deployment and logging notes
 
-Build: `source ~/.cargo/env && cd ~/adaptive-heating-mvp && cargo build --release`
+Canonical deployment expectations live in [`../lat.md/architecture.md`](../lat.md/architecture.md) and [`../lat.md/infrastructure.md`](../lat.md/infrastructure.md).
 
-Deploy source: `scp src/bin/adaptive-heating-mvp.rs pi5data:~/adaptive-heating-mvp/src/main.rs`
+Useful operator details retained here:
 
-## Resolved observations
+- binary path on `pi5data`: `/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp`
+- state file: `/home/jack/.local/state/adaptive-heating-mvp/state.toml`
+- JSONL decision log: `/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl`
+- metrics are also written to the `adaptive_heating_mvp` InfluxDB measurement
 
-- **`CurrentCompressorUtil`**: reads negative values (−29, −55, −89, −102). Unreliable — do not use for control
-- **Sawtooth flag**: `daytime_model` ↔ `hold` alternations during DHW charges. Not real oscillation
-- **Service hang** (2 Apr ~12:46): reqwest had no timeout. Fixed: 10s timeout on all HTTP
-- **2 Apr door-open**: Leather stuck 19.6–19.9°C for 6h — conservatory door open (~1,500W cold air). Inner loop correctly compensated
+Typical rebuild on `pi5data`:
+
+```bash
+source ~/.cargo/env
+cd ~/adaptive-heating-mvp
+cargo build --release
+```
+
+## Resolved observations worth remembering
+
+- `CurrentCompressorUtil` returns negative values in practice and is not trustworthy for control
+- some apparent sawtooth behaviour was just normal mode transitions around DHW charges
+- a service hang on 2 Apr was traced to missing reqwest timeouts and fixed with 10s HTTP timeouts
+- a long Leather underperformance window on 2 Apr was consistent with the conservatory door being open, not controller instability
