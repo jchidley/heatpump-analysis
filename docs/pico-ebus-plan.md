@@ -221,18 +221,19 @@ bit. Only enabled when actively sending (Phase 5).
 
 PIO programs are ~15 instructions each. Saleae verifies timing.
 
-## Rust Crate: `ebus-core` (no_std)
+## Rust Crate: `ebus-core` (no_std) — IMPLEMENTED
 
-Ported from `yuhu-ebus/` submodule — only the parts we need.
+Ported from `yuhu-ebus/` submodule — only the parts we need. **Phase 1 complete**: crate lives at `ebus-core/` in the repo with 22 passing tests.
 
-### What we port (~500 lines of logic)
+### What was ported (~710 lines of Rust)
 
-| yuhu-ebus source | Rust module | What |
-|-----------------|-------------|------|
-| `Utils/Common.cpp` (155 lines) | `crc.rs`, `address.rs` | CRC-8 table, `is_master()`, `slave_of()` |
-| `Core/Sequence.cpp` (170 lines) | `sequence.rs` | Byte stuffing / unstuffing |
-| `Core/Telegram.cpp` (462 lines) | `telegram.rs` | Parse master + slave parts |
-| `Core/Request.cpp` (219 lines) | `arbitration.rs` | Bus request FSM (Phase 5 only) |
+| yuhu-ebus source | Rust module | What | Status |
+|-----------------|-------------|------|--------|
+| `Utils/Common.cpp` (155 lines) | `crc.rs`, `address.rs` | CRC-8 table, `is_master()`, `slave_of()` | ✅ Done |
+| `Core/Sequence.cpp` (170 lines) | `sequence.rs` | Byte stuffing / unstuffing | ✅ Done |
+| `Core/Telegram.cpp` (462 lines) | `telegram.rs` | Parse master + slave parts | ✅ Done |
+| — (new) | `framer.rs` | SYN-delimited byte stream → frames | ✅ Done |
+| `Core/Request.cpp` (219 lines) | `arbitration.rs` | Bus request FSM (Phase 5 only) | ⏳ Deferred |
 
 ### What we DON'T port
 
@@ -327,15 +328,33 @@ from the CSVs. No runtime CSV parsing.
 
 ## Phases
 
-### Phase 1: `ebus-core` crate (no hardware)
+### Phase 1: `ebus-core` crate (no hardware) — ✅ COMPLETE (5 Apr 2026)
 
 Port protocol primitives. Test on desktop with `cargo test` using test
 vectors from `yuhu-ebus/tests/Core/test_telegram.cpp`.
 
-### Phase 2: PIO UART (Pico W, no eBUS)
+**Delivered** (`ebus-core/` in repo):
+
+| Module | What | Tests |
+|--------|------|-------|
+| `symbols.rs` | SYN, ACK, NAK, ESC, BROADCAST constants | — |
+| `crc.rs` | CRC-8 table (poly 0x9B) + `calc_crc()` / `crc_bytes()` | 4 |
+| `address.rs` | `is_master()`, `is_slave()`, `master_of()`, `slave_of()` — 25 valid master addrs | 5 |
+| `sequence.rs` | `extend()` / `reduce()` byte stuffing, CRC over extended bytes | 3 |
+| `telegram.rs` | Parse broadcast, master-master, master-slave; CRC validation; NAK retry stubs | 6 |
+| `framer.rs` | SYN-delimited `Framer` — feed bytes, emit `RawFrame` | 4 |
+
+22 tests total. Builds `no_std` on `thumbv6m-none-eabi`. `Cargo.toml` has optional `defmt` feature for embedded logging.
+
+**Not ported** (as planned): Handler, Controller, Scheduler, PollManager, ClientManager, DeviceScanner, Bus platform layers. NAK retry parsing is stubbed — returns error for now (sufficient for passive listening in Phase 3; full retry parsing needed only for Phase 5 active sending).
+
+### Phase 2: PIO UART (Pico W, no eBUS) — NEXT
 
 PIO RX + TX at 2400/8N1. Test with loopback wire (GP4→GP5).
 Verify timing with Saleae.
+
+**Prerequisites**: Pico W board, xyzroe eBus-TTL adapter (confirm purchased),
+Saleae Logic for timing verification. Embassy runtime + PIO crate setup.
 
 ### Phase 3: Passive listener (first connection to real bus)
 

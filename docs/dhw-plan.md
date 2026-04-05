@@ -11,6 +11,22 @@ Use these `lat.md` sections for the current operational truth behind this plan:
 - [`lat.md/heating-control.md#Active DHW Scheduling`](../lat.md/heating-control.md#active-dhw-scheduling) — how the live controller currently makes DHW timing decisions
 - [`lat.md/architecture.md#Live Control Path`](../lat.md/architecture.md#live-control-path) — how telemetry and control decisions flow through the system
 
+## Current status (5 Apr 2026)
+
+DHW scheduling is **operational** within the adaptive heating controller.
+
+**What's working:**
+- Evening Cosy charge (22:00 window): reliable, T1 reaches 45°C, decays to ~43°C by 07:00 (well above 40°C floor)
+- T1 prediction for morning decision: controller predicts cylinder-top temperature at 07:00
+- `HwcSFMode=load` active trigger: fires when predicted T1 is below comfort floor and slot conditions met
+- `HwcTimer_<Weekday>` fallback rails: maintained by controller as safety net for missed software launches
+- DHW session analysis: `dhw-sessions` CLI writes `dhw_inflection` + `dhw_capacity` to InfluxDB
+- `hmu HwcMode` (eco/normal) read for scheduling input
+
+**Open items:**
+- `energy-hub` headroom signal not yet published — overnight battery-backed DHW launches disabled until `emon/tesla/discretionary_headroom_to_next_cosy_kWh` is available. Impact: on cold depleted evenings, DHW may wait until morning Cosy rather than launching overnight on battery. Low risk — most nights T1 stays above 40°C.
+- Seasonal eco→normal switch still manual (Nov–Mar). `hmu HwcMode` is read-only from eBUS.
+
 ## What this page is for
 
 Use this page when you want a quick human overview of where to read next.
