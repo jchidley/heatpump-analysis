@@ -109,7 +109,7 @@ Best heavy-draw window. Schedule bath + showers here. **Simple rule: if everyone
 
 Key decision: **morning shower budget** — enough practical hot water for expected normal morning showers. Inputs: T1, remaining litres, crossover state, standby decay, next preheat start time.
 
-T1 decays 0.25°C/h. 22:00 charge at 45.5°C → ~43.3°C by 07:00. Marginal — min acceptable T1 TBD (household experiment needed).
+T1 decays 0.19–0.25°C/h (measured). 22:00 charge at 45°C → ~43°C by 07:00. **Min acceptable T1 = 40°C** (empirical: lowest T1 at shower start across 60 days of data, no complaints). On clean crossover nights, morning DHW charge is unnecessary (T1 ≈ 43°C at 07:00 >> 40°C floor). Morning charge only needed when evening draws deplete the tank below the decay trajectory.
 
 ### Historical morning charge data (491 sessions)
 
@@ -192,9 +192,9 @@ Monitor, don't over-engineer. Cylinder turns over 171L/day. Track time since las
 ## Next steps
 
 1. **Joint overnight optimisation with heating** — the unified overnight model (see [Heating plan § Next: unified model](heating-plan.md)) must account for morning DHW timing. DHW steals 50–100 min of HP capacity. The cheapest path to Leather ≥20°C at 07:00 depends on whether a morning DHW charge is needed, and vice versa. Key inputs from DHW: predicted morning shower demand, T1 at 23:00, whether evening charge reached crossover.
-2. **Morning shower-capacity trigger** — validate practical overnight top-up rule based on expected normal showers, not bare T1 cutoff
+2. **Morning DHW skip logic** — on clean crossover nights (T1 ≥ 45°C at charge end, no overnight draws), skip morning DHW entirely. Predicted T1 at 07:00 ≈ 43°C >> 40°C floor. Only schedule morning charge when predicted T1 at 07:00 < 40°C (e.g., big evening draws after last charge)
 3. **VRC 700 sequencing** — investigate how to express "DHW first, then heat" day by day. 61% of charges fit 90 min, 88% in 120 min
-4. **T1-led overnight top-up** — trigger via `HwcSFMode=load` only when predicted morning capacity insufficient
+4. **T1-led overnight top-up** — trigger via `HwcSFMode=load` only when predicted T1 at 07:00 < 40°C
 5. **Summer mains temp repeat** — capacity may shift as mains warms from ~11°C to ~18°C
 6. **Eco/normal mode detection** — detect from max flow temp (≥50°C = normal), plan duration
 

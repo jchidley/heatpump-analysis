@@ -11,3 +11,8 @@ model/__pycache__/
 artifacts/thermal/thermal-*.json
 artifacts/thermal/snapshots/
 cosy-scheduler/target/
+.claude
+.mcp.json
+.pi
+.codex
+lat.md/.cache/

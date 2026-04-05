@@ -116,7 +116,7 @@ For each: integrate flow temp → COP → electricity over the night. Pick the c
 3. Simulate candidate trajectory shapes offline using the thermal solver + COP model. Pick the shape that minimises ∫ electricity while hitting ≥20°C at 07:00
 4. Each real night validates: compare predicted vs actual Leather trajectory and total kWh
 
-**Constraint**: morning DHW steals 50-100 min. The target profile must account for DHW timing - see [DHW plan](dhw-plan.md).
+**Constraint**: morning DHW steals 50-100 min. The target profile must account for DHW timing - see [DHW plan](dhw-plan.md). **On clean crossover nights (T1 ≥45°C at charge end, no overnight draws), morning DHW is unnecessary** — T1 decays to ~43°C by 07:00, well above the 40°C empirical floor. This eliminates the main overnight contention on most nights.
 
 ### Empirical parameters
 
@@ -178,13 +178,13 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 | V2 two-loop control | ✅ Inner loop converges in 1 tick |
 | V2 live solver | ✅ Daytime comfort maintained in clean windows |
 | V2 overnight | 🟡 466 historical nights all at curve=0.55 (uninformative for optimisation). Separate overnight planner to be replaced with unified model + target trajectory. See § Next. |
-| T1-based DHW | 🟡 T1 queried. Scheduling logic not implemented |
+| T1-based DHW | 🟡 T1 queried. Min acceptable T1 = 40°C (empirical). Skip logic not yet implemented |
 | Door sensors | ⚪ Hardware in hand |
 
 ## Next steps
 
 1. **Unify overnight with daytime model** - remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying target trajectory. Simulate candidate shapes (flat hold, slow ramp, bank+coast, off+preheat) offline, pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
-2. **Morning DHW/heating coordination** - coupled with overnight strategy. DHW steals 50-100 min. Joint optimisation required. See [DHW plan](dhw-plan.md)
+2. **Morning DHW skip logic** - on clean crossover nights, skip morning DHW (T1 ≈43°C at 07:00 >> 40°C floor). Only schedule when predicted T1 < 40°C. Eliminates main overnight contention. See [DHW plan](dhw-plan.md)
 3. **Fit door sensors** - 2× SNZB-04P (in hand). Stage 1: log only
 4. **Effective HTC validation** - 466 nights show ~190 W/K vs model 261 W/K. May partly explain why thermal model τ=15h was wrong - lower real heat loss means slower cooling
 
