@@ -147,14 +147,14 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 |---|---|
 | V2 two-loop control | ✅ Inner loop converges in 1 tick |
 | V2 live solver | ✅ Daytime comfort maintained in clean windows |
-| V2 overnight planner | 🟡 τ=50h + break fix deployed 4 Apr. First real coast night pending |
+| V2 overnight planner | 🟡 First coast night 4–5 Apr: coasted 4h, Leather 21.6→20.3°C, 20.6°C by 07:00, zero comfort miss. Model predicted 0.8°C drop, actual 1.3°C — underpredicted cooling by 1.6×. Implied τ≈30h overnight (vs 50h daytime). Likely lower overnight internal gains (sleeping ≈ 200W vs daytime 650W). More nights needed. |
 | T1-based DHW | 🟡 T1 queried. Scheduling logic not implemented |
 | Open-Meteo forecast | 🟡 Designed, not implemented |
 | Door sensors | ⚪ Hardware in hand |
 
 ## Next steps
 
-1. **Deploy and validate first coast nights** — each night is an experiment: predicted vs actual coast duration, Leather trajectory, and preheat timing
+1. **Continue coast night experiments** — first night (4–5 Apr): model underpredicted cooling by 1.6× (predicted 0.8°C, actual 1.3°C). Implied overnight τ≈30h. Internal gains may be lower overnight (~200W vs 650W daytime). Need more nights, especially colder ones, to separate τ from gains
 2. **Validate K (reheat rate)** — if Leather doesn't reach 20.5°C by 07:00 after calculated preheat start, increase K. Every DHW charge also provides reheat data
 3. **Fit door sensors** — Stage 1 (log only)
 4. **Converge τ and K** — need 10+ coast nights across 0–15°C
