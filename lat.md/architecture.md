@@ -40,7 +40,7 @@ Key isolation: `analysis.rs` has no dependency on `db.rs` — operates purely on
 
 ## Data Flow
 
-Four distinct data paths serve different purposes.
+Five distinct data paths serve different purposes.
 
 ### Sync Path
 
@@ -60,15 +60,20 @@ Open-Meteo forecast → outer loop → [[src/thermal/display.rs#bisect_mwt_for_r
 
 Mobile controls: phone → z2m-hub (:3030) `/api/heating/*` → HTTP proxy → adaptive-heating-mvp (:3031) `/mode/*`, `/status`, `/kill`.
 
+### History Evidence Path
+
+InfluxDB compact queries → [[src/thermal/history.rs#heating_history_summary]] / [[src/thermal/history.rs#dhw_history_summary]] → fused evidence summaries. `history-review` ([[src/main.rs#run_history_review]]) adds heuristic verdicts and optional day-rounded `dhw_sessions` context.
+
 ## Configuration
 
-Three independent TOML configs for three independent concerns.
+Four active config artifacts define four separate concerns.
 
 | File | Used by | Concern |
 |------|---------|---------|
 | `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators |
-| `model/thermal-config.toml` | Thermal model | InfluxDB, test nights, calibration bounds |
+| `model/thermal-config.toml` | Thermal model + history commands | InfluxDB, test nights, calibration bounds |
 | `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, InfluxDB, Cosy windows, baseline, inner loop tuning |
+| `artifacts/thermal/regression-thresholds.toml` | `thermal-regression-check` | Artifact regression gates |
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
 
@@ -93,3 +98,7 @@ Startup: `Z1OpMode=night` + `Hc1MinFlowTempDesired=19`. Shutdown: `Z1OpMode=auto
 ### Thermal Solver Compilation
 
 Since Phase 1b, `adaptive-heating-mvp` calls `bisect_mwt_for_room()` directly from the library crate. `thermal_geometry.json` must be deployed alongside the binary on pi5data. Solver runs in <1ms on ARM.
+
+### History Review Session Scope
+
+`history-review` only includes `dhw_sessions` on rolling day windows. Exact `since`/`until` windows omit that summary because `dhw_sessions` is currently day-rounded and could include out-of-window evidence.

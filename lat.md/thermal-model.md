@@ -118,6 +118,22 @@ Model HTC (261 W/K) overpredicts actual overnight heat loss by ~30% vs 466 night
 
 This may partly explain why the model's Leather τ=15h was wrong — lower real heat loss means slower cooling. The empirical τ=50h (53 segments) is used for control instead.
 
+## Reproducibility and Regression
+
+Thermal outputs are treated as reproducible artifacts. Baselines, thresholds, and config hashes gate changes before they are trusted operationally.
+
+### Snapshots
+
+`thermal-snapshot export` / `import` copy the baseline artifacts, regression thresholds, and chosen thermal config into a signed manifest bundle via [[src/thermal/snapshot.rs#snapshot_export]] and [[src/thermal/snapshot.rs#snapshot_import]].
+
+Both commands require a non-empty signoff reason and explicit `--approved-by-human`. Snapshot import verifies SHA-256 hashes before copying files back into the repo.
+
+### Regression Gates
+
+[[src/bin/thermal-regression-check.rs]] compares candidate thermal artifacts against baselines using `artifacts/thermal/regression-thresholds.toml`. The CI wrapper is `scripts/thermal-regression-ci.sh`.
+
+The default gate set checks four artifact families: calibrate, validate, fit-diagnostics, and operational. Global gates require the command name and config SHA-256 to match the baseline before metric tolerances are considered.
+
 ## Submodules
 
 The thermal model spans 17 Rust source files in `src/thermal/`.

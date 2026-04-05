@@ -1,4 +1,4 @@
-<!-- code-truth: 1c2a44a -->
+<!-- code-truth: 0b91843 -->
 
 # Repository Map
 
@@ -75,14 +75,14 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 | `snapshot.rs` | 233 | Export/import manifests with human signoff |
 | `error.rs` | 99 | `ThermalError` enum |
 | `influx.rs` | 352 | Flux query builders |
-| `display.rs` | 993 | CLI output, **equilibrium solver**, **MWT bisection**, **control table generation** |
+| `display.rs` | 1014 | CLI output, **equilibrium solver**, **MWT bisection**, **control table generation** |
 | `report.rs` | 44 | Table printer and RMSE |
-| `history.rs` | ~2230 | Heating/DHW history reconstruction from InfluxDB. Comfort miss detection (clipped to 07:00–23:00 waking hours), DHW overlap detection, controller event extraction |
-| `dhw_sessions.rs` | ~1050 | DHW draw/charge session analysis: inflection detection, draw type classification (bath/shower/tap), HWC tracking, during-charge draw detection |
+| `history.rs` | ~2259 | Heating/DHW history reconstruction from InfluxDB. Comfort miss detection (clipped to 07:00–23:00 waking hours), DHW overlap detection, controller event extraction |
+| `dhw_sessions.rs` | ~1169 | DHW draw/charge session analysis: inflection detection, draw type classification (bath/shower/tap), HWC tracking, during-charge draw detection |
 
 ## Standalone Binaries
 
-### `src/bin/adaptive-heating-mvp.rs` (~2,030 lines)
+### `src/bin/adaptive-heating-mvp.rs` (~2,053 lines)
 
 Live V2 adaptive heating controller. Two-loop architecture:
 
@@ -94,11 +94,11 @@ Key components:
 - `calculate_required_curve()` — forecast + live solver → MWT → flow → curve. Uses default ΔT when compressor not actively heating (ΔT stabilisation fix).
 - `run_outer_cycle()` — full sensor sweep, mode-specific control logic, writes initial curve
 - `run_inner_cycle()` — light eBUS reads, proportional curve adjustment
-- `restore_baseline()` — write `Hc1HeatCurve=0.55` + `Z1OpMode=auto` on shutdown
+- `restore_baseline()` — write `Hc1HeatCurve=0.55` + `Z1OpMode=auto` + `Hc1MinFlowTempDesired=20` on shutdown
 - HTTP API: `/status`, `/mode/{mode}`, `/kill`
 - Modes: `Occupied`, `ShortAbsence`, `AwayUntil`, `Disabled`, `MonitorOnly`
 
-On startup: `Z1OpMode=night` (SP=19). This eliminates VRC 700 Optimum Start and day/night transitions.
+On startup: `Z1OpMode=night` (SP=19) + `Hc1MinFlowTempDesired=19`. Eliminates Optimum Start, day/night transitions, and the hidden 20°C flow floor that prevented genuine coast.
 
 ### `src/bin/thermal-regression-check.rs` (607 lines)
 
@@ -137,6 +137,20 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | `docs/explanation.md` | Domain background (HTC, COP, degree days) |
 | `docs/emon-installation-runbook.md` | emonPi2/emonhp rebuild procedures |
 | `docs/octopus-data-inventory.md` | Octopus consumption data fields |
+
+## lat.md/ (Agent-Facing Knowledge Graph)
+
+| File | Concern |
+|------|--------|
+| `lat.md/lat.md` | Root index |
+| `lat.md/domain.md` | Domain model: operating states, DHW cylinder, household usage |
+| `lat.md/constraints.md` | Hard constraints: eBUS, VRC 700, tariff, sensors |
+| `lat.md/architecture.md` | Data flow, binary structure, library crate |
+| `lat.md/heating-control.md` | V2 controller: two-loop, overnight, modes, pilot history |
+| `lat.md/thermal-model.md` | Calibration, validation, solver, parameters |
+| `lat.md/infrastructure.md` | Devices, MQTT, eBUS, VRC 700 settings |
+
+Validated by `lat check`. Cross-linked with `[[wiki refs]]` to source code.
 
 ## Concern Mapping
 

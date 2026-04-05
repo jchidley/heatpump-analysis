@@ -114,32 +114,31 @@ cargo run -- --all-data design-comparison
 
 ## Documentation
 
+### Strategy and plans
+- **[docs/heating-plan.md](docs/heating-plan.md)** — Heating control strategy, constraints, next steps
+- **[docs/dhw-plan.md](docs/dhw-plan.md)** — DHW strategy, scheduling, cylinder model, next steps
+- **[docs/README.md](docs/README.md)** — Documentation guide (how to find the right doc)
+
 ### Understanding the system
 - **[docs/explanation.md](docs/explanation.md)** — How the operating model works (state machine, flow rates, gap filling)
 - **[docs/hydraulic-analysis.md](docs/hydraulic-analysis.md)** — Pump curves, flow rate degradation, y-filter diagnosis
-- **[docs/dhw-cylinder-analysis.md](docs/dhw-cylinder-analysis.md)** — Cylinder heat exchange, WWHR performance, standby losses
-- **[docs/overnight-strategy-analysis.md](docs/overnight-strategy-analysis.md)** — Overnight heating strategy and DHW timer optimisation
-
-### Building physics
 - **[docs/house-layout.md](docs/house-layout.md)** — Room connectivity, door states, radiators, pipe topology, sensors
 - **[docs/room-thermal-model.md](docs/room-thermal-model.md)** — Room thermal model: methodology, calibration, equilibrium, moisture
 
-### Adaptive heating control
-- **[docs/adaptive-heating-v2-design.md](docs/adaptive-heating-v2-design.md)** — V2 design: two-loop model-predictive control, phased plan, DHW strategy, pilot findings
-- **[docs/adaptive-heating-control.md](docs/adaptive-heating-control.md)** — Strategy: outcomes-first control, room targeting, the house as a laboratory
-- **[docs/adaptive-heating-mvp.md](docs/adaptive-heating-mvp.md)** — V1 MVP spec (historical, superseded by V2 design)
+### Reference
+- **[docs/heating-reference.md](docs/heating-reference.md)** — VRC 700 tuning, eBUS registers, deployment
+- **[docs/dhw-reference.md](docs/dhw-reference.md)** — Cylinder spec, WWHR, charge traces, usage patterns
 - **[docs/vrc700-settings-audit.md](docs/vrc700-settings-audit.md)** — VRC 700 settings, timer encoding, eBUS commands
-
+- **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit
+- **[docs/pico-ebus-plan.md](docs/pico-ebus-plan.md)** — Pico W eBUS adapter build plan
 
 ### Operations
 - **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — Monitoring infrastructure (devices, MQTT, eBUS, InfluxDB, Grafana)
 - **[docs/emon-installation-runbook.md](docs/emon-installation-runbook.md)** — How to rebuild/provision emon devices
+- **[docs/history-evidence-workflows.md](docs/history-evidence-workflows.md)** — Step-by-step historical evidence recipes
 
-### Reference
-- **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus Energy data audit
-- **[docs/roadmap.md](docs/roadmap.md)** — Planned enhancements (adaptive heating, Pico eBUS, physical improvements)
-- **[docs/pico-ebus-plan.md](docs/pico-ebus-plan.md)** — Pico W eBUS adapter build plan
-- **[docs/rust-migration-plan.md](docs/rust-migration-plan.md)** — Python→Rust migration policy
+### Structured knowledge
+- **[lat.md/](lat.md/)** — Agent-facing knowledge graph (architecture, domain, constraints). Validated by `lat check`.
 - **[docs/code-truth/](docs/code-truth/)** — Derived-from-code documentation (architecture, patterns, decisions)
 
 ## About This Code

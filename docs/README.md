@@ -31,7 +31,25 @@ These are the canonical references for:
 - infrastructure recovery
 - deployment paths and operational procedures
 
-## 3. Implementation maps (`code-truth/`)
+## 3. Structured knowledge (`../lat.md/`)
+
+Use this when asking **what the system currently does, what constraints apply, and how the parts fit together**:
+
+- `../lat.md/domain.md`
+- `../lat.md/constraints.md`
+- `../lat.md/architecture.md`
+- `../lat.md/heating-control.md`
+- `../lat.md/thermal-model.md`
+- `../lat.md/history-evidence.md`
+- `../lat.md/infrastructure.md`
+
+This is the canonical structured source for:
+- architecture and implicit contracts
+- domain facts and current operating assumptions
+- constraints and code gotchas
+- infrastructure and baseline settings
+
+## 4. Implementation maps (`code-truth/`)
 
 Use these when asking **where in the codebase something is implemented**:
 
@@ -49,7 +67,7 @@ These documents are derived from source and are best for:
 
 They are **not** the primary source for current operational policy or deployment truth. For that, use the plan docs and runbooks above.
 
-## 4. Agent/project context
+## 5. Agent/project context
 
 Use `../AGENTS.md` for compact machine/project context, operational gotchas, and agent-facing reminders.
 
@@ -63,6 +81,7 @@ It is **not** the best place for full strategy explanations or detailed code map
 ## Practical rule of thumb
 
 - **What should happen?** → `heating-plan.md`, `dhw-plan.md`
+- **What are the current constraints/facts/architecture?** → `../lat.md/`
 - **How do I check live heating or DHW state?** → live check sections inside `heating-plan.md` and `dhw-plan.md`
 - **How do I reconstruct and review a past window?** → `history-evidence-workflows.md`
 - **How do I operate/recover it?** → runbooks / `deploy/SECRETS.md`

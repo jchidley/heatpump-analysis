@@ -1,4 +1,4 @@
-<!-- code-truth: 1c2a44a -->
+<!-- code-truth: 0b91843 -->
 
 # Architecture
 
@@ -128,7 +128,11 @@ The emonth2 uses `_field = "value"` while Zigbee sensors use `_field = "temperat
 
 ### VRC 700 baseline safety net
 
-On startup: `Z1OpMode=night` (value 3). VRC 700 uses `Z1NightTemp` (19°C) permanently. On shutdown: `Z1OpMode=auto` + `Hc1HeatCurve=0.55`. VRC 700 resumes timer control. Crash without restore: house at 19°C with last curve. Safe.
+On startup: `Z1OpMode=night` (value 3) + `Hc1MinFlowTempDesired=19`. VRC 700 uses `Z1NightTemp` (19°C) permanently. On shutdown: `Z1OpMode=auto` + `Hc1HeatCurve=0.55` + `Hc1MinFlowTempDesired=20`. VRC 700 resumes timer control. Crash without restore: house at 19°C with last curve. Safe.
+
+### Coast mechanism
+
+Coast uses `Z1OpMode=off` (not a low curve). `RuntimeState.heating_off` tracks this state. Two restore points write `Z1OpMode=night` to re-enable: (1) entering waking/preheat hours, (2) during overnight when maintain becomes true or preheat is ≤15 min away. Previous approach (curve 0.10) failed because `Hc1MinFlowTempDesired=20` created a hidden floor.
 
 ### ΔT stabilisation contract
 
@@ -140,7 +144,7 @@ When `Hc1HeatCurve < 0.25`, the inner loop halves its gain and doubles its deadb
 
 ### Overnight planner empirical constants
 
-`LEATHER_TAU_H = 50.0` and `REHEAT_RATE = 7500` in `adaptive-heating-mvp.rs` are hardcoded constants that drive the overnight coast/preheat decision. τ=50h is empirically validated (53 segments). K=7500 is from only 2 data points — empirical K≈20,600 from 27 segments suggests the model overpredicts reheat speed. Each coast-then-preheat night validates these.
+`LEATHER_TAU_H = 50.0` and `REHEAT_RATE = 7500` in `adaptive-heating-mvp.rs` are hardcoded constants that drive the overnight coast/preheat decision. τ=50h is empirically validated (53 segments). K=7500 is conservative — empirical K≈20,600 from 27 segments suggests the code overpredicts reheat time. Each coast-then-preheat night validates these.
 
 ### Config duplication
 

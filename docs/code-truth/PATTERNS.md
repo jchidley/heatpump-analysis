@@ -1,4 +1,4 @@
-<!-- code-truth: 1c2a44a -->
+<!-- code-truth: 0b91843 -->
 
 # Patterns
 
@@ -28,9 +28,9 @@ The adaptive controller uses two nested loops:
 - **Outer loop** (900s): forecast + model → target_flow_c. Writes initial curve guess.
 - **Inner loop** (60s): proportional feedback on `Hc1ActualFlowTempDesired` toward target_flow_c. Converges in 1 tick (~60s).
 
-The outer loop sets `state.target_flow_c`. The inner loop reads it. When `target_flow_c` is `None` (overnight coast), the inner loop does nothing.
+The outer loop sets `state.target_flow_c`. The inner loop reads it. When `target_flow_c` is `None` (overnight coast), the inner loop does nothing. Coast uses `Z1OpMode=off` (tracked by `state.heating_off`); restore to `night` happens at two explicit points.
 
-**Cost to break**: The two loops are tightly coupled through `RuntimeState.target_flow_c`. Changing one requires understanding the other.
+**Cost to break**: The two loops are tightly coupled through `RuntimeState.target_flow_c` and `heating_off`. Changing one requires understanding the other.
 
 ## Analysis Functions: DataFrame In, Stdout Out
 
@@ -75,6 +75,12 @@ eBUS reads and writes use a consistent pattern:
 Each call is a separate TCP connection (no persistent connection).
 
 **Cost to break**: If eBUS commands need batching or persistent connections, all callers change.
+
+## lat.md Knowledge Graph
+
+Structured documentation in `lat.md/` validated by `lat check`. Sections cross-link via `[[wiki refs]]` to source code and to each other. Agent-facing (maintained continuously), complementing code-truth (snapshot for human comprehension).
+
+**Cost to break**: All wiki links must be updated if section headings or source function names change. `lat check` catches broken links.
 
 ## Logging: Dual Sink (InfluxDB + JSONL)
 

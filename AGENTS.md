@@ -145,147 +145,50 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 
 `--apikey` only needed for `feeds` and `sync`. Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands. Three binaries total: `adaptive-heating-mvp` is the live pilot controller.
 
-## Architecture
+## Where To Read Next
 
-See `docs/code-truth/` for detailed architecture, patterns, and decisions.
+Use `lat.md/` for architecture, constraints, domain facts, calibration values, and infrastructure details.
 
-```
-config.toml          → Domain constants, thresholds, feed IDs, radiators
-src/analysis.rs      → State machine + Polars queries
-src/thermal.rs       → Thin facade (re-exports public entry points)
-src/thermal/         → 16 submodules: config, geometry, physics, solar, wind, calibration,
-                       validation, diagnostics, operational, artifact, snapshot,
-                       display, error, influx, report, dhw_sessions
-src/overnight.rs     → Overnight strategy backtest
+- `lat.md/constraints.md` — boundaries + code gotchas
+- `lat.md/domain.md` — operating states, DHW cylinder, household usage
+- `lat.md/heating-control.md` — adaptive controller, overnight logic, modes
+- `lat.md/infrastructure.md` — hosts, MQTT, eBUS, baseline VRC 700 settings
+- `lat.md/architecture.md` — module dependencies, data flow, implicit contracts
+- `lat.md/history-evidence.md` — heating-history, dhw-history, history-review boundaries
+- `docs/code-truth/` — file map, architecture, patterns, decisions
 
-src/lib.rs               → Library crate: exposes thermal solver for adaptive-heating-mvp
-data/canonical/thermal_geometry.json → Room geometry (single source of truth, consumed by Rust thermal solver + adaptive controller)
-model/thermal-config.toml → Thermal model config (InfluxDB, test nights, bounds)
-model/adaptive-heating-mvp.toml → Adaptive heating MVP config
-deploy/adaptive-heating-mvp.service → systemd unit for pi5data
-deploy/SECRETS.md → Secrets management (InfluxDB token, dev vs prod)
-```
+## Operational Facts
 
-## Monitoring Infrastructure
+- Central hub: `pi5data` (`10.0.1.230`) runs Mosquitto, InfluxDB, Telegraf, Grafana, ebusd, z2m-hub, adaptive-heating-mvp
+- Zigbee2MQTT WebSocket: `ws://emonpi:8080/api`
+- MQTT creds: `emonpi` / `emonpimqtt2016`
+- InfluxDB token on pi5data: `/etc/adaptive-heating-mvp.env` (see `deploy/SECRETS.md`)
+- Adaptive heating API: `http://pi5data:3031`; phone dashboard proxy: `http://pi5data:3030`
+- `heating-monitoring-setup.md` = full infra overview; `docs/emon-installation-runbook.md` = rebuild/recovery
 
-| Device | IP | Role |
-|---|---|---|
-| emonpi | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Z2M (21 Zigbee devices) |
-| emonhp | 10.0.1.169 | Heat meter + SDM120 → emoncms.org |
-| emondhw | 10.0.1.46 | Multical DHW meter |
-| pi5data | 10.0.1.230 | Central hub: Docker (Mosquitto, InfluxDB, Telegraf, Grafana, ebusd) + systemd (z2m-hub :3030, adaptive-heating-mvp :3031) |
+## High-Value Gotchas
 
-MQTT credentials: `emonpi` / `emonpimqtt2016`. Z2M: `ws://emonpi:8080/api` (no auth).
-
-Secrets on pi5data: InfluxDB token in `/etc/adaptive-heating-mvp.env` (root:root 0600, loaded by systemd EnvironmentFile). Same token as Telegraf uses. See `deploy/SECRETS.md`. Dev fallback: `ak get influxdb` (warns if used).
-
-See `heating-monitoring-setup.md` for full details, `docs/emon-installation-runbook.md` for rebuild procedures.
-
-## Key Domain Model
-
-Operating states classified by flow rate (5kW fixed pump = 14.3 L/min):
-- **Heating**: flow_rate 14.0-14.5, DT > 0, heat > 0
-- **DHW**: flow_rate ≥ 15.0 (enter) / < 14.7 (exit), DT > 0, heat > 0
-- **Defrost**: heat ≤ 0 OR DT < -0.5
-- **Idle**: elec ≤ 50W
-
-Thresholds in `config.toml` `[thresholds]`. Tightened from 16.0/15.0 to 15.0/14.7 in Mar 2026 (y-filter sludge). See `docs/hydraulic-analysis.md`.
-
-### eBUS state classification (Rust thermal model)
-
-`thermal-operational` uses `BuildingCircuitFlow` (L/h): > 900 = DHW, 780-900 = heating, < 100 = off.
-
-**⚠ `StatuscodeNum` is unreliable for DHW detection.** Code 134 appears during both off/frost standby AND active DHW. Never mean-aggregate status codes - use `last()`.
-
-## Key Facts
-
-- **13 rooms**, all sensored. 12× SNZB-02P (v2.2.0) + 1 emonth2 (leather). See `docs/house-layout.md`.
-- **15 radiators**, no TRVs. Kitchen and Landing have no radiator. Sterling rad OFF.
-- **House**: HTC 261 W/K, 180m2, 1930s solid brick + 2010 loft. HP maxes out at ~2°C outside. Leather τ=50h (empirical, from 53 cooling segments). Was modelled as 15h — wrong by 3.3×.
-- **Cosy tariff**: THREE windows (04:00-07:00, 13:00-16:00, 22:00-00:00). All-in effective rate 16.7p/kWh (total bill ÷ total kWh, last 12 months inc standing + VAT, from `~/github/octopus` data). Marginal battery-blended rate 13.9p/kWh (95% battery coverage). Current Q2 2026 rates inc VAT: off-peak 13.24p, day 26.98p, peak 40.48p, standing 52.76p/day. For scheduling decisions use marginal rate (13.9p), not all-in (16.7p which includes 2.8p/kWh standing charge).
-- **Overnight**: deployed code still has separate overnight planner (coast/preheat/maintain with τ/K). To be replaced with unified daytime model running 24/7 with a target trajectory. 466 historical nights all at curve=0.55 (uninformative for lower flow temps). See `docs/heating-plan.md` § Next: unified model.
-- **DHW**: 300L Kingspan Albion, usable 177-221L from full charge (243L geometric max, ~91% plug flow efficiency), 45°C target, eco/normal manual seasonal switch. Eco charges avg 102 min (40% hit 120-min timeout, nearly all incomplete below 5°C). Normal charges avg 60 min (2% timeout). CylinderChargeHyst=5K (triggers at 40°C). HwcStorage crossover (≥ T1_pre) = definitive "full" signal. Household: 5 people, ~171L/day avg (0.9 tanks), busiest days 260-270L (1.3 tanks). See `docs/dhw-plan.md`.
-- **DHW cylinder sensors**: T1 (`emon/multical/dhw_t1`) = cylinder top / hot out. T2 (`emon/multical/dhw_t2`) = mains inlet / cold in. VR 10 NTC in dry pocket above bottom coil (`ebusd/poll/HwcStorageTemp`) = what VRC 700 uses for charging decisions. See `docs/dhw-plan.md`.
-- **DHW system**: 3 eBUS devices - HMU (outdoor unit), VWZ AI (indoor unit, has SP1 cylinder sensor), VRC 700 (controller, scheduling brain). See `docs/vrc700-settings-audit.md`.
-- **⚠ eBUS timer encoding**: Never use `00:00` as a timer end time - use `-:-` instead. TTM byte `0x00` = start of day (not end). Byte `0x90` = `-:-` = "until end of day". A window with end < start is silently rejected by the VRC 700. `HwcSFMode` can get stuck on `load` after boost - monitor and reset to `auto`. See `docs/vrc700-settings-audit.md`.
-- **eBUS control flow**: VRC 700 sends SetMode to VWZ AI (not HMU directly). VWZ AI translates to 1280 real-time parameter messages to HMU. All write commands go to VRC 700 (`-c 700`). Direct HMU writes get overwritten within 10s. See `docs/pico-ebus-plan.md`.
-- **Thermal model**: calibrated Night 1/Night 2 (24-26 Mar 2026). Cd=0.20, landing ACH=1.30. See `docs/room-thermal-model.md`. **⚠ Leather τ in the overnight planner uses empirical 50h, not the thermal model's 15h.** The empirical value comes from 53 independent cooling segments (18 calibration-night + 35 DHW mini-experiments) and both sources agree.
-- **Annual saving**: £565 (46%) vs gas combi at current Cosy tariff.
-- **Octopus data**: `~/github/octopus/` - refresh via `cd ~/github/octopus && npm run cli -- refresh`
-
-## Feed Notes
-
-- `503101` (indoor_temp) = emonth2 in **Leather room only**, not whole-house
-- `503093` (outside_temp) = Met Office hourly. For real-time, prefer `ebusd/poll/OutsideTemp` (30s)
-- `512889` (DHW_flag) = dead since Dec 2024
-
-## Gotchas
-
-- All domain constants in `config.toml` - edit there, not in code
-- `gaps.rs` bypasses `db.rs` - writes to SQLite directly. `fill_gap_interpolate()` has hardcoded feed IDs
-- `ERA5_BIAS_CORRECTION_C` is a Rust constant in octopus.rs, not in config.toml
-- `--all-data` start timestamp hardcoded in `resolve_time_range()`, duplicates config.toml value
-- Polars pinned to 0.46 (0.53 available) - untested on newer versions
-- Thresholds are 5kW-specific - 7kW model's heating rate (20 L/min) overlaps 5kW DHW rate
-- Two HDD base temps: 15.5°C (UK standard) vs 17°C (gas-era regression)
-- `octopus.rs` reads from `~/github/octopus/data/` - path hardcoded
-- Radiator T50 values duplicated in `config.toml` (analysis.rs) AND `thermal_geometry.json` (thermal.rs) - keep in sync
-- SNZB-02P v2.1.0 bug: readings freeze at power-on value. v2.2.0 fixes it. Verify readings vary.
-- Bathroom sensor was in airing cupboard until 25 Mar 2026 21:00 - historical data reads ~3°C high
-- `emon/heatpump/heatmeter_FlowRate` reads ~1 L/min constantly - DHW circuit meter, useless for state classification. Use `BuildingCircuitFlow`.
-- PV calibration 0.087 is for sloping plane, ÷1.4 for vertical. P3 CT reads 6.7kW for 3.08kWp array (includes Powerwall).
-- **System pressure** (`ebusd/poll/FlowPressure`): 2.02 bar heating, 1.91 bar DHW, 2.05 bar idle. The 0.11 bar DHW dip is a hydraulic circuit volume effect (3-way valve switches from large radiator circuit to smaller cylinder coil), not thermal expansion or a leak. Daily mean rock steady at 1.98–2.03 bar over 30 days. VRC 700 `WaterPressure` register exists but returns empty — use HMU `FlowPressure`. `RunDataHighPressure` (HMU) is refrigerant high-side, not system water.
-- Conservatory excluded from thermal scoring (30m2 glass, sub-hour time constant). Landing excluded (chimney model wrong for heating).
-- Two binaries - use `cargo run --bin heatpump-analysis -- ...` for thermal commands
-- DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy - do not deploy. DHW boost via z2m-hub.
-- **Historical investigation default**: confirm `date -u`, then use `cargo run --bin heatpump-analysis -- heating-history` or `cargo run --bin heatpump-analysis -- dhw-history`. Both now default to the last 7 days ending now. For one-command maximum-detail review, use `cargo run --bin heatpump-analysis -- history-review heating|dhw|both`. Narrow the window only after the 7-day sweep identifies a specific event.
-- **DHW session analysis** via `dhw-sessions` CLI. Analyses draws at 2s resolution with HWC tracking, classifies by type (bath/shower/tap), detects draws during charging. Writes `dhw_inflection` + `dhw_capacity` to InfluxDB. z2m-hub autoloads `recommended_full_litres` on startup. Default review run: `cargo run --bin heatpump-analysis -- dhw-sessions --days 7`.
-- **Adaptive heating MVP** deployed on pi5data as systemd service. HTTP API on port 3031. Mobile controls proxied via z2m-hub (:3030). Config: `model/adaptive-heating-mvp.toml`. See `docs/heating-plan.md`. Kill switch restores known-good baseline.
-- **V1 pilot findings** (31 Mar-1 Apr 2026): Bang-bang control (±0.10 curve every 15 min) ping-ponged 0.55→0.10→1.00. Leather τ=50h means 15-min adjustments are noise. VRC 700 curve floor is 0.10. Null-read bug fixed.
-- **Overnight planner fixed** (4 Apr 2026): Two bugs found and fixed: (1) missing `break` meant coast=0 always won (e11cbd6), (2) τ=15h was wrong by 3.3× — updated to 50h from 53 empirical cooling segments. Pre-fix "validated" nights (3-4 Apr) were continuous heating, not real coasting. First genuine coast night pending.
-- **466-night overnight analysis** (Oct 2024 – Apr 2026): **all at curve=0.55, flow 24–40°C**. Leather dropped 0.8–1.3°C at these flow temps. Lower flow temps never tested overnight — can’t conclude flow doesn’t matter. Effective HTC ~190 W/K at these operating points (not 261 from model). Overnight strategy: replace separate planner with unified daytime model + target trajectory optimisation.
-- **Empirical τ**: 50h daytime (53 segments). Overnight τ unknown — first coast night was confounded (curve 0.10 ≠ off, HP still cycling). K=7500 in code, empirical K≈20,600 from post-DHW segments.
-- **Sawtooth flag is false alarm**: `daytime_model` ↔ `hold` alternations during DHW charges, not real curve oscillation. Overnight traces are smooth.
-- **Evening DHW "failed crossover" is efficient**: charges serving concurrent showers deliver 2-3× more thermal energy than quiet charges. Crossover rate is a misleading metric. See `docs/dhw-plan.md` § Evening charges with concurrent draws.
-- **VRC 700 curve resolution**: IEEE 754 float (verified via hex read). 0.01 step = ~0.20°C flow change at SP=19. Measured: 0.55→29.88°C, 0.56→30.08°C. No quantization to 0.05 steps.
-- **Phase 1b complete** (2 Apr 2026): Two-loop control with live thermal solver. Outer (900s): forecast + `bisect_mwt_for_room()` → target_flow. Inner (60s): proportional feedback on Hc1ActualFlowTempDesired. Converges in 1 tick. SP=19/Z1OpMode=night. Inner loop floor guard (gain halved below curve 0.25). ΔT stabilisation (default when compressor inactive). Control table replaced by live solver.
-- **No heating above 17°C outside** - empirically, solar/internal gains sufficient. Curve formula compresses at SP=19 above 15°C but never hits ceiling in operating range.
-- **45°C max flow on heating** - emitter capacity and COP limit.
-- **Overnight not a free variable**: HP surplus = 5000W - 261×(20.5-outside). Below 2°C the HP is in deficit. Overnight planner (Phase 2) must raise curve at cold temps, not rely on fixed 0.10.
-- **Phase 2 deployed** (2 Apr 2026, corrected 4 Apr): Overnight planner. Cooling simulation (τ=50h empirical), reheat estimation (K=7500, empirical K≈20600 — pending validation), latest-start binary search. Cold night override (<2°C: maintain 19.5°C). First genuine coast night pending after bug fixes.
-- **Phase 2b in progress**: Multical T1 (`emon/multical/dhw_t1`) now queried every outer cycle. T1=44.7°C while HwcStorageTemp=27.0°C after draws — confirms T1 essential for DHW decisions. T1-based DHW scheduling blocked on household shower experiment (min acceptable T1).
-- **VRC 700 heat curve formula**: `flow = setpoint + curve × (setpoint - outside)^1.25` (current best-fit working value for the initial curve guess; rough actuator approximation only). Vaillant manual says 1.10 but underpredicts by 2.5-3.1°C at curves ≥0.50. **⚠ This is a rough actuator approximation** - VRC 700 has hidden adjustments (Optimum Start ramp ~3h before timer, `Hc1MinFlowTempDesired`=20°C, undocumented offsets). V2 inner feedback loop (curve nudge on `Hc1ActualFlowTempDesired` readback) replaces `flow_offset` EMA. All thermal model validation must use actual measured flow/return temps, never formula predictions.
-- **V2 heating control** (`docs/heating-plan.md`): Model-predictive control. Outer loop (15 min): live thermal solver (`bisect_mwt_for_room`) + Open-Meteo forecast → target flow temp. Inner loop (1 min): nudge curve until `Hc1ActualFlowTempDesired` matches target — VRC 700 treated as black box. `Z1OpMode=night` on startup (flat 19°C setpoint, no timer/Optimum Start). Restore `Z1OpMode=auto` on shutdown. Overnight planner coasts (curve 0.10, τ=50h) then preheats at latest safe time for 20°C by 07:00; cold nights (<2°C) maintain heating.
-- **Real control objective**: Leather 20-21°C during waking hours (07:00-23:00) at minimum cost. Overnight temp is constrained by HP reheat capacity (see v2 design Phase 2). DHW prefers Cosy windows to reduce battery pressure, but overnight timing (22:00-07:00) is flexible - charge at 22:00 Cosy, monitor T1, top up at 04:00 Cosy if needed.
-- **VRC 700 architecture**: All inputs (curve, setpoint, limits) produce one output: `Hc1ActualFlowTempDesired`. This goes directly to the HMU via decoded SetMode (D1C encoding). VWZ AI is hydraulic only (valve/pump), not in the flow temp control path.
-- **eBUS coverage**: 247 read + 216 write defs for VRC 700, 117 read + 14 passive for HMU, zero decoded for VWZ AI (raw bytes in grab buffer only). ebusd `--enablehex` and `--enabledefine` are on. `grab result all` shows all raw bus traffic including undecoded VWZ AI messages.
-- **VRC 700 Optimum Start**: Built-in firmware behavior, no eBUS register to disable. Ramps up effective setpoint ~3h before programmed day timer (observed: 03:00 for 06:00 timer). `Hc1ActualFlowTempDesired` jumps even though curve and written setpoints haven't changed. CcTimers: weekday day=06:00/night=22:00, Sat day=07:30/night=23:30, Sun day=07:30/night=22:00.
-- **eBUS bus hierarchy**: VRC 700 sends SetMode to HMU every ~30s with flow temp demand (D1C encoding). VWZ AI gets separate messages with zeros for flow temp - it's hydraulic only (valve/pump), not in the flow temp control path. VWZ AI can operate standalone without the VRC 700 (has own heat curve, setpoints, DHW control via its control panel).
-- **Future option**: SetModeOverride to HMU to bypass VRC 700 entirely and set flow temp directly. Message format is decoded. Requires disabling or outpacing the 700's 30-second writes.
-- **Vaillant manuals**: 10 curated PDFs in `C:\Users\jackc\OneDrive\Library\` (Vaillant filenames start with `arotherm`, `monoblock`, `vrc`, or `0020262548`). Pruned from 16 originals on 1 Apr 2026 - removed duplicates, superseded spec sheets, wrong-model VWZ AI, boiler-only schematics, and marketing fluff. Full inventory:
-  - `arotherm-plus-vwl-35-75-a-s2-installation-operation-manual-0020330791-03-2806789.pdf` - **Main aroTHERM Plus manual** (operating + installation + maintenance). Covers our VWL 55/6 A S2.
-  - `arotherm-plus-installer-quick-guide-2848532.pdf` - Installer quick reference (44 pages, planning + commissioning)
-  - `arotherm-plus-tech-sheet-nov-2024-2965654.pdf` - Spec sheet (latest, Nov 2024)
-  - `arotherm-plus-system-schematics-setup-2831195.pdf` - Top 10 schematics with VRC 700/sensoCOMFORT setup guidance (76 pages)
-  - `system-schematics-for-the-arotherm-plus-2831194.pdf` - Complete schematic collection, all configurations (99 pages)
-  - `monoblock-heat-pump-system-vwz-ai-heat-pump-appliance-interface-2685948.pdf` - **VWZ AI operating + installation**. Documents standalone mode (p22: menu functions without system control). 44 pages.
-  - `0020262548-01vrc7006-wired-thermostat-operating-instructions-2652464.pdf` - VRC 700 user operating guide (party mode, away, boost, eco)
-  - `vrc-700-installation-instructions-1968307.pdf` - **VRC 700 installer guide**. Has heat curve chart (p15) and complete settings table with min/max/defaults (p28-29). 40 pages.
-  - `vrc-700-tech-sheet-apr-20-web-1741263.pdf` - VRC 700 features/specs summary
-  - `vrc-720-gb-0020287900-00-1714662.pdf` - **VRC 720 sensoCOMFORT** operating + installation. Same eBUS address (0x15), drop-in replacement for VRC 700. Up to 5 zones. Has dew point monitoring.
-  - Vaillant simulators: VRC 700 `https://simulatorvaillant.com/VRC_700_6/gb/`, sensoCOMFORT `https://simulatorvaillant.com/VRC_720_2/gb/`.
-- z2m-hub patched to proxy adaptive-heating-mvp mode controls. Phone dashboard at `http://pi5data:3030` has heating mode buttons.
-- `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
-- `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
-- DHW session analysis uses raw 10s data for event detection (not 1-min averaged) and tracks draws during HP charging. The Multical `dhw_flow` is tap-side, independent of HP circuit — draws must be tracked regardless of charging state.
+- All domain constants belong in `config.toml` — edit there, not in code
+- Two binaries: use `cargo run --bin heatpump-analysis -- ...` for thermal/history commands
+- `thermal_geometry.json` is the room/geometry source of truth; `config.toml` radiator data must match
+- `StatuscodeNum` is unreliable for DHW detection; use flow-based classification / `last()` on status when needed
+- eBUS timer end time must be `-:-`, never `00:00`
+- Write control commands to VRC 700 (`-c 700`), not HMU; direct HMU writes get overwritten
+- `gaps.rs` bypasses `db.rs` and writes SQLite directly
+- `octopus.rs` reads `~/github/octopus/data/` directly; do not modify that repo from here
+- `scripts/dhw-auto-trigger.py` is legacy/buggy — do not deploy
+- `src/bin/cosy-scheduler.rs` is reference-only; binary removed from pi5data
+- Historical review default: start with `heating-history`, `dhw-history`, or `history-review` over the last 7 days ending now
 
 ## Boundaries
 
-- Don't change operating state thresholds without re-validating full dataset
+- Don't change operating state thresholds without re-validating the full dataset
 - Don't mix simulated and real data by default
 - Don't commit `heatpump.db` or API keys
 - Don't modify `~/github/octopus/` from this project
-- Don't modify monitoring infrastructure from here - use SSH to devices directly
-- Don't tune Cd or landing ACH independently - jointly calibrated
-- Thermal model: `thermal_geometry.json` is source of truth for rooms/geometry (consumed by Rust + Python). `config.toml` radiators must match.
-- Rust thermal outputs are authoritative when command exists; Python for exploratory only
+- Don't modify monitoring infrastructure from here — use SSH to devices directly
+- Don't tune Cd or landing ACH independently — they are jointly calibrated
+- Rust thermal outputs are authoritative when a CLI command exists; Python is for exploratory analysis only
+- Thresholds are 5kW-specific; don't assume they transfer to a 7kW unit
+- 45°C max flow on heating; no heating above 17°C outside
+- No runtime learning in control logic; static calibration only
