@@ -138,6 +138,6 @@ The thermal model spans 17 Rust source files in `src/thermal/`.
 | `display.rs` | CLI output, **equilibrium solver**, **MWT bisection** |
 | `report.rs` | Table printer and RMSE |
 | `influx.rs` | InfluxDB query builders ([[src/thermal/influx.rs#query_room_temps]]) |
-| `history.rs` | Heating/DHW history reconstruction, comfort miss detection |
+| `history.rs` | Heating/DHW history reconstruction. Comfort miss detection clipped to waking hours (07:00–23:00) via [[src/thermal/history.rs#clip_period_to_waking_hours]] — overnight cooling is expected, not a miss |
 | `dhw_sessions.rs` | DHW draw/charge session analysis |
 | `error.rs` | `ThermalError` enum (thiserror) |

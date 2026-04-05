@@ -103,6 +103,8 @@ Replace the separate overnight planner with `bisect_mwt_for_room` running 24/7 o
 
 The question: what Leather trajectory from 23:00 to 07:00 delivers ≥20°C at 07:00 at minimum electricity? Candidate shapes: flat hold, slow ramp, bank+coast, off+preheat.
 
+Morning DHW contention is largely eliminated: on clean crossover nights (T1 ≥45°C at charge end, no overnight draws), T1 decays to ~43°C by 07:00 — well above the 40°C empirical floor (see [[domain#DHW Cylinder#Cylinder Sensors]]). Morning charge only needed when evening draws deplete the tank. This simplifies overnight trajectory optimisation on most nights to a pure heating problem.
+
 ## Pilot History
 
 Key findings from V1 and V2 deployment that shaped the current design.
