@@ -13,7 +13,7 @@ Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating
 | HP deficit below | ~2°C outside | 5kW < heat loss |
 | No heating above | 17°C outside | Solar/internal gains sufficient |
 | Max flow temp | 45°C | Emitter capacity + COP |
-| Leather τ | **50h** (daytime), ~30h (overnight) | 53 DHW segments (daytime); overnight lower due to reduced internal gains |
+| Leather τ | **50h** (daytime, 53 segments) | Overnight τ unknown — first coast night was confounded (curve 0.10 ≠ off). ~30h estimate unreliable |
 | DHW steals HP | 50-100 min/charge | eco ~100, normal ~60 |
 | Emitters | 15 radiators, no TRVs, Sterling off | No per-room control |
 
@@ -28,7 +28,7 @@ Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating
 | 8-12°C | ~2400W | 0.9°C |
 | 12-15°C | ~3400W | 0.8°C |
 
-Leather drops 0.8-1.3°C overnight **regardless of flow temp or strategy**. HP is power-limited - it slows the decline but can't prevent it below ~12°C.
+Leather dropped 0.8–1.3°C overnight at curve=0.55 (flow 24–40°C). Lower flow temps have never been tested — the drop at lower flow is unknown.
 
 ## Tariff
 
@@ -84,11 +84,7 @@ Lower flow = better COP, but HP must deliver enough thermal power to offset heat
 
 Heat continuously overnight at model-derived curve. **The real optimisation is finding the minimum overnight curve** where Leather reaches 20°C by 07:00 - not the 0.55 the VRC 700 defaulted to. Lower curve = lower flow = better COP.
 
-| Outside | Strategy | Why |
-|---|---|---|
-| ≤5°C | Heat continuously, accept drop | HP at capacity |
-| 5-12°C | Minimum flow for best COP | Modest surplus |
-| ≥12°C | Bank heat in 22:00 Cosy, then reduce | Surplus > loss |
+At all temperatures, the optimal strategy is unknown — all historical data is from one curve (0.55). The adaptive controller now runs variable curves and every cycle adds data.
 
 ### Next: unified model with overnight target optimisation
 
@@ -109,9 +105,10 @@ Candidate trajectory shapes to simulate:
 For each: integrate flow temp → COP → electricity over the night. Pick the cheapest that hits the endpoint.
 
 **Data situation:**
-- Historical (466 nights): all at SP=19, curve=0.55, MinFlow=20 - tells us COP and heat loss at those flow temps only
-- Adaptive controller (running since ~28 Mar): variable curves, MinFlow=19 - every outer cycle at every flow temp adds data across the full operating range
-- Going forward: every daytime AND nighttime cycle adds to the empirical dataset. There is no day/night distinction in the physics - only the desired temperature changes
+- Historical (466 nights): all at SP=19, curve=0.55, MinFlow=20 — tells us COP and heat loss at flow 24–40°C only. Cannot conclude anything about lower flow temps from this data
+- Adaptive controller (running since ~28 Mar): variable curves, MinFlow=19 — every outer cycle adds data across a wider flow temp range
+- Going forward: every cycle (day and night) adds to the empirical dataset. There is no day/night distinction in the physics — only the desired temperature changes
+- The deployed code still has the separate overnight planner (coast/preheat/maintain with hardcoded τ/K). This needs replacing with the unified model
 
 **To implement:**
 1. Remove the separate overnight planner (coast/preheat/maintain logic, hardcoded τ/K)
@@ -125,8 +122,9 @@ For each: integrate flow temp → COP → electricity over the night. Pick the c
 
 | Parameter | Code | Empirical | Notes |
 |---|---|---|---|
-| Leather τ | 50h | 50h daytime, ~30h overnight | Lower overnight due to reduced internal gains |
-| Effective HTC | 261 W/K | **~190 W/K** (466 nights) | Model overpredicts heat loss by ~30% |
+| Leather τ | 50h | 50h (daytime, 53 segments) | Overnight unknown — no clean data yet |
+| Effective HTC | 261 W/K | **~190 W/K** (466 nights at curve=0.55) | Model overpredicts heat loss by ~30%. But this was measured at high flow temps — may differ at lower flow |
+| COP vs flow temp | — | Measured from 1067 samples | Lower flow = better COP. Data covers 24–40°C range. Below 24°C untested |
 
 ## HP contention with DHW
 
@@ -179,13 +177,13 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 |---|---|
 | V2 two-loop control | ✅ Inner loop converges in 1 tick |
 | V2 live solver | ✅ Daytime comfort maintained in clean windows |
-| V2 overnight | 🟡 466-night analysis: coasting saves pennies at mild temps, impossible below ~8°C. Pivot to optimal continuous flow temp + evening banking + DHW coordination |
+| V2 overnight | 🟡 466 historical nights all at curve=0.55 (uninformative for optimisation). Separate overnight planner to be replaced with unified model + target trajectory. See § Next. |
 | T1-based DHW | 🟡 T1 queried. Scheduling logic not implemented |
 | Door sensors | ⚪ Hardware in hand |
 
 ## Next steps
 
-1. **Unify overnight with daytime model** — remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying target trajectory. Simulate candidate shapes (flat hold, slow ramp, bank+coast, off+preheat) offline, pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
+1. **Unify overnight with daytime model** - remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying target trajectory. Simulate candidate shapes (flat hold, slow ramp, bank+coast, off+preheat) offline, pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
 2. **Morning DHW/heating coordination** - coupled with overnight strategy. DHW steals 50-100 min. Joint optimisation required. See [DHW plan](dhw-plan.md)
 3. **Fit door sensors** - 2× SNZB-04P (in hand). Stage 1: log only
 4. **Effective HTC validation** - 466 nights show ~190 W/K vs model 261 W/K. May partly explain why thermal model τ=15h was wrong - lower real heat loss means slower cooling
