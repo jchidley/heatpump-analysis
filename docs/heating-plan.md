@@ -94,16 +94,19 @@ Heat continuously overnight at model-derived curve. **The real optimisation is f
 
 There is no separate "overnight model." The daytime thermal solver (`bisect_mwt_for_room` → target flow → inner loop) already computes the minimum flow temp to hold Leather at a target. Overnight is the same solver with a different target temperature.
 
-The question is: **what overnight Leather target, combined with morning preheat, delivers ≥20°C at 07:00 at minimum total cost?**
+The question is: **what Leather target trajectory from 23:00 to 07:00 delivers ≥20°C at 07:00 at minimum total electricity?**
 
-Candidate strategies are just different overnight target profiles:
-- Hold 20.5°C all night (current daytime target - highest cost, no recovery needed)
-- Hold 19.5°C all night (lower flow, better COP, 1°C morning recovery)
-- Hold 19.0°C (even lower flow, 1.5°C recovery needed)
-- Step profile: bank to 22°C in Cosy window, drop to 19°C, preheat from 05:00
-- Off (target = none), preheat from calculated start time
+The only hard constraint is the endpoint: Leather ≥20°C at 07:00. Everything before that is free. A slowly rising ramp (e.g. 18.5°C at 00:00 → 20.5°C at 07:00) keeps flow temp barely above room temp at every moment - best COP throughout. That may beat both "hold flat" and "off then hard preheat" because the HP never needs a high temperature lift.
 
-For each: the existing model gives the flow temp, COP follows from flow temp × outside temp, and the Leather trajectory follows from the thermal solver. Total overnight cost = ∫ electricity dt.
+The solver handles this directly: at each outer cycle, `bisect_mwt_for_room(target(t))` returns the minimum flow temp for that moment's target. If the target rises slowly, flow rises slowly, COP stays high.
+
+Candidate trajectory shapes to simulate:
+- **Flat hold** at X°C (19.0, 19.5, 20.0, 20.5) - baseline
+- **Slow ramp** from Y°C at 23:00 to 20.5°C at 07:00 - likely best COP
+- **Bank + coast** to 22°C in Cosy then let it fall, preheat from T - uses cheap Cosy rate
+- **Off + late preheat** - cheapest if HP can recover in time
+
+For each: integrate flow temp → COP → electricity over the night. Pick the cheapest that hits the endpoint.
 
 **Data situation:**
 - Historical (466 nights): all at SP=19, curve=0.55, MinFlow=20 - tells us COP and heat loss at those flow temps only
@@ -112,9 +115,9 @@ For each: the existing model gives the flow temp, COP follows from flow temp × 
 
 **To implement:**
 1. Remove the separate overnight planner (coast/preheat/maintain logic, hardcoded τ/K)
-2. Run the daytime model 24/7 with a time-varying target: 20.5°C during 07:00-23:00, configurable overnight target
-3. Simulate candidate overnight targets using the thermal solver + empirical COP, pick the cheapest that delivers ≥20°C at 07:00
-4. Each real night validates the prediction. Adjust.
+2. Run `bisect_mwt_for_room` 24/7. Target = 20.5°C during 07:00-23:00, time-varying trajectory overnight
+3. Simulate candidate trajectory shapes offline using the thermal solver + COP model. Pick the shape that minimises ∫ electricity while hitting ≥20°C at 07:00
+4. Each real night validates: compare predicted vs actual Leather trajectory and total kWh
 
 **Constraint**: morning DHW steals 50-100 min. The target profile must account for DHW timing - see [DHW plan](dhw-plan.md).
 
@@ -182,7 +185,7 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 
 ## Next steps
 
-1. **Unify overnight with daytime model** - remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying Leather target. Simulate candidate overnight targets (20.5/19.5/19.0/off + preheat), pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
+1. **Unify overnight with daytime model** — remove separate overnight planner. Run `bisect_mwt_for_room` 24/7 with a time-varying target trajectory. Simulate candidate shapes (flat hold, slow ramp, bank+coast, off+preheat) offline, pick cheapest that delivers ≥20°C at 07:00. See § Next: unified model.
 2. **Morning DHW/heating coordination** - coupled with overnight strategy. DHW steals 50-100 min. Joint optimisation required. See [DHW plan](dhw-plan.md)
 3. **Fit door sensors** - 2× SNZB-04P (in hand). Stage 1: log only
 4. **Effective HTC validation** - 466 nights show ~190 W/K vs model 261 W/K. May partly explain why thermal model τ=15h was wrong - lower real heat loss means slower cooling
@@ -197,7 +200,7 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 
 - **SP=19 night mode**: eliminates Optimum Start, clean separation
 - **No runtime learning**: EMA ran away. Static calibration only
-- **Overnight = daytime model with different target**: no separate planner needed. Same solver, same inner loop, just a lower Leather target overnight. The optimisation is choosing the target profile, not building a separate system
+- **Overnight = daytime model with target trajectory**: no separate planner needed. Same solver, same inner loop. The optimisation is the target trajectory shape (ramp, flat, bank+coast), not a separate system
 - **V1 bang-bang rejected**: 15-min adjustments meaningless against τ=50h
 
 ## Key files
