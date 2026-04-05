@@ -339,6 +339,9 @@ struct RuntimeState {
     /// Last outside temp used for model calculation
     #[serde(default)]
     last_calc_outside_c: Option<f64>,
+    /// True when Z1OpMode=off for coast (needs restore to night before heating)
+    #[serde(default)]
+    heating_off: bool,
 }
 
 impl Default for RuntimeState {
@@ -350,6 +353,7 @@ impl Default for RuntimeState {
             last_reason: "default startup".to_string(),
             target_flow_c: None,
             last_calc_outside_c: None,
+            heating_off: false,
         }
     }
 }
@@ -860,6 +864,11 @@ fn restore_baseline(config: &Config) -> Result<Vec<String>> {
         config.baseline.z1_op_mode,
         ebusd_write(config, "700", "Z1OpMode", &config.baseline.z1_op_mode)?
     ));
+    // Restore MinFlowTempDesired to VRC 700 default
+    results.push(format!(
+        "Hc1MinFlowTempDesired=20 -> {}",
+        ebusd_write(config, "700", "Hc1MinFlowTempDesired", "20")?
+    ));
     Ok(results)
 }
 
@@ -1346,6 +1355,12 @@ fn run_outer_cycle(
                 let preheating = is_preheat_time(&config.model, now_time);
 
                 if waking || preheating {
+                    // Restore heating if we were coasting with Z1OpMode=off
+                    if state.heating_off {
+                        let res = ebusd_write(config, "700", "Z1OpMode", "night")?;
+                        writes.push(format!("Z1OpMode=night (restore from coast) -> {}", res));
+                        state.heating_off = false;
+                    }
                     // --- Daytime / preheat: model-predictive control ---
                     let calc =
                         calculate_required_curve(config, outside, live_dt, forecast.as_ref());
@@ -1428,6 +1443,13 @@ fn run_outer_cycle(
                         &config.model,
                     );
 
+                    // Restore heating if we were coasting with Z1OpMode=off
+                    if state.heating_off && (plan.maintain_heating || plan.preheat_start_hours_from_now <= 0.25) {
+                        let res = ebusd_write(config, "700", "Z1OpMode", "night")?;
+                        writes.push(format!("Z1OpMode=night (restore from coast) -> {}", res));
+                        state.heating_off = false;
+                    }
+
                     if plan.maintain_heating {
                         // Cold night: maintain heating, inner loop tracks
                         state.target_flow_c = Some(plan.preheat_target_flow);
@@ -1461,18 +1483,13 @@ fn run_outer_cycle(
                         action = "overnight_preheat".to_string();
                         reason = plan.reason;
                     } else {
-                        // Coasting: no heating, inner loop idle
+                        // Coasting: turn heating OFF, inner loop idle
                         state.target_flow_c = None;
-                        let coast_curve = config.model.overnight_curve;
-                        if (coast_curve - current_curve).abs() > config.model.curve_deadband {
-                            let res = ebusd_write(
-                                config,
-                                "700",
-                                "Hc1HeatCurve",
-                                &format!("{:.2}", coast_curve),
-                            )?;
-                            writes.push(format!("Hc1HeatCurve={:.2} -> {}", coast_curve, res));
-                            curve_after = Some(coast_curve);
+                        if !state.heating_off {
+                            // Turn off heating circuit
+                            let res = ebusd_write(config, "700", "Z1OpMode", "off")?;
+                            writes.push(format!("Z1OpMode=off -> {}", res));
+                            state.heating_off = true;
                         }
                         action = "overnight_coast".to_string();
                         reason = format!(
@@ -1696,6 +1713,13 @@ fn control_loop(
     match ebusd_write(&config, "700", "Z1OpMode", "night") {
         Ok(res) => info!("startup: Z1OpMode=night -> {}", res),
         Err(e) => error!("startup: failed to set Z1OpMode=night: {}", e),
+    }
+
+    // Lower MinFlowTempDesired to match SP=19 — removes the 20°C floor
+    // that prevented genuine coast (curve 0.10 still produced 20°C+ flow)
+    match ebusd_write(&config, "700", "Hc1MinFlowTempDesired", "19") {
+        Ok(res) => info!("startup: Hc1MinFlowTempDesired=19 -> {}", res),
+        Err(e) => error!("startup: failed to set Hc1MinFlowTempDesired=19: {}", e),
     }
 
     let mut last_outer = Instant::now() - Duration::from_secs(config.control_every_seconds);
