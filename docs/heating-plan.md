@@ -1,6 +1,6 @@
 # Heating Plan
 
-**Objective**: Leather 20–21°C during waking hours (07:00–23:00) at minimum cost. Overnight temperature is not a target — it dips and recovers by 07:00.
+**Objective**: Leather 20-21°C during waking hours (07:00-23:00) at minimum cost. Overnight temperature is not a target - it dips and recovers by 07:00.
 
 Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating reference](heating-reference.md)
 
@@ -14,7 +14,7 @@ Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating
 | No heating above | 17°C outside | Solar/internal gains sufficient |
 | Max flow temp | 45°C | Emitter capacity + COP |
 | Leather τ | **50h** (daytime), ~30h (overnight) | 53 DHW segments (daytime); overnight lower due to reduced internal gains |
-| DHW steals HP | 50–100 min/charge | eco ~100, normal ~60 |
+| DHW steals HP | 50-100 min/charge | eco ~100, normal ~60 |
 | Emitters | 15 radiators, no TRVs, Sterling off | No per-room control |
 
 ### HP capacity vs outside temperature
@@ -22,35 +22,35 @@ Reference data (VRC 700, tuning constants, eBUS registers, deployment): [Heating
 | Outside | HP surplus | Overnight drop (466-night avg) |
 |---|---|---|
 | ≤0°C | **deficit** | 1.3°C (HP can't maintain) |
-| 0–2°C | ~300W | 1.1°C |
-| 2–5°C | ~1000W | 1.1°C |
-| 5–8°C | ~1900W | 0.9°C |
-| 8–12°C | ~2400W | 0.9°C |
-| 12–15°C | ~3400W | 0.8°C |
+| 0-2°C | ~300W | 1.1°C |
+| 2-5°C | ~1000W | 1.1°C |
+| 5-8°C | ~1900W | 0.9°C |
+| 8-12°C | ~2400W | 0.9°C |
+| 12-15°C | ~3400W | 0.8°C |
 
-Leather drops 0.8–1.3°C overnight **regardless of flow temp or strategy**. HP is power-limited — it slows the decline but can't prevent it below ~12°C.
+Leather drops 0.8-1.3°C overnight **regardless of flow temp or strategy**. HP is power-limited - it slows the decline but can't prevent it below ~12°C.
 
 ## Tariff
 
 | Rate | Price | Times |
 |---|---|---|
-| Cosy | 13.24p | 04:00–07:00, 13:00–16:00, 22:00–00:00 |
-| Mid-peak | 26.98p | 00:00–04:00, 07:00–13:00, 19:00–22:00 |
-| Peak | 40.48p | 16:00–19:00 |
+| Cosy | 13.24p | 04:00-07:00, 13:00-16:00, 22:00-00:00 |
+| Mid-peak | 26.98p | 00:00-04:00, 07:00-13:00, 19:00-22:00 |
+| Peak | 40.48p | 16:00-19:00 |
 | Marginal (battery-blended) | 13.9p | Use for scheduling decisions |
 
 Q2 2026 South East inc VAT. All-in effective 16.7p (from 6,908 kWh, ~£1,151, 12 months inc standing 52.76p/day). 95% of import is off-peak via Powerwall. Battery covers overnight at near-Cosy rates.
 
 ## Control approach
 
-Two-loop model-predictive control. `Z1OpMode=night` (SP=19, no Optimum Start). VRC 700 treated as black box — inner loop closes on `Hc1ActualFlowTempDesired`.
+Two-loop model-predictive control. `Z1OpMode=night` (SP=19, no Optimum Start). VRC 700 treated as black box - inner loop closes on `Hc1ActualFlowTempDesired`.
 
 | Loop | Interval | Action |
 |---|---|---|
 | Outer | 15 min | Thermal solver → target flow → initial curve |
 | Inner | ~60s | Proportional feedback on `Hc1ActualFlowTempDesired` |
 
-Converges in 1–2 ticks. No runtime learning (EMA ran away — see AGENTS.md). On shutdown: restore `Z1OpMode=auto`, `Hc1HeatCurve=0.55`, `Hc1MinFlowTempDesired=20`.
+Converges in 1-2 ticks. No runtime learning (EMA ran away - see AGENTS.md). On shutdown: restore `Z1OpMode=auto`, `Hc1HeatCurve=0.55`, `Hc1MinFlowTempDesired=20`.
 
 ### Modes
 
@@ -66,32 +66,35 @@ API: port 3031. `/mode/occupied`, `/mode/away`, `/kill` (baseline restore).
 
 ### What 466 nights show
 
-Leather drops 0.8–1.3°C overnight regardless of what the HP does. Flow temp doesn't correlate well with outcome — confounders dominate (doors, DHW, wind). Even at 5–8°C outside with flow at 30–32°C, only 60% of nights achieved 20°C at 07:00.
+**⚠ All 466 nights ran at curve=0.55, SP=19, MinFlow=20°C.** Flow temps were 24–40°C depending on outside temp — never lower. The data shows what happens at ONE curve, not the minimum viable curve. "Flow temp doesn’t correlate with outcome" was wrong — flow was deterministic from outside temp at fixed curve.
+
+Leather dropped 0.8–1.3°C at these flow temps. Lower curves (lower flow, better COP) have never been tested overnight.
 
 ### COP by flow temp (from 1067 heating samples)
 
-| Outside | Flow 25–30°C | Flow 30–35°C | Flow 35–40°C |
+| Outside | Flow 25-30°C | Flow 30-35°C | Flow 35-40°C |
 |---|---|---|---|
-| 5–8°C | COP 5.2 | COP 4.5 | COP 3.5 |
-| 8–12°C | COP 5.9 | COP 5.4 | — |
-| 12–18°C | COP 6.3 | COP 5.8 | — |
+| 5-8°C | COP 5.2 | COP 4.5 | COP 3.5 |
+| 8-12°C | COP 5.9 | COP 5.4 | - |
+| 12-18°C | COP 6.3 | COP 5.8 | - |
 
 Lower flow = better COP, but HP must deliver enough thermal power to offset heat loss.
 
 ### Current approach
 
-Heat continuously overnight at model-derived curve. The planner's value is finding the minimum flow temp that maintains comfort at best COP.
+Heat continuously overnight at model-derived curve. **The real optimisation is finding the minimum overnight curve** where Leather reaches 20°C by 07:00 — not the 0.55 the VRC 700 defaulted to. Lower curve = lower flow = better COP.
 
 | Outside | Strategy | Why |
 |---|---|---|
 | ≤5°C | Heat continuously, accept drop | HP at capacity |
-| 5–12°C | Minimum flow for best COP | Modest surplus |
+| 5-12°C | Minimum flow for best COP | Modest surplus |
 | ≥12°C | Bank heat in 22:00 Cosy, then reduce | Surplus > loss |
 
 ### Open questions
 
-- **Bank heat then coast vs continuous?** Heating harder in 22:00–00:00 Cosy then coasting may give better COP (steady high output vs low-demand cycling). Tariff difference small (battery ≈ Cosy overnight).
-- **Overheating then cooling vs catch-up later?** Coupled with morning DHW — can't optimise independently.
+- **What’s the minimum overnight curve?** At 8°C, curve 0.55 gives flow 30°C (COP 5.0). Curve 0.30 gives 25°C (COP ~5.5–6). Maybe Leather drops 1.5°C instead of 0.9°C but reaches 20°C by 07:00 at 10–15% less electricity. The adaptive controller can test this — progressively lower overnight curves, measure outcome.
+- **Bank heat then reduce vs continuous?** Heat harder in 22:00–00:00 Cosy (banking to 22°C+) then drop to minimum curve. Tariff difference small (battery ≈ Cosy) but COP may be better at steady output.
+- **Morning DHW coordination** — coupled, can’t optimise overnight heating independently.
 
 ### Empirical parameters
 
@@ -109,20 +112,20 @@ Heat continuously overnight at model-derived curve. The planner's value is findi
 | 10°C | ~0.2°C, recovers ~30 min |
 | 15°C | Negligible |
 
-On cold days schedule DHW at 22:00 to keep preheat window clear. See [DHW plan](dhw-plan.md). **DHW timing is the biggest overnight optimisation lever** — each charge steals 50–100 min of heating capacity.
+On cold days schedule DHW at 22:00 to keep preheat window clear. See [DHW plan](dhw-plan.md). **DHW timing is the biggest overnight optimisation lever** - each charge steals 50-100 min of heating capacity.
 
 ## Room priorities
 
 - **Leather** (primary): emonth2, τ=50h. Optimise for this when doors closed
 - **Aldora** (secondary): second comfort anchor
-- **Conservatory**: excluded (30m² glass, sub-hour τ)
+- **Conservatory**: excluded (30m2 glass, sub-hour τ)
 
 **Door sensors** (2× SNZB-04P, in hand, not fitted):
 
 | Stage | Action | When |
 |---|---|---|
 | 1. Log | Pair `leather_conservatory_door` + `leather_hall_door`, add to decision log | Now |
-| 2. Analyse | Correlate door state with Leather trajectory | 1–2 weeks |
+| 2. Analyse | Correlate door state with Leather trajectory | 1-2 weeks |
 | 3. Integrate | Conservatory open → hold curve. Closed → immediate recalc. Both open → target Aldora | After data |
 
 ## Review
@@ -140,10 +143,10 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 
 | Priority | Action | Cost | Impact |
 |---|---|---|---|
-| 1 | Close Elvina trickle vents | FREE | Elvina 2–3°C below other bedrooms |
+| 1 | Close Elvina trickle vents | FREE | Elvina 2-3°C below other bedrooms |
 | 2 | Aldora rad upgrade (reuse existing) | FREE | MWT 47→45°C |
-| 3 | Jack&Carol bay draught-strip | ~£30 | 60–150W |
-| 4 | EWI on SE wall (~30m²) | ~£5k | 19% demand reduction |
+| 3 | Jack&Carol bay draught-strip | ~£30 | 60-150W |
+| 4 | EWI on SE wall (~30m2) | ~£5k | 19% demand reduction |
 
 ## Current state
 
@@ -157,10 +160,10 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 
 ## Next steps
 
-1. **Evening heat banking experiment** — test banking to 22°C+ in 22:00–00:00 Cosy then reducing curve vs continuous low-level overnight
-2. **Morning DHW/heating coordination** — biggest overnight cost is DHW stealing 50–100 min. Joint optimisation is the priority. See [DHW plan](dhw-plan.md)
-3. **Fit door sensors** — 2× SNZB-04P (in hand). Stage 1: log only
-4. **Effective HTC validation** — 466 nights show ~190 W/K vs model 261 W/K. Investigate discrepancy
+1. **Evening heat banking experiment** - test banking to 22°C+ in 22:00-00:00 Cosy then reducing curve vs continuous low-level overnight
+2. **Morning DHW/heating coordination** - biggest overnight cost is DHW stealing 50-100 min. Joint optimisation is the priority. See [DHW plan](dhw-plan.md)
+3. **Fit door sensors** - 2× SNZB-04P (in hand). Stage 1: log only
+4. **Effective HTC validation** - 466 nights show ~190 W/K vs model 261 W/K. Investigate discrepancy
 
 ### Later
 
@@ -172,7 +175,7 @@ Success = Leather ≥20°C at 07:00 on clean mornings. Each control change is an
 
 - **SP=19 night mode**: eliminates Optimum Start, clean separation
 - **No runtime learning**: EMA ran away. Static calibration only
-- **Continuous overnight heating**: 466 nights show coasting doesn't help — HP is power-limited. Optimise flow temp for COP, not on/off timing
+- **Continuous overnight heating**: 466 nights show coasting doesn't help - HP is power-limited. Optimise flow temp for COP, not on/off timing
 - **V1 bang-bang rejected**: 15-min adjustments meaningless against τ=50h
 
 ## Key files
