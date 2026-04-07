@@ -8,7 +8,7 @@ All domain constants live in `config.toml` and are accessed via `config::config(
 
 **Cost to break**: Every analysis module depends on `config()`. Replacing with dependency injection would touch every function.
 
-**Exception**: `fill_gap_interpolate()` in gaps.rs uses hardcoded feed ID strings. `ERA5_BIAS_CORRECTION_C` in octopus.rs is a Rust constant.
+**Exception**: `fill_gap_interpolate()` in gaps.rs uses hardcoded feed ID strings. `ERA5_BIAS_CORRECTION_C` in octopus.rs is a Rust constant. Octopus unit rates are no longer config constants; `src/octopus_tariff.rs` derives them from the account API at runtime.
 
 ## Configuration: Separate TOML (thermal module)
 
@@ -18,7 +18,7 @@ All domain constants live in `config.toml` and are accessed via `config::config(
 
 ## Configuration: Separate TOML (adaptive heating MVP)
 
-`adaptive-heating-mvp` loads its own `Config` from `model/adaptive-heating-mvp.toml`. Fully independent of both `config.rs` and `ThermalConfig`. Includes baseline values, eBUS host, InfluxDB connection, room topics, inner loop tuning parameters.
+`adaptive-heating-mvp` loads its own `Config` from `model/adaptive-heating-mvp.toml`. Fully independent of both `config.rs` and `ThermalConfig`. Includes baseline values, eBUS host, InfluxDB connection, room topics, inner loop tuning parameters, and configurable Cosy windows for DHW scheduling/logging.
 
 **Cost to break**: Config remains separate, but the binary now depends on the thermal solver via `src/lib.rs`. Changing thermal module APIs (especially `bisect_mwt_for_room` signature or `thermal_geometry.json` schema) requires updating both the analysis CLI and the adaptive controller.
 
@@ -75,6 +75,15 @@ eBUS reads and writes use a consistent pattern:
 Each call is a separate TCP connection (no persistent connection).
 
 **Cost to break**: If eBUS commands need batching or persistent connections, all callers change.
+
+## Octopus tariff truth via account API
+
+Tariff pricing logic is split by concern:
+- `octopus.rs` reads local consumption/weather files from `~/github/octopus/data/`
+- `octopus_tariff.rs` calls the Octopus account API for import agreements and half-hourly unit rates
+- `overnight.rs` consumes `TariffBook` plus `config.toml` `tariff.battery_coverage` to price historical demand without hardcoded rate tables
+
+**Cost to break**: Changes to Octopus credentials, account structure, or tariff-code parsing affect runtime tariff pricing rather than static config.
 
 ## lat.md Knowledge Graph
 

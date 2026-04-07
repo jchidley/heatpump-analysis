@@ -6,31 +6,26 @@
 //! 3. Simulate alternative schedules and find the optimal one
 //! 4. Compare actual vs optimal across the full dataset
 //!
-//! Two-rate tariff model (Octopus Cosy + Tesla Powerwall):
-//!   - Cosy: 13.24p/kWh during 04:00–07:00 (morning) and 13:00–16:00 (afternoon)
-//!   - Blended: ~14.0p/kWh all other times (battery absorbs peaks)
+//! Historical tariff prices are fetched from the Octopus account API at runtime.
+//!
+//! The analysis still explores the same schedule shapes (overnight off, morning
+//! recovery, DHW inside the lowest-rate window), but the prices attached to
+//! those minutes are derived from the account's real tariff agreements.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, NaiveDate, Timelike};
+use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
 use polars::prelude::*;
 
 use crate::config::config;
+use crate::octopus_tariff::TariffBook;
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Cosy rate (p/kWh) — applies during three Cosy windows
-/// Q2 2026 South East inc VAT, from mysmartenergy.uk
-const COSY_RATE: f64 = 13.24;
-/// Mid-peak rate (p/kWh) — 00:00–04:00, 07:00–13:00, 19:00–22:00
-const MID_RATE: f64 = 26.98;
-/// Peak rate (p/kWh) — 16:00–19:00
-const PEAK_RATE: f64 = 40.48;
-
-/// Battery covers ~95% of non-Cosy usage at effective Cosy rate.
-/// The 5% leakage hits grid at mid/peak rates.
-const BATTERY_COVERAGE: f64 = 0.95;
+fn battery_coverage() -> f64 {
+    config().tariff.battery_coverage
+}
 
 /// Night analysis window: 20:00 to 09:00 next day
 const NIGHT_START_HOUR: u32 = 20;
@@ -75,6 +70,7 @@ const MIN_DHW_CYCLE_MIN: u32 = 30;
 struct Minute {
     /// Minutes since 20:00 on the evening date (0 = 20:00, 480 = 04:00, 660 = 07:00)
     offset_min: u32,
+    timestamp_utc: DateTime<Utc>,
     outside_t: f64,
     indoor_t: f64,
     elec_w: f64,
@@ -157,40 +153,6 @@ struct SimResult {
 // Tariff helpers
 // ---------------------------------------------------------------------------
 
-/// Tariff band for a given clock hour.
-#[derive(Clone, Copy, PartialEq)]
-enum TariffBand {
-    Cosy, // 13.24p — 04:00-07:00, 13:00-16:00, 22:00-00:00
-    Mid,  // 26.98p — 00:00-04:00, 07:00-13:00, 19:00-22:00
-    Peak, // 40.48p — 16:00-19:00
-}
-
-fn tariff_band(offset_min: u32) -> TariffBand {
-    let hour = (NIGHT_START_HOUR + offset_min / 60) % 24;
-    match hour {
-        4..=6 => TariffBand::Cosy,   // 04:00-07:00
-        13..=15 => TariffBand::Cosy, // 13:00-16:00
-        22..=23 => TariffBand::Cosy, // 22:00-00:00
-        16..=18 => TariffBand::Peak, // 16:00-19:00
-        _ => TariffBand::Mid,        // everything else
-    }
-}
-
-/// Effective rate for a kWh consumed at this time, accounting for battery.
-/// During Cosy: always grid at Cosy rate (battery charges too).
-/// During Mid/Peak: battery covers 95%, rest hits grid at full rate.
-fn effective_rate(offset_min: u32) -> f64 {
-    match tariff_band(offset_min) {
-        TariffBand::Cosy => COSY_RATE,
-        TariffBand::Mid => BATTERY_COVERAGE * COSY_RATE + (1.0 - BATTERY_COVERAGE) * MID_RATE,
-        TariffBand::Peak => BATTERY_COVERAGE * COSY_RATE + (1.0 - BATTERY_COVERAGE) * PEAK_RATE,
-    }
-}
-
-fn is_cosy(offset_min: u32) -> bool {
-    tariff_band(offset_min) == TariffBand::Cosy
-}
-
 /// Minute offset for a given clock hour (e.g., 4 → 480, 7 → 660, 22 → 120)
 fn offset_for_hour(hour: u32) -> u32 {
     if hour >= NIGHT_START_HOUR {
@@ -204,6 +166,29 @@ fn fmt_offset(offset: u32) -> String {
     let hour = (NIGHT_START_HOUR + offset / 60) % 24;
     let min = offset % 60;
     format!("{:02}:{:02}", hour, min)
+}
+
+fn minute_timestamp_utc(night: &Night, offset: u32) -> DateTime<Utc> {
+    let idx = night
+        .minutes
+        .partition_point(|minute| minute.offset_min <= offset);
+    if idx > 0 {
+        let candidate = &night.minutes[idx - 1];
+        if candidate.offset_min == offset {
+            return candidate.timestamp_utc;
+        }
+    }
+
+    let first = night
+        .minutes
+        .first()
+        .map(|minute| minute.timestamp_utc)
+        .unwrap_or_else(Utc::now);
+    first + chrono::Duration::minutes((offset as i64).saturating_sub(first_offset(night) as i64))
+}
+
+fn first_offset(night: &Night) -> u32 {
+    night.minutes.first().map(|m| m.offset_min).unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +275,7 @@ fn extract_nights(df: &DataFrame) -> Result<Vec<Night>> {
 
             minutes.push(Minute {
                 offset_min: offset,
+                timestamp_utc: dt,
                 outside_t: outside,
                 indoor_t: indoor,
                 elec_w: elec,
@@ -578,15 +564,15 @@ fn lookup_heating(bins: &[HeatingBin], t_out: f64) -> (f64, f64, f64) {
 // Actual cost calculation
 // ---------------------------------------------------------------------------
 
-fn actual_cost(night: &Night) -> SimResult {
+fn actual_cost(night: &Night, tariff_book: &TariffBook) -> Result<SimResult> {
     let mut cosy_kwh = 0.0;
     let mut non_cosy_kwh = 0.0;
     let mut cost = 0.0;
 
     for m in &night.minutes {
         let kwh = m.elec_w / 60.0 / 1000.0;
-        cost += kwh * effective_rate(m.offset_min);
-        if is_cosy(m.offset_min) {
+        cost += kwh * tariff_book.effective_rate(m.timestamp_utc, battery_coverage())?;
+        if tariff_book.is_lowest_rate(m.timestamp_utc)? {
             cosy_kwh += kwh;
         } else {
             non_cosy_kwh += kwh;
@@ -595,7 +581,7 @@ fn actual_cost(night: &Night) -> SimResult {
 
     let total = cosy_kwh + non_cosy_kwh;
 
-    SimResult {
+    Ok(SimResult {
         schedule_idx: 0,
         cosy_kwh,
         blended_kwh: non_cosy_kwh,
@@ -603,7 +589,7 @@ fn actual_cost(night: &Night) -> SimResult {
         cost_pence: cost,
         indoor_t_07: night.indoor_t_target,
         feasible: night.indoor_t_target >= TARGET_TEMP,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +692,8 @@ fn simulate_schedule(
     cooling: &CoolingModel,
     recovery_bins: &[HeatingBin],
     maint_bins: &[HeatingBin],
-) -> SimResult {
+    tariff_book: &TariffBook,
+) -> Result<SimResult> {
     let htc = config().house.htc_w_per_c;
 
     // Build outside temperature lookup
@@ -780,8 +767,9 @@ fn simulate_schedule(
 
             // DHW electricity spread evenly over cycle
             let dhw_elec_per_min = schedule.dhw_elec_kwh / schedule.dhw_duration as f64;
-            cost += dhw_elec_per_min * effective_rate(offset);
-            if is_cosy(offset) {
+            let minute_ts = minute_timestamp_utc(night, offset);
+            cost += dhw_elec_per_min * tariff_book.effective_rate(minute_ts, battery_coverage())?;
+            if tariff_book.is_lowest_rate(minute_ts)? {
                 cosy_kwh += dhw_elec_per_min;
             } else {
                 blended_kwh += dhw_elec_per_min;
@@ -805,8 +793,9 @@ fn simulate_schedule(
             t_indoor += dt_deg;
 
             let elec_kwh = elec_w / 60.0 / 1000.0;
-            cost += elec_kwh * effective_rate(offset);
-            if is_cosy(offset) {
+            let minute_ts = minute_timestamp_utc(night, offset);
+            cost += elec_kwh * tariff_book.effective_rate(minute_ts, battery_coverage())?;
+            if tariff_book.is_lowest_rate(minute_ts)? {
                 cosy_kwh += elec_kwh;
             } else {
                 blended_kwh += elec_kwh;
@@ -826,7 +815,7 @@ fn simulate_schedule(
 
     let total = cosy_kwh + blended_kwh;
 
-    SimResult {
+    Ok(SimResult {
         schedule_idx: sched_idx,
         cosy_kwh,
         blended_kwh,
@@ -834,7 +823,7 @@ fn simulate_schedule(
         cost_pence: cost,
         indoor_t_07: t_at_07,
         feasible: t_at_07 >= TARGET_TEMP,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -846,17 +835,7 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     println!("OVERNIGHT HEATING STRATEGY OPTIMIZER");
     println!("{}", "─".repeat(78));
     println!("Baseline: 4°C setback (Z1NightTemp=17°C, HP cycles all night)");
-    println!("Proposed: Heat in evening Cosy → OFF 00:00–04:00 → ON at morning Cosy");
-    println!(
-        "Tariff:   Cosy {:.2}p (04–07, 13–16, 22–00), Mid {:.2}p, Peak {:.2}p (16–19)",
-        COSY_RATE, MID_RATE, PEAK_RATE
-    );
-    println!(
-        "Battery:  covers {:.0}% of non-Cosy → effective mid {:.1}p, peak {:.1}p",
-        BATTERY_COVERAGE * 100.0,
-        effective_rate(offset_for_hour(1)), // sample mid-peak hour
-        effective_rate(offset_for_hour(17)), // sample peak hour (mapped via offset)
-    );
+    println!("Proposed: Heat in evening lowest-rate window → OFF 00:00–04:00 → ON at morning lowest-rate window");
     println!(
         "Target:   ≥{:.1}°C indoor at {:02}:00",
         TARGET_TEMP, TARGET_HOUR
@@ -880,6 +859,29 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     let first = nights.first().unwrap().date;
     let last = nights.last().unwrap().date;
     println!("Date range: {} to {}", first, last);
+
+    let tariff_start = nights
+        .iter()
+        .filter_map(|night| night.minutes.first().map(|minute| minute.timestamp_utc))
+        .min()
+        .context("No first overnight timestamp")?;
+    let tariff_end = nights
+        .iter()
+        .filter_map(|night| night.minutes.last().map(|minute| minute.timestamp_utc))
+        .max()
+        .context("No last overnight timestamp")?
+        + chrono::Duration::minutes(30);
+    let tariff_book = TariffBook::load(tariff_start, tariff_end)
+        .context("Failed to load Octopus tariff history from account API")?;
+    println!(
+        "Tariff:   account-derived half-hourly rates {:.2}–{:.2}p/kWh over this analysis window",
+        tariff_book.min_rate(),
+        tariff_book.max_rate()
+    );
+    println!(
+        "Battery:  covers {:.0}% of non-lowest-rate demand at the agreement's cheapest import rate",
+        battery_coverage() * 100.0,
+    );
 
     // 2. Calibrate models
     eprintln!("Calibrating models...");
@@ -969,14 +971,22 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     let mut all_nights: Vec<NightResults> = Vec::new();
 
     for night in &nights {
-        let actual = actual_cost(night);
+        let actual = actual_cost(night, &tariff_book)?;
         let sim_results: Vec<SimResult> = schedules
             .iter()
             .enumerate()
             .map(|(i, sched)| {
-                simulate_schedule(sched, i, night, &cooling, &recovery_bins, &maint_bins)
+                simulate_schedule(
+                    sched,
+                    i,
+                    night,
+                    &cooling,
+                    &recovery_bins,
+                    &maint_bins,
+                    &tariff_book,
+                )
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         all_nights.push(NightResults {
             date: night.date,

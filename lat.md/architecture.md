@@ -74,12 +74,14 @@ Four active config artifacts define four separate concerns.
 
 | File | Used by | Concern |
 |------|---------|---------|
-| `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators |
+| `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators, battery coverage assumption |
 | `model/thermal-config.toml` | Thermal model + history commands | InfluxDB, test nights, calibration bounds |
 | `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, InfluxDB, Cosy windows, baseline, inner loop tuning |
 | `artifacts/thermal/regression-thresholds.toml` | `thermal-regression-check` | Artifact regression gates |
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
+
+`src/octopus_tariff.rs` is the tariff truth bridge for analysis: current and historical unit rates now come from the Octopus account API at runtime, while `config.toml` retains only the battery-coverage assumption used to price battery-backed non-lowest-rate demand.
 
 ## Documentation Topology
 
@@ -112,6 +114,12 @@ Startup: `Z1OpMode=night` + `Hc1MinFlowTempDesired=19`. Shutdown: `Z1OpMode=auto
 ### Thermal Solver Compilation
 
 Since Phase 1b, `adaptive-heating-mvp` calls `bisect_mwt_for_room()` directly from the library crate. `thermal_geometry.json` must be deployed alongside the binary on pi5data. Solver runs in <1ms on ARM.
+
+### Deployment Workflow
+
+Dev on laptop (fast `cargo check`), release build natively on pi5data (correct glibc). Cross-compile from WSL2 fails due to glibc version mismatch (host 2.39 vs pi5data bookworm 2.36).
+
+`scripts/sync-to-pi5data.sh` syncs sources: `src/bin/adaptive-heating-mvp.rs` → `src/main.rs`, thermal modules, `lib.rs`, `thermal_geometry.json`, and config. Then `cargo build --release` on pi5data (~33s incremental). The pi5data project has a cut-down `Cargo.toml` with only controller dependencies (no polars, no rusqlite). Service restart: `sudo systemctl restart adaptive-heating-mvp`.
 
 ### History Review Session Scope
 

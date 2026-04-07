@@ -16,8 +16,9 @@ main.rs (CLI)
   │     └── config.rs
   ├── octopus.rs     (reads config for thresholds, gas_era)
   │     └── config.rs
-  ├── overnight.rs   (reads config for thresholds; uses analysis::enrich)
-  │     └── analysis.rs, config.rs
+  ├── octopus_tariff.rs (Octopus account API: agreements + unit rates)
+  ├── overnight.rs   (reads config.tariff; uses analysis::enrich + octopus_tariff)
+  │     └── analysis.rs, config.rs, octopus_tariff.rs
   └── thermal.rs     (thin facade — re-exports from 16 submodules)
         └── thermal/  (own config from model/thermal-config.toml)
               └── display.rs  (equilibrium solver, MWT bisection, control table)
@@ -128,7 +129,7 @@ The emonth2 uses `_field = "value"` while Zigbee sensors use `_field = "temperat
 
 ### VRC 700 baseline safety net
 
-On startup: `Z1OpMode=night` (value 3) + `Hc1MinFlowTempDesired=19`. VRC 700 uses `Z1NightTemp` (19°C) permanently. On shutdown: `Z1OpMode=auto` + `Hc1HeatCurve=0.55` + `Hc1MinFlowTempDesired=20`. VRC 700 resumes timer control. Crash without restore: house at 19°C with last curve. Safe.
+On startup: `Z1OpMode=night` (value 3) + `Hc1MinFlowTempDesired=19`, but only when persisted mode is active. If persisted mode is `Disabled` or `MonitorOnly`, startup skips eBUS initialisation so the baseline stays untouched. On shutdown/kill: `restore_baseline()` writes `Z1OpMode=auto` + `Hc1HeatCurve=0.55` + `Hc1MinFlowTempDesired=20`. `/kill` is now a toggle: disabled → restore baseline, disabled state; disabled + `/kill` again → reinitialise eBUS and resume `Occupied`.
 
 ### Coast mechanism
 
@@ -142,9 +143,11 @@ The outer loop only uses live flow-return ΔT when `RunDataStatuscode` contains 
 
 When `Hc1HeatCurve < 0.25`, the inner loop halves its gain and doubles its deadband. This prevents hunting near the curve floor where each 0.01 curve ≈ 0.20°C flow change (verified by measurement).
 
-### Overnight planner empirical constants
+### Tariff truth bridge
 
-`LEATHER_TAU_H = 50.0` and `REHEAT_RATE = 7500` in `adaptive-heating-mvp.rs` are hardcoded constants that drive the overnight coast/preheat decision. τ=50h is empirically validated (53 segments). K=7500 is conservative — empirical K≈20,600 from 27 segments suggests the code overpredicts reheat time. Each coast-then-preheat night validates these.
+`src/octopus_tariff.rs` is the bridge from heatpump-analysis to Octopus account truth. It loads import tariff agreements from the account API, fetches half-hourly unit rates for each overlapping agreement, derives each agreement's cheapest import rate, and lets analysis price demand without hardcoded tariff snapshots.
+
+`config.toml` now keeps only `tariff.battery_coverage`; current and historical unit rates are not stored in repo config.
 
 ### Config duplication
 
@@ -155,3 +158,7 @@ The adaptive-heating-mvp has its own baseline values in `model/adaptive-heating-
 ### Thermal solver is compiled into the binary
 
 Since Phase 1b, `adaptive-heating-mvp` calls `heatpump_analysis::thermal::bisect_mwt_for_room()` directly. This means `data/canonical/thermal_geometry.json` must be deployed alongside the binary on pi5data. The solver runs in <1ms on ARM. `model/control-table.json` is legacy and no longer loaded.
+
+### Deployment workflow
+
+Current deployment is: edit on laptop, sync controller sources with `scripts/sync-to-pi5data.sh`, then build natively on pi5data and restart the systemd service. Cross-compiling from WSL2 to pi5data's glibc is no longer the primary path.

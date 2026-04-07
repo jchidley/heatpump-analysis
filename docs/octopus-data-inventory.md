@@ -88,6 +88,7 @@ API key stored in `ak` (GPG-encrypted). All steps done 2026-03-18.
 4. **Legacy parquet converted** — `data/legacy_usage.csv` (Apr 2020 → Dec 2023, 125,997 rows) ✅
 5. **Merged** — `data/usage_merged.csv` (166,310 rows, Apr 2020 → Mar 2026) ✅
 6. **Integrated** — `octopus.rs` in heatpump-analysis reads `usage_merged.csv` + `weather.json` + `config.json` directly from `~/github/octopus/data/` ✅
+7. **Tariff integration** — current + historical import unit rates now come from the Octopus account API at runtime via `src/octopus_tariff.rs`; tariff snapshots are no longer hardcoded in repo config or analysis code ✅
 
 ### Remaining gap
 
@@ -101,13 +102,16 @@ cd ~/github/octopus && npm run cli -- refresh
 
 ## Integration with heatpump-analysis
 
-Implemented in `octopus.rs` with three subcommands:
+Consumption/weather analysis remains in `octopus.rs`. Tariff-rate truth now lives in `src/octopus_tariff.rs`, which loads the account's active and historical import agreements plus half-hourly unit rates from the Octopus account API at runtime.
+
+Implemented with these entry points:
 
 | Subcommand | What it does |
 |------------|-------------|
 | `octopus` | Monthly breakdown: elec, gas, HDD, elec/HDD (all data) |
 | `gas-vs-hp` | Gas era vs HP era comparison with heating/DHW separated |
 | `baseload` | Daily whole-house electricity minus HP electricity |
+| `overnight` | Backtest overnight strategies using account-derived historical half-hourly import rates |
 
 ### Key results
 
@@ -131,5 +135,6 @@ Implemented in `octopus.rs` with three subcommands:
 
 - HP state machine classifies every 1-min sample into heating/DHW/defrost
 - `gas-vs-hp` uses state machine for HP era, estimated 11.82 kWh/day DHW for gas era
+- `overnight` no longer uses a hardcoded Cosy tariff table; it fetches the account's real historical half-hourly unit rates and blends non-lowest-rate demand using `config.toml` `tariff.battery_coverage`
 - Octopus timestamps are UTC; emoncms feeds are also UTC — no TZ conversion needed
 - The cutover date 2024-10-22 separates gas and HP eras

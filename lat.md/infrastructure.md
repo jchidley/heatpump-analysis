@@ -62,9 +62,9 @@ Planned replacement: xyzroe eBus-TTL adapter → Pico W (Rust/Embassy firmware) 
 
 ## Room Sensors
 
-11× SONOFF SNZB-02P (v2.2.0) indoor + 1 emonth2. Data: Z2M → MQTT → pi5data Telegraf → InfluxDB. 1× SNZB-02P pending outdoor redeployment.
+11× SONOFF SNZB-02P (v2.2.0) indoor + 1 outdoor + 1 emonth2. Data: Z2M → MQTT → pi5data Telegraf → InfluxDB.
 
-12/13 rooms have dedicated sensors (Office + Landing added 24 Mar 2026). Conservatory uses `ebusd/poll/Z2RoomTemp` from the VRC 700 (tracks within 1°C of the former SNZB-02P). Conservatory SNZB-02P removed from Z2M, awaiting outdoor redeployment as `outside_temp_humid`. Zigbee routers (ZBMINI switches) at hall, landing, kitchen, top_landing provide mesh coverage for battery sensors.
+12/13 rooms have dedicated sensors (Office + Landing added 24 Mar 2026). Conservatory uses `ebusd/poll/Z2RoomTemp` from the VRC 700 (tracks within 1°C of the former SNZB-02P). `outside_temp_humid` (0x842712fffe772723) paired 7 Apr 2026, deployed to shaded SE wall near VRC 700 OAT sensor. Zigbee routers (ZBMINI switches) at hall, landing, kitchen, top_landing provide mesh coverage for battery sensors.
 
 ### Outside Sensors
 
@@ -72,7 +72,7 @@ Temperature and humidity from separate sources.
 
 - **Temperature** (real-time): `ebusd/poll/OutsideTemp` — VRC 700 OAT sensor on shaded SE wall (well-sited, no compressor or solar influence), 30s interval
 - **Temperature** (cross-check): emoncms feed 503093 — Met Office hourly
-- **Humidity** (pending): conservatory SNZB-02P removed from Z2M, awaiting redeployment to shaded SE wall (near OAT sensor) as `outside_temp_humid`. Will provide: (a) direct AH_out for absolute ACH in all occupied bedrooms, (b) OAT temperature cross-check from a nearby but independent position, (c) before/after evidence for Elvina trickle vent closure.
+- **Humidity** (live): `outside_temp_humid` SNZB-02P on shaded SE wall near OAT sensor. Paired 7 Apr 2026. Provides: (a) direct AH_out for absolute ACH in all occupied bedrooms, (b) OAT temperature cross-check from a nearby but independent position, (c) before/after evidence for Elvina trickle vent closure. **Note**: link quality low (6) at initial pairing — monitor for dropouts.
 - **Conservatory temperature**: `ebusd/poll/Z2RoomTemp` — VRC 700 Zone 2 room sensor, mounted in conservatory. Reads ~1°C below the former SNZB-02P position. Updated in `thermal_geometry.json`.
 - **Leather humidity**: `emon/emonth2_23/humidity` — emonth2 in Leather. Provides 4th occupied-room data point for overnight moisture network (Parson Russell Terrier, ~10 g/h).
 

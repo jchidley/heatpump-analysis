@@ -89,6 +89,13 @@ dhw_exit_flow_rate = 14.7
 # During defrost the return is warmer than the flow (heat extracted from water).
 defrost_dt_threshold = -0.5
 
+# --- Octopus import tariff model ---
+# Current and historical unit rates are fetched at runtime from the Octopus
+# account API using OCTOPUS_API_KEY / OCTOPUS_ACCOUNT_NUMBER (or
+# ~/github/octopus/.envrc). Only the battery-coverage assumption lives here.
+[tariff]
+battery_coverage = 0.95
+
 # --- House thermal properties ---
 [house]
 # Heat Transfer Coefficient (W/°C) — total heat loss per degree of

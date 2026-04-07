@@ -45,7 +45,9 @@ Ground-floor brick rooms (4,000–6,300 kJ/K) cool much slower than loft timber 
 
 - **Leather** (primary control room): door normally closed, no external walls, 2×DP DF rads. Exports heat to 5 neighbours before warming itself (+0.3°C in 2.5h despite biggest rads). τ=36h operational (48h doors-closed).
 - **Kitchen**: no radiator. Heated by adjacent rooms + bare CH pipes in floor void (~25W each side at MWT=31).
-- **Hall/Landing/Top Landing**: one continuous stairwell column, 3 floors. Only 1 radiator (Hall, ground floor). Hall is flow-starved (15mm branch competing with Front).
+- **Hall/Landing/Top Landing**: one continuous stairwell column, 3 floors. Only 1 radiator (Hall, ground floor). Hall is flow-starved (15mm branch competing with Front). Every internal door opens onto this column, making it the house's central air bus — best AH reference for whole-house moisture baseline. Office (door open) and Front (door partially open) feed drying moisture directly into it.
+- **Office**: unoccupied, used for clothes drying most days (major moisture source, 50–100 g/h per load). Overnight: zero moisture generation — useful control room for ventilation analysis.
+- **Front**: unoccupied, also used for clothes drying. Same overnight control-room value as Office.
 - **Sterling**: rad OFF, door closed. Gets ~19°C from Leather's floor heat alone. Occupant prefers cold.
 - **Conservatory**: dining room, cannot be closed off. Largest rads in house but cools fastest overnight (−1.9°C, glazed roof U=2.4).
 - **Elvina**: coldest occupied room (16.4–17.5°C at 07:00). Ratio-method moisture analysis shows ventilation ~3× Aldora’s rate (ΔAH 0.77 vs 2.36 g/m³); nearly all the excess UA (32 vs model 24.6 W/K) is ventilation, not fabric. LEVOIT Core 300 HEPA purifier (CADR 187 m³/h, 20W) already runs for child’s allergies. Closing trickle vents would cut UA to ~17 W/K and raise overnight temp by ~3°C while improving allergen control (no outdoor pollen ingress). Requires CO2 monitoring (door ajar or morning purge for Part F fresh air).
@@ -135,11 +137,11 @@ On cold days, schedule DHW during Cosy to avoid stealing HP capacity from heatin
 Octopus Cosy tariff with three off-peak windows and a Powerwall battery. 95% of import is off-peak via Powerwall.
 
 - **Windows**: 04:00–07:00, 13:00–16:00, 22:00–00:00
-- **Q2 2026 rates** (inc VAT): off-peak 13.24p, day 26.98p, peak 40.48p, standing 52.76p/day
-- **All-in effective rate**: 16.7p/kWh (6,908 kWh, ~£1,151, 12 months inc standing + VAT)
-- **Marginal battery-blended rate**: 13.9p/kWh (95% battery coverage)
+- **Current and historical unit rates** are derived from the Octopus account API at runtime, not stored in repo config. Analysis uses `src/octopus_tariff.rs`; operators can inspect today's windows with `~/github/energy-hub/scripts/octopus-tariff-windows.sh`.
+- **Battery pricing assumption** remains explicit: `config.toml` stores only `tariff.battery_coverage = 0.95`, meaning 95% of non-lowest-rate demand is treated as battery-backed energy charged at the agreement's cheapest import rate.
+- **All-in household rate** is an external accounting metric, not controller truth; recompute it from Octopus account data when needed rather than hardcoding a snapshot here.
 
-For scheduling decisions use marginal rate (13.9p), not all-in (16.7p which includes 2.8p/kWh standing charge amortisation). But the important operational distinction is battery state: battery-backed non-Cosy kWh are only a small premium over Cosy, while grid-exposed non-Cosy kWh are much more expensive. Heating + DHW is the dominant controllable winter load, so battery adequacy before the next Cosy window is a key input to scheduling. `energy-hub` now publishes that as `emon/tesla/discretionary_headroom_to_next_cosy_kWh`, derived from Powerwall SoC and projected nondiscretionary load to the next Cosy window; the heating controller consumes the headroom signal instead of recomputing adequacy from raw telemetry.
+For scheduling decisions use account-derived marginal import rates, not a hardcoded tariff table or an all-in annualised rate that mixes standing charge amortisation into every kWh. The important operational distinction is battery state: battery-backed non-Cosy kWh are only a small premium over the agreement's cheapest rate, while grid-exposed non-Cosy kWh are much more expensive. Heating + DHW is the dominant controllable winter load, so battery adequacy before the next Cosy window is a key input to scheduling. `energy-hub` now publishes that as `emon/tesla/discretionary_headroom_to_next_cosy_kWh`, derived from Powerwall SoC and projected nondiscretionary load to the next Cosy window; the heating controller consumes the headroom signal instead of recomputing adequacy from raw telemetry.
 
 **During a Cosy window, battery state must never gate heating or DHW** — grid electricity is at its cheapest, so it's always the best time to run either. The headroom signal only matters for non-Cosy gaps. Note: the headroom value is unreliable during Cosy because it projects base-load drain from current SoC without accounting for active grid charging.
 

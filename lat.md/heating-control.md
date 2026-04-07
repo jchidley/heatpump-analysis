@@ -61,7 +61,9 @@ Each mode has its own branch in the outer loop. Mode persisted as TOML in state 
 | `Disabled` | No eBUS writes |
 | `MonitorOnly` | Read-only, log decisions without writing |
 
-API on port 3031: `/status`, `/mode/{mode}`, `/kill` (baseline restore). Mobile controls proxied via z2m-hub (:3030).
+API on port 3031: `/status`, `/mode/{mode}`, `/kill` (toggle). Mobile controls proxied via z2m-hub (:3030).
+
+`/kill` is a toggle: when active → restores VRC 700 baseline + sets `Disabled`; when `Disabled` → re-runs startup eBUS writes (`Z1OpMode=night`, `MinFlow=19`) + sets `Occupied`. Transitioning from `Disabled`/`MonitorOnly` to any active mode also re-runs startup writes via [[src/bin/adaptive-heating-mvp.rs#reinitialize_ebus]]. On service restart, startup eBUS writes are skipped if persisted mode is `Disabled`/`MonitorOnly`.
 
 ## Overnight Strategy
 
@@ -154,6 +156,7 @@ Key findings from V1 and V2 deployment that shaped the current design.
 - **DHW timer dedup bug caused preheat contention** (6 Apr 2026): `sync_morning_dhw_timer` correctly decided to skip the 04:00 morning window (T1 41.5°C predicted) but the eBUS write failed. Dedup state was set anyway, suppressing retries. `restore_baseline` then re-enabled all windows without clearing dedup state. VRC 700 fired DHW at 04:00 (HwcStorageTemp 37.5°C < 45°C threshold), interrupting preheat. Fixed: dedup state now cleared on write failure and on startup.
 - **Forecast nulls during DHW fixed** (6 Apr 2026): root cause was `!is_dhw` guard skipping the entire model calculation block, not just eBUS writes. Fix: model (forecast + thermal solver) now runs every tick regardless of HP mode. During DHW, writes suppressed but `target_flow_c` populated and action logged as `dhw_active` with full model fields. Inner loop can resume immediately when DHW finishes.
 - **T1 standby decay recalibrated** (6 Apr 2026): 47 flow-filtered standby segments (≥2h each, 10-min resolution, 18 days) measured: mean 0.21, median 0.22, P75 0.23, P90 0.24 °C/h. Constant set to P75 (0.23°C/h). Previous value 0.25 was at P90, directionally correct. Initial naive analysis from hourly averages had wrongly suggested 0.12 — the hourly windows spanned charge events and were unreliable.
+- **Three fixes deployed** (7 Apr 2026, 10:34 BST): coast-then-hold (flat 20.0°C overnight target replacing linear ramp), forecast nulls during DHW fix (model runs every tick), DHW timer dedup fix (clear state on failure + startup). Also τ 50→36h, T1 decay 0.25→0.23. Built natively on pi5data after discovering cross-compile glibc mismatch (host 2.39 vs bookworm 2.36). Established `scripts/sync-to-pi5data.sh` workflow: dev on laptop, release build on pi5data.
 
 ## Writable eBUS Registers
 
@@ -180,3 +183,4 @@ Source, config, and deployment files for the adaptive heating controller.
 | `src/thermal/display.rs` | [[src/thermal/display.rs#bisect_mwt_for_room]], [[src/thermal/display.rs#solve_equilibrium_temps]] |
 | `data/canonical/thermal_geometry.json` | Room geometry for solver |
 | `deploy/adaptive-heating-mvp.service` | systemd unit for pi5data |
+| `scripts/sync-to-pi5data.sh` | Sync sources to pi5data for native build |

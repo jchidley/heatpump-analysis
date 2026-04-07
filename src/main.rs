@@ -4,6 +4,7 @@ mod db;
 mod emoncms;
 mod gaps;
 mod octopus;
+mod octopus_tariff;
 mod overnight;
 mod thermal;
 

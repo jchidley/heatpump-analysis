@@ -40,13 +40,17 @@ Core HP analysis. `classify_states()` implements the hysteresis state machine. A
 
 `TempBinModel` builds temperature-bin power profiles. Bypasses `db.rs` — manages own schema.
 
-### `src/octopus.rs` — Octopus Energy integration (814 lines)
+### `src/octopus.rs` — Octopus Energy consumption + weather integration (814 lines)
 
-Reads from `~/github/octopus/data/`. Gas-vs-HP comparison, baseload analysis.
+Reads from `~/github/octopus/data/`. Gas-vs-HP comparison, baseload analysis, consumption/weather summaries.
+
+### `src/octopus_tariff.rs` — Octopus tariff account API bridge
+
+Loads import tariff agreements and half-hourly unit rates from the Octopus account API at runtime. Used to remove hardcoded tariff-price snapshots from analysis.
 
 ### `src/overnight.rs` — Overnight strategy optimizer (1,479 lines)
 
-Backtest model for overnight heating strategies.
+Backtest model for overnight heating strategies, priced with account-derived historical tariff rates via `src/octopus_tariff.rs`.
 
 ### `src/lib.rs` — Library crate entry (2 lines)
 
@@ -95,10 +99,10 @@ Key components:
 - `run_outer_cycle()` — full sensor sweep, mode-specific control logic, writes initial curve
 - `run_inner_cycle()` — light eBUS reads, proportional curve adjustment
 - `restore_baseline()` — write `Hc1HeatCurve=0.55` + `Z1OpMode=auto` + `Hc1MinFlowTempDesired=20` on shutdown
-- HTTP API: `/status`, `/mode/{mode}`, `/kill`
+- HTTP API: `/status`, `/mode/{mode}`, `/kill` (toggle restore/resume)
 - Modes: `Occupied`, `ShortAbsence`, `AwayUntil`, `Disabled`, `MonitorOnly`
 
-On startup: `Z1OpMode=night` (SP=19) + `Hc1MinFlowTempDesired=19`. Eliminates Optimum Start, day/night transitions, and the hidden 20°C flow floor that prevented genuine coast.
+On startup: `Z1OpMode=night` (SP=19) + `Hc1MinFlowTempDesired=19` when persisted mode is active. If persisted mode is `Disabled` or `MonitorOnly`, startup skips eBUS initialisation. This eliminates Optimum Start, day/night transitions, and the hidden 20°C flow floor that prevented genuine coast while preserving a true disabled baseline.
 
 ### `src/bin/thermal-regression-check.rs` (607 lines)
 
@@ -112,7 +116,7 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 
 | File | Used by | Concern |
 |------|---------|---------|
-| `config.toml` | `src/main.rs`, `src/config.rs`, most modules | Domain constants, thresholds, feed IDs |
+| `config.toml` | `src/main.rs`, `src/config.rs`, most modules | Domain constants, thresholds, feed IDs, battery-coverage assumption for tariff blending |
 | `model/thermal-config.toml` | `src/thermal/config.rs` | InfluxDB, test nights, calibration bounds |
 | `model/adaptive-heating-mvp.toml` | `src/bin/adaptive-heating-mvp.rs` | eBUS host, InfluxDB, Cosy windows, baseline values, room topics, inner loop tuning |
 | `model/control-table.json` | **No longer loaded** | Legacy MWT lookup table (replaced by live solver in Phase 1b) |
@@ -179,5 +183,7 @@ Validated by `lat check`. Cross-linked with `[[wiki refs]]` to source code.
 | **Mobile dashboard** | `~/github/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
 | eBUS polling | `scripts/ebusd-poll.sh` on pi5data |
 | Octopus data refresh | `~/github/octopus/` — `npm run cli -- refresh` |
+| Octopus tariff account truth | `src/octopus_tariff.rs` + `~/github/octopus/.envrc` |
+| Controller deploy to pi5data | `scripts/sync-to-pi5data.sh`, then native `cargo build --release` on `pi5data` |
 | VRC 700 settings | `docs/vrc700-settings-audit.md` |
 | Monitoring infrastructure | `heating-monitoring-setup.md`, `docs/emon-installation-runbook.md` |

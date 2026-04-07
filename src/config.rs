@@ -19,6 +19,7 @@ static CONFIG: OnceCell<Config> = OnceCell::new();
 pub struct Config {
     pub emoncms: Emoncms,
     pub thresholds: Thresholds,
+    pub tariff: Tariff,
     pub house: House,
     pub arotherm: Arotherm,
     pub radiators: Vec<Radiator>,
@@ -50,6 +51,14 @@ pub struct Thresholds {
     pub dhw_enter_flow_rate: f64,
     pub dhw_exit_flow_rate: f64,
     pub defrost_dt_threshold: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct Tariff {
+    /// Fraction of non-lowest-rate demand assumed to be served from battery
+    /// energy charged at the tariff's cheapest import rate.
+    pub battery_coverage: f64,
 }
 
 #[derive(Debug, Deserialize)]

@@ -11,29 +11,32 @@ Use these `lat.md` sections for the current operational truth behind this plan:
 - [`lat.md/architecture.md#Live Control Path`](../lat.md/architecture.md#live-control-path) — live control path and data flow
 - [`lat.md/constraints.md#Constraints`](../lat.md/constraints.md#constraints) — operational boundaries and gotchas
 
-## Current status (6 Apr 2026, 08:30 BST)
+## Current status (7 Apr 2026, 10:34 BST)
 
 V2 model-predictive controller is **live on pi5data** (`adaptive-heating-mvp` systemd service).
 
 **What's working:**
-- Trajectory-based overnight logic: continuous Leather target ramp from 23:00–07:00, coast gate with `Z1OpMode=off`, thermal solver for preheat. Two successful trajectory overnights: 5 Apr (Leather 20.5°C at 07:00, outside 9–12°C) and 6 Apr (Leather 20.1°C at 07:00, outside 7–9°C — slight undershoot due to DHW contention during preheat).
-- Daytime model-predictive control: Open-Meteo forecast → thermal solver → target flow → curve. Today: curve ranged 0.60–0.90, correctly responding to solar gain and evening cooling.
+- Coast-then-hold overnight logic: flat comfort-floor target (20.0°C), coast with `Z1OpMode=off` while Leather above floor, thermal solver for equilibrium hold. Replaced the linear ramp which back-loaded temperature rise and missed by 0.3°C. Deployed 7 Apr.
+- Daytime model-predictive control: Open-Meteo forecast → thermal solver → target flow → curve.
 - Inner loop (60s): proportional feedback on `Hc1ActualFlowTempDesired`, standby guard for `fd < 1.0`
 - Powerwall telemetry readable (SoC, power flows) for observability
 - DHW scheduling: T1 prediction, `HwcSFMode=load` trigger, timer fallback rails
-- `energy-hub` headroom signal **confirmed working** — deployed ~22:20 BST 5 Apr, publishing every 10s since, controller receiving non-null values every tick since 22:30 BST. Was null for 22 ticks (16:51–22:14) before the energy-hub was deployed to emonpi.
-- Cross-compiled for aarch64-musl, `rustls-tls` (no OpenSSL dependency)
+- `energy-hub` headroom signal confirmed working since 5 Apr.
+- Model runs every tick including during DHW — no more blind ticks (deployed 7 Apr).
+- Build workflow: dev on laptop (`cargo check`), release build natively on pi5data (`cargo build --release`), sync via `scripts/sync-to-pi5data.sh`. Cross-compile from WSL2 fails (glibc mismatch).
 
-**Recently fixed (6 Apr 2026):**
+**Recently fixed and deployed (7 Apr 2026):**
+- **Overnight ramp → coast-then-hold** — flat 20.0°C target replaces linear ramp. Saves ~34% electrical overnight. Motivated by 6–7 Apr night where ramp caused 0.3°C miss.
 - **Forecast nulls during DHW** — model calculation now runs every tick regardless of HP mode; action logged as `dhw_active` with full model fields. Was blind for up to 12 ticks per night.
-- **DHW timer dedup bug** — `sync_morning_dhw_timer` now checks for `ERR:` in eBUS response and clears dedup state on failure; startup also clears dedup state. Was leaving morning timer window enabled after failed skip writes.
-- **T1 standby decay rate** — recalibrated from 47 flow-filtered standby segments: P75 0.23°C/h (was 0.25, directionally correct but now properly measured).
+- **DHW timer dedup bug** — `sync_morning_dhw_timer` now checks for `ERR:` in eBUS response and clears dedup state on failure; startup also clears dedup state.
+- **τ revised 50→36h** — operational overnight cooling segments (8 independent observations). T1 decay revised 0.25→0.23 °C/h (P75 of 47 segments).
 
 **Open items:**
-- **Energy-hub headroom unreliable during Cosy windows**: doesn't account for active grid charging — shows -9.3 kWh at SoC 33%, then +4.6 at SoC 51%. No impact on control (controller ignores headroom during Cosy) but misleading for observability. Energy-hub fix needed: return null or project through Cosy charging.
-- **Overnight data growing**: 3 trajectory nights (4 Apr confounded, 5 Apr success 9–12°C, 6 Apr success 7–9°C with DHW contention). Still need cold (<5°C) and warm (>12°C) nights. No code changes — observe and record.
-- **Wind compensation and PV-aware curve**: modelled but not tuned against real data. Low urgency until weather provides test cases.
-- **DHW charge decision is T1-only, no draw prediction**: controller predicts standby T1 at 07:00 but has no model of overnight draws. On nights with late showers (47% of nights, avg 62L), the prediction can be 5°C+ optimistic. Volume-aware demand budgeting per Cosy slot is the next DHW improvement.
+- **Energy-hub headroom unreliable during Cosy windows**: doesn't account for active grid charging. No impact on control but misleading for observability.
+- **Overnight data growing**: 5+ trajectory nights logged. Still need cold (<5°C) night.
+- **Wind compensation and PV-aware curve**: modelled but not tuned. Low urgency.
+- **DHW charge decision is T1-only, no draw prediction**: volume-aware demand budgeting per Cosy slot is the next DHW improvement.
+- **Elvina overnight comfort**: trickle vents are the problem (ACH ≈1.0). Close vents + HEPA purifier is the proposed fix. No controller changes.
 
 ## What this page is for
 

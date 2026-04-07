@@ -40,7 +40,7 @@ All ad-hoc data analysis must push filtering, aggregation, pivoting, and arithme
 
 Non-obvious code behaviours that have caused bugs or confusion.
 
-- All domain constants belong in `config.toml` — edit there, not in code
+- Static domain constants belong in `config.toml` — edit there, not in code. Exception: Octopus unit rates are derived at runtime from the account API via `src/octopus_tariff.rs`; only `battery_coverage` remains in `config.toml`.
 - `gaps.rs` bypasses `db.rs` and writes to SQLite directly. `fill_gap_interpolate()` has hardcoded feed IDs
 - `ERA5_BIAS_CORRECTION_C` is a Rust constant in `octopus.rs`, not in `config.toml`
 - `--all-data` start timestamp is hardcoded in `resolve_time_range()`, duplicating the `config.toml` value
@@ -52,7 +52,7 @@ Non-obvious code behaviours that have caused bugs or confusion.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
 - DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
 - `Hc1ActualFlowTempDesired` reads 0.0 during HP standby — inner loop must guard against this or it ramps the curve to max
-- Cross-compiling for pi5data (aarch64): use `aarch64-unknown-linux-musl` target, not `gnu` (GLIBC version mismatch). `reqwest` must use `rustls-tls` feature.
+- Cross-compiling for pi5data (aarch64) from WSL2 fails: `gnu` target needs GLIBC 2.39 but pi5data has 2.36 (bookworm). `musl` target exists but is slow to build. Current workflow: dev on laptop (`cargo check`), release build natively on pi5data via `scripts/sync-to-pi5data.sh`. See [[architecture#Implicit Contracts#Deployment Workflow]].
 - ebusd container has no persistent volumes — `docker restart` re-downloads config CSVs from CDN. If CDN is unreachable, message definitions are lost. Always use `docker compose restart` (recreates properly) not bare `docker restart`.
 
 ## Sensor Gotchas

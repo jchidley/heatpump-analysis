@@ -49,6 +49,10 @@ tesla_headroom_to_next_cosy_kwh = "emon/tesla/discretionary_headroom_to_next_cos
 charge_trigger_c = 40.0
 target_c = 45.0
 
+# Octopus Cosy windows in UK local time.
+# Source of truth: ~/github/energy-hub/scripts/octopus-tariff-windows.sh
+# VRC 700 timers cannot encode 00:00 as an end time here, so the evening slot
+# is represented as 23:59 in this controller config.
 [[dhw.cosy_windows]]
 start = "04:00"
 end = "07:00"

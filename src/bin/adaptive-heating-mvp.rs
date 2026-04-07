@@ -218,6 +218,22 @@ fn default_tesla_home_power_topic() -> String {
 fn default_tesla_headroom_topic() -> String {
     "emon/tesla/discretionary_headroom_to_next_cosy_kWh".to_string()
 }
+fn default_dhw_cosy_windows() -> Vec<TimeWindow> {
+    vec![
+        TimeWindow {
+            start: "04:00".to_string(),
+            end: "07:00".to_string(),
+        },
+        TimeWindow {
+            start: "13:00".to_string(),
+            end: "16:00".to_string(),
+        },
+        TimeWindow {
+            start: "22:00".to_string(),
+            end: "23:59".to_string(),
+        },
+    ]
+}
 fn default_forecast_url() -> String {
     "https://api.open-meteo.com/v1/forecast?latitude=51.611&longitude=-0.108&hourly=temperature_2m,relative_humidity_2m,direct_radiation&forecast_hours=24&timezone=Europe/London".to_string()
 }
@@ -536,20 +552,7 @@ fn default_config() -> Config {
             tesla_headroom_to_next_cosy_kwh: default_tesla_headroom_topic(),
         },
         dhw: DhwConfig {
-            cosy_windows: vec![
-                TimeWindow {
-                    start: "04:00".to_string(),
-                    end: "07:00".to_string(),
-                },
-                TimeWindow {
-                    start: "13:00".to_string(),
-                    end: "16:00".to_string(),
-                },
-                TimeWindow {
-                    start: "22:00".to_string(),
-                    end: "23:59".to_string(),
-                },
-            ],
+            cosy_windows: default_dhw_cosy_windows(),
             charge_trigger_c: 40.0,
             target_c: 45.0,
         },
@@ -849,10 +852,14 @@ fn within_window(now: NaiveTime, window: &TimeWindow) -> bool {
     }
 }
 
+fn sorted_cosy_windows(config: &Config) -> Vec<TimeWindow> {
+    let mut windows = config.dhw.cosy_windows.clone();
+    windows.sort_by_key(|window| parse_time(&window.start));
+    windows
+}
+
 fn in_any_window(config: &Config, now: NaiveTime) -> bool {
-    config
-        .dhw
-        .cosy_windows
+    sorted_cosy_windows(config)
         .iter()
         .any(|w| within_window(now, w))
 }
@@ -893,15 +900,26 @@ fn is_preheat_time(model: &ModelConfig, now: NaiveTime) -> bool {
     }
 }
 
-fn classify_tariff_period(now: NaiveTime) -> String {
-    let t = |hh: u32, mm: u32| NaiveTime::from_hms_opt(hh, mm, 0).unwrap();
-    if now >= t(4, 0) && now < t(7, 0) {
-        "cosy_morning".to_string()
-    } else if now >= t(13, 0) && now < t(16, 0) {
-        "cosy_afternoon".to_string()
-    } else if now >= t(22, 0) {
-        "cosy_evening".to_string()
-    } else if now >= t(16, 0) && now < t(19, 0) {
+/// Classify current tariff period for logging/observability.
+/// Cosy windows come from config; only the fixed Peak window remains explicit.
+/// Verify against ~/github/energy-hub/scripts/octopus-tariff-windows.sh
+fn classify_tariff_period(config: &Config, now: NaiveTime) -> String {
+    let windows = sorted_cosy_windows(config);
+    for (idx, window) in windows.iter().enumerate() {
+        if within_window(now, window) {
+            return match idx {
+                0 => "cosy_morning",
+                1 => "cosy_afternoon",
+                2 => "cosy_evening",
+                _ => "cosy",
+            }
+            .to_string();
+        }
+    }
+
+    let peak_start = NaiveTime::from_hms_opt(16, 0, 0).unwrap();
+    let peak_end = NaiveTime::from_hms_opt(19, 0, 0).unwrap();
+    if now >= peak_start && now < peak_end {
         "peak".to_string()
     } else {
         "standard".to_string()
@@ -945,23 +963,14 @@ fn target_dhw_timer_weekday(now: DateTime<Local>, waking: NaiveTime) -> Weekday 
 fn morning_dhw_windows_enabled(config: &Config) -> Vec<TimeWindow> {
     let waking = parse_time(&config.model.waking_start)
         .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap());
-    let mut windows: Vec<TimeWindow> = config
-        .dhw
-        .cosy_windows
-        .iter()
-        .filter(|window| {
-            let end = parse_time(&window.end);
-            end != Some(waking)
-        })
-        .cloned()
-        .collect();
-    windows.sort_by_key(|window| parse_time(&window.start));
-    windows
+    sorted_cosy_windows(config)
+        .into_iter()
+        .filter(|window| parse_time(&window.end) != Some(waking))
+        .collect()
 }
 
 fn dhw_timer_payload(config: &Config, morning_enabled: bool) -> String {
-    let mut windows = config.dhw.cosy_windows.clone();
-    windows.sort_by_key(|window| parse_time(&window.start));
+    let mut windows = sorted_cosy_windows(config);
     if !morning_enabled {
         windows = morning_dhw_windows_enabled(config);
     }
@@ -1033,6 +1042,22 @@ fn sync_morning_dhw_timer(
 }
 
 // ---------------------------------------------------------------------------
+// Reinitialize eBUS for active control (same as startup sequence)
+// ---------------------------------------------------------------------------
+
+fn reinitialize_ebus(config: &Config) -> Result<Vec<String>> {
+    let mut results = Vec::new();
+    results.push(format!(
+        "Z1OpMode=night -> {}",
+        ebusd_write(config, "700", "Z1OpMode", "night")?
+    ));
+    results.push(format!(
+        "Hc1MinFlowTempDesired=19 -> {}",
+        ebusd_write(config, "700", "Hc1MinFlowTempDesired", "19")?
+    ));
+    Ok(results)
+}
+
 // Baseline restore (Phase 1a: only Z1OpMode + Hc1HeatCurve)
 // ---------------------------------------------------------------------------
 
@@ -1341,15 +1366,23 @@ fn assess_battery_headroom(
     })
 }
 
-fn current_dhw_slot(now: NaiveTime) -> Option<&'static str> {
-    let t = |hh: u32, mm: u32| NaiveTime::from_hms_opt(hh, mm, 0).unwrap();
-    if now >= t(22, 0) {
+/// Map current time to a DHW scheduling slot.
+/// Cosy windows: 04-07, 13-16, 22-00 (Octopus Cosy tariff, UK local time).
+/// Non-Cosy overnight: 00-04. Verify: ~/github/energy-hub/scripts/octopus-tariff-windows.sh
+fn current_dhw_slot(config: &Config, now: NaiveTime) -> Option<&'static str> {
+    let windows = sorted_cosy_windows(config);
+    let morning = windows.first()?;
+    let afternoon = windows.get(1)?;
+    let evening = windows.get(2)?;
+    let morning_start = parse_time(&morning.start)?;
+
+    if within_window(now, evening) {
         Some("evening_bank")
-    } else if now < t(4, 0) {
+    } else if now < morning_start {
         Some("overnight_battery")
-    } else if now < t(7, 0) {
+    } else if within_window(now, morning) {
         Some("cosy_morning")
-    } else if now >= t(13, 0) && now < t(16, 0) {
+    } else if within_window(now, afternoon) {
         Some("afternoon_fallback")
     } else {
         None
@@ -1365,7 +1398,7 @@ fn plan_dhw_schedule(
     hwc_mode: Option<&str>,
     battery: Option<&BatteryHeadroom>,
 ) -> Option<DhwScheduleDecision> {
-    let slot = current_dhw_slot(now.time())?;
+    let slot = current_dhw_slot(config, now.time())?;
     let waking = parse_time(&config.model.waking_start)
         .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap());
     let predicted_t1 = dhw_t1.map(|t1| predict_t1_at_time(t1, now.time(), waking));
@@ -1749,7 +1782,7 @@ fn run_outer_cycle(
         hwc_mode.as_deref(),
     );
 
-    let tariff_period = classify_tariff_period(now_time);
+    let tariff_period = classify_tariff_period(&config, now_time);
 
     let mut action = "hold".to_string();
     let mut reason = "no rule fired".to_string();
@@ -2174,17 +2207,22 @@ fn control_loop(
     // Phase 1a startup: force Z1OpMode=night to disable Optimum Start and day/night transitions.
     // Night mode uses Z1NightTemp=19°C. Gives zero overnight rad output (cleanest "off").
     // Curve runs 0.40-1.24 across -5 to 15°C operating range; inner loop converges regardless.
-    info!("startup: setting Z1OpMode=night");
-    match ebusd_write(&config, "700", "Z1OpMode", "night") {
-        Ok(res) => info!("startup: Z1OpMode=night -> {}", res),
-        Err(e) => error!("startup: failed to set Z1OpMode=night: {}", e),
-    }
-
-    // Lower MinFlowTempDesired to match SP=19 — removes the 20°C floor
-    // that prevented genuine coast (curve 0.10 still produced 20°C+ flow)
-    match ebusd_write(&config, "700", "Hc1MinFlowTempDesired", "19") {
-        Ok(res) => info!("startup: Hc1MinFlowTempDesired=19 -> {}", res),
-        Err(e) => error!("startup: failed to set Hc1MinFlowTempDesired=19: {}", e),
+    // Skip if mode is Disabled — baseline should remain intact.
+    {
+        let state = runtime.lock().unwrap();
+        if state.mode == Mode::Disabled || state.mode == Mode::MonitorOnly {
+            info!("startup: mode is {:?}, skipping eBUS initialisation", state.mode);
+        } else {
+            drop(state);
+            match reinitialize_ebus(&config) {
+                Ok(results) => {
+                    for r in &results {
+                        info!("startup: {}", r);
+                    }
+                }
+                Err(e) => error!("startup: reinitialize_ebus failed: {}", e),
+            }
+        }
     }
 
     // Clear DHW timer dedup state so sync_morning_dhw_timer re-evaluates
@@ -2369,11 +2407,37 @@ async fn set_mode(
     away_until: Option<DateTime<Utc>>,
     reason: &str,
 ) -> Result<()> {
+    let previous_mode = {
+        let runtime = state.runtime.lock().unwrap();
+        runtime.mode
+    };
+
+    // Transitioning from Disabled → active mode: re-run startup eBUS writes
+    let is_activating = (previous_mode == Mode::Disabled || previous_mode == Mode::MonitorOnly)
+        && mode != Mode::Disabled
+        && mode != Mode::MonitorOnly;
+
+    if is_activating {
+        match reinitialize_ebus(&state.config) {
+            Ok(results) => {
+                for r in &results {
+                    tracing::info!("reinitialize: {}", r);
+                }
+            }
+            Err(e) => tracing::error!("reinitialize_ebus failed: {}", e),
+        }
+    }
+
     let mut runtime = state.runtime.lock().unwrap();
     runtime.mode = mode;
     runtime.away_until = away_until;
     runtime.updated_at = Utc::now();
     runtime.last_reason = reason.to_string();
+    // Clear DHW dedup state on mode change so timers re-evaluate
+    if is_activating {
+        runtime.last_dhw_timer_weekday = None;
+        runtime.last_dhw_timer_morning_enabled = None;
+    }
     save_runtime_state(&state.config.state_file, &runtime)?;
     Ok(())
 }
@@ -2415,13 +2479,30 @@ async fn api_mode_away(
 }
 
 async fn api_kill(State(state): State<ServiceState>) -> Json<serde_json::Value> {
-    let restore = restore_baseline(&state.config);
-    let mode = set_mode(&state, Mode::Disabled, None, "HTTP kill / baseline restore").await;
-    Json(serde_json::json!({
-        "ok": restore.is_ok() && mode.is_ok(),
-        "restored": restore.unwrap_or_default(),
-        "mode": "disabled"
-    }))
+    let current_mode = {
+        let runtime = state.runtime.lock().unwrap();
+        runtime.mode
+    };
+
+    if current_mode == Mode::Disabled {
+        // Toggle ON: re-activate (set_mode handles reinitialize_ebus)
+        let mode = set_mode(&state, Mode::Occupied, None, "HTTP kill toggle / resume").await;
+        Json(serde_json::json!({
+            "ok": mode.is_ok(),
+            "action": "resumed",
+            "mode": "occupied"
+        }))
+    } else {
+        // Toggle OFF: restore baseline + disable
+        let restore = restore_baseline(&state.config);
+        let mode = set_mode(&state, Mode::Disabled, None, "HTTP kill / baseline restore").await;
+        Json(serde_json::json!({
+            "ok": restore.is_ok() && mode.is_ok(),
+            "action": "killed",
+            "restored": restore.unwrap_or_default(),
+            "mode": "disabled"
+        }))
+    }
 }
 
 #[cfg(test)]
