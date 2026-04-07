@@ -2,6 +2,12 @@
 
 Hard rules, known pitfalls, and things that must not be changed without careful re-validation.
 
+## Minimum Electrical Input Principle
+
+The sole cost function is total electrical kWh drawn from the grid. All control decisions — overnight trajectory, coast/heat switching, flow-temp selection, DHW scheduling — must minimise this.
+
+COP is a derived intermediate, not a target. If electrical input is minimised, COP is necessarily good. Thermal energy delivered is an output of the physics, not a goal. Do not optimise for “best COP” or “lowest thermal energy” — these can conflict with minimum electrical cost (e.g. coasting saves thermal energy but forces higher flow during reheat, destroying COP and increasing electrical cost).
+
 ## Boundaries
 
 Invariants that protect system integrity. Violating these risks silent data corruption or control failures.
@@ -18,6 +24,17 @@ Invariants that protect system integrity. Violating these risks silent data corr
 - 45°C max flow on heating — emitter capacity and COP limit
 - No heating above 17°C outside — empirically, solar/internal gains are sufficient
 - No runtime learning — `room_offset` EMA ran away to +2.18°C overnight (learned cooling trend as "model error", suppressed preheat by ~8°C). Static calibration only.
+- **During a Cosy window, battery SoC / headroom must never gate heating or DHW decisions.** Grid electricity is at its cheapest — it's the best time to run either. The headroom signal only gates decisions in non-Cosy windows (00:00–04:00, 07:00–13:00, 16:00–22:00). The energy-hub headroom value is also unreliable during Cosy because it projects base-load drain from current SoC without accounting for active grid charging.
+
+## InfluxDB-First Analysis
+
+All ad-hoc data analysis must push filtering, aggregation, pivoting, and arithmetic into Flux queries. Client-side code (Python, shell) handles only final formatting and display.
+
+- **Filter and aggregate in Flux**: `filter()`, `aggregateWindow()`, `pivot()`, `map()`, `group()`, `sort()`, `difference()`, `movingAverage()` — use these server-side, not after fetching raw rows.
+- **Return only the columns you need**: use `keep()` / `drop()` to minimise transfer. Don't fetch all fields then ignore half in Python.
+- **Compute derived values in Flux where possible**: COP (`yield / elec`), ΔT (`flow - return`), rates of change (`derivative()`) — Flux can do these.
+- **Client code is for presentation only**: formatting tables, adding emoji markers, printing summaries. If you're writing a `for` loop that filters or aggregates fetched rows, move that logic into the Flux query.
+- **Why**: InfluxDB indexes time-series data and evaluates Flux on compressed blocks. Pulling raw 15-second data to the client then filtering wastes bandwidth and is fragile (CSV column ordering, tag vs field confusion, empty-string handling). Flux queries are also self-documenting and reproducible.
 
 ## Code Gotchas
 
@@ -43,6 +60,8 @@ Non-obvious code behaviours that have caused bugs or confusion.
 Known sensor issues that affect data interpretation.
 
 - SNZB-02P v2.1.0 bug: readings freeze at power-on value. v2.2.0 fixes it. Always verify readings vary after deployment.
+- `conservatory_temp_humid` Zigbee device has been removed from Z2M and will be re-paired as `outside_temp_humid` when deployed outdoors. Conservatory temperature now uses `ebusd/poll/Z2RoomTemp` (VRC 700 Zone 2 sensor, reads ~1°C below old SNZB-02P position). Updated in `thermal_geometry.json`.
+- emonth2 in Leather reports humidity (`emon/emonth2_23/humidity`, `_field="value"`). Useful for overnight moisture analysis (Leather + dog). External temperature probe port is unconnected (reads 0).
 - Bathroom sensor was in the airing cupboard until 25 Mar 2026 21:00 — historical data reads ~3°C high before that date
 - PV calibration factor 0.087 is for the sloping plane; divide by 1.4 for vertical. P3 CT reads 6.7 kW for a 3.08 kWp array (includes Powerwall).
 - Feed `503101` (indoor_temp) is the emonth2 in Leather only, not a whole-house average

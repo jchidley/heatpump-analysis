@@ -11,21 +11,23 @@ Use these `lat.md` sections for the current operational truth behind this plan:
 - [`lat.md/heating-control.md#Active DHW Scheduling`](../lat.md/heating-control.md#active-dhw-scheduling) — how the live controller currently makes DHW timing decisions
 - [`lat.md/architecture.md#Live Control Path`](../lat.md/architecture.md#live-control-path) — how telemetry and control decisions flow through the system
 
-## Current status (5 Apr 2026)
+## Current status (6 Apr 2026, 10:00 BST)
 
 DHW scheduling is **operational** within the adaptive heating controller.
 
 **What's working:**
-- Evening Cosy charge (22:00 window): reliable, T1 reaches 45°C, decays to ~43°C by 07:00 (well above 40°C floor)
-- T1 prediction for morning decision: controller predicts cylinder-top temperature at 07:00
+- Evening Cosy charge (22:00 window): controller fires unconditionally during Cosy when cylinder needs charging
+- T1 prediction for morning decision: controller predicts cylinder-top temperature at 07:00 using calibrated standby decay (0.23°C/h, P75 of 47 measured segments)
 - `HwcSFMode=load` active trigger: fires when predicted T1 is below comfort floor and slot conditions met
-- `HwcTimer_<Weekday>` fallback rails: maintained by controller as safety net for missed software launches
+- `HwcTimer_<Weekday>` fallback rails: maintained by controller as safety net for missed software launches. Timer dedup now retries on eBUS write failure (fixed 6 Apr)
 - DHW session analysis: `dhw-sessions` CLI writes `dhw_inflection` + `dhw_capacity` to InfluxDB
 - `hmu HwcMode` (eco/normal) read for scheduling input
+- `energy-hub` headroom signal confirmed working — publishing every 10s, used for overnight non-Cosy launch gating
 
 **Open items:**
-- `energy-hub` headroom signal not yet published — overnight battery-backed DHW launches disabled until `emon/tesla/discretionary_headroom_to_next_cosy_kWh` is available. Impact: on cold depleted evenings, DHW may wait until morning Cosy rather than launching overnight on battery. Low risk — most nights T1 stays above 40°C.
-- Seasonal eco→normal switch still manual (Nov–Mar). `hmu HwcMode` is read-only from eBUS.
+- **Energy-hub headroom unreliable during Cosy windows**: shows negative values despite active grid charging. No impact on control (controller ignores headroom during Cosy) but misleading for observability.
+- **Seasonal eco→normal switch still manual** (Nov–Mar). `hmu HwcMode` is read-only from eBUS — must be changed physically on the aroTHERM controller. No software fix possible.
+- **No draw prediction in T1 model**: standby decay is well-calibrated, but the model assumes no overnight draws. On nights with late showers (47% of nights), T1 prediction can be 5°C+ optimistic. Next step: volume-aware demand budgeting per Cosy-aligned slot.
 
 ## What this page is for
 

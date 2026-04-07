@@ -1004,8 +1004,18 @@ fn sync_morning_dhw_timer(
     let register = format!("HwcTimer_{weekday_name}");
     let result = ebusd_write(config, "700", &register, &payload)?;
 
-    state.last_dhw_timer_weekday = Some(weekday_name.clone());
-    state.last_dhw_timer_morning_enabled = Some(morning_enabled);
+    // Only update dedup state if the write didn't return an error.
+    // On failure, we must retry on the next tick.
+    let write_ok = !result.to_uppercase().contains("ERR:");
+    if write_ok {
+        state.last_dhw_timer_weekday = Some(weekday_name.clone());
+        state.last_dhw_timer_morning_enabled = Some(morning_enabled);
+    } else {
+        warn!("DHW timer write failed ({}), will retry next tick: {}", result, register);
+        // Clear dedup state so next tick retries
+        state.last_dhw_timer_weekday = None;
+        state.last_dhw_timer_morning_enabled = None;
+    }
 
     Ok(Some(format!(
         "{}={} -> {} (predicted T1 at {} {:.1}°C => morning window {})",
@@ -1220,8 +1230,13 @@ fn calculate_required_curve(
     )
 }
 
-const OVERNIGHT_TARGET_DROP_C: f64 = 1.0;
-const OVERNIGHT_COAST_MARGIN_C: f64 = 0.3;
+/// Overnight target is the bottom of the comfort band.
+/// Coast is free; once leather reaches this floor the thermal solver
+/// holds it there at minimum flow → minimum electrical input.
+const OVERNIGHT_COMFORT_FLOOR_OFFSET_C: f64 = 0.5;
+/// Deadband for coast→heat transition.  Sensor resolution is 0.1°C;
+/// 0.15°C avoids hunting on sensor noise without wasting coast time.
+const OVERNIGHT_COAST_MARGIN_C: f64 = 0.15;
 const DHW_NORMAL_ELEC_KWH: f64 = 2.4;
 const DHW_ECO_ELEC_KWH: f64 = 1.9;
 
@@ -1240,6 +1255,26 @@ struct DhwScheduleDecision {
     reason: String,
 }
 
+/// Overnight target: comfort-band floor (flat, not a ramp).
+///
+/// Physics rationale (Pontryagin / lumped-capacitance):
+///   Total electrical cost = ∫ Q_hp / COP(T_flow) dt.
+///   Heat-pump COP degrades with flow temperature.  Higher Q_hp
+///   requires higher flow → worse COP.  A linear ramp back-loads the
+///   hardest temperature rise into the final hours, demanding high
+///   flow just when the room's exponential approach (τ ≈ 50 h) is
+///   slowest — and the code can never catch up.
+///
+///   Minimum-electrical strategy:
+///     1. Coast for free while leather > comfort floor  (Q = 0)
+///     2. Hold the comfort floor at equilibrium flow    (lowest flow,
+///        best COP, indefinitely sustainable)
+///     3. At waking_start, step to midband target —
+///        the daytime solver handles the 0.5°C lift.
+///
+///   Simulation (τ = 50 h, UA = 190 W/K, outside 9.5°C):
+///     Linear ramp → 20.5:    2.82 kWh electrical
+///     Coast → hold 20.0:     1.86 kWh electrical  (−34%)
 fn overnight_target_leather(model: &ModelConfig, now: NaiveTime) -> f64 {
     let waking_start = parse_time(&model.waking_start)
         .unwrap_or_else(|| NaiveTime::from_hms_opt(7, 0, 0).unwrap());
@@ -1250,17 +1285,10 @@ fn overnight_target_leather(model: &ModelConfig, now: NaiveTime) -> f64 {
         return model.target_leather_c;
     }
 
-    let overnight_floor = (model.target_leather_c - OVERNIGHT_TARGET_DROP_C).max(model.setpoint_c);
-    let total_hours = hours_until_time(waking_end, waking_start).max(0.5);
-    let elapsed_hours = if now >= waking_end {
-        hours_until_time(waking_end, now)
-    } else {
-        hours_until_time(waking_end, NaiveTime::from_hms_opt(23, 59, 59).unwrap())
-            + hours_until_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap(), now)
-    }
-    .clamp(0.0, total_hours);
-
-    overnight_floor + (model.target_leather_c - overnight_floor) * (elapsed_hours / total_hours)
+    // Flat overnight target = bottom of comfort band.
+    // Coast mechanism handles T > this (free).  Thermal solver
+    // handles T <= this (minimum flow = minimum electrical input).
+    (model.target_leather_c - OVERNIGHT_COMFORT_FLOOR_OFFSET_C).max(model.setpoint_c)
 }
 
 fn should_coast_overnight(
@@ -1409,15 +1437,22 @@ fn plan_dhw_schedule(
 
 /// House effective thermal time constant for leather room (hours).
 /// Calibrated from Night 1/Night 2 (24-26 Mar 2026).
-/// Leather cooling time constant (hours).
-/// Empirical: τ≈50h from both calibration nights (n=18) and DHW segments (n=35).
-/// Best single overnight (3.9h, Night 2): τ=65.8h.
-/// Was 15.0h — wrong by 3.3×, caused planner to never coast.
-const LEATHER_TAU_H: f64 = 50.0;
+/// Leather cooling time constant (hours) under operational conditions
+/// (doors normal, outside ~10°C).  Fitted from 8 independent cooling
+/// segments (2 calibration nights + 3 DHW events + 3 coast phases):
+///   median 36h, range 29–62h.  The 50h value was from daytime segments
+///   where warmer neighbours reduced inter-room loss; operational
+///   overnight cooling is faster.
+/// Night 2 (all doors closed, 1.4°C) gives 48h — purely external loss.
+const LEATHER_TAU_H: f64 = 36.0;
 
 /// Cylinder-top T1 standby decay used for morning DHW skip logic.
-/// Measured overnight on clean crossover nights.
-const DHW_T1_DECAY_C_PER_H: f64 = 0.25;
+/// Measured from 47 standby segments (no draws, no charging, ≥2h each,
+/// 10-min resolution with Multical flow filtering) over 18 days:
+///   mean 0.212, median 0.218, P75 0.234, P90 0.242 °C/h.
+/// Use P75 for a slightly pessimistic estimate (better to charge
+/// unnecessarily than run cold).
+const DHW_T1_DECAY_C_PER_H: f64 = 0.23;
 
 /// HP max thermal output (W) — 5kW Arotherm Plus.
 const HP_MAX_OUTPUT_W: f64 = 5000.0;
@@ -1775,7 +1810,6 @@ fn run_outer_cycle(
     if action == "hold"
         && state.mode != Mode::Disabled
         && state.mode != Mode::MonitorOnly
-        && !is_dhw
         && !is_defrost
         && !missing_core
     {
@@ -1811,7 +1845,38 @@ fn run_outer_cycle(
                     overnight_target_leather(&config.model, now_time)
                 };
 
-                if should_coast_overnight(&config.model, now_time, leather, outside, target_leather)
+                // Always run the model so forecast/target fields are populated
+                // in the log even during DHW — prevents "blind" ticks.
+                let calc = calculate_required_curve_for_target(
+                    config,
+                    target_leather,
+                    outside,
+                    live_dt,
+                    forecast.as_ref(),
+                );
+                model_forecast_outside = calc.forecast_outside_c;
+                model_forecast_solar = calc.forecast_solar_w_m2;
+                model_required_mwt = calc.required_mwt;
+                model_required_flow = calc.required_flow;
+                model_required_curve = calc.required_curve;
+
+                if is_dhw {
+                    // DHW active — don't write heating registers, but keep
+                    // target_flow populated so the inner loop can resume
+                    // immediately when DHW finishes.
+                    if let Some(target_flow) = calc.required_flow {
+                        state.target_flow_c = Some(target_flow);
+                    }
+                    action = "dhw_active".to_string();
+                    reason = format!(
+                        "DHW active, model ready: trajectory target {:.1}°C target_flow={}: {}",
+                        target_leather,
+                        calc.required_flow
+                            .map(|v| format!("{:.1}°C", v))
+                            .unwrap_or("N/A".into()),
+                        calc.reason
+                    );
+                } else if should_coast_overnight(&config.model, now_time, leather, outside, target_leather)
                 {
                     state.target_flow_c = None;
                     if !state.heating_off {
@@ -1830,20 +1895,6 @@ fn run_outer_cycle(
                         writes.push(format!("Z1OpMode=night (restore from coast) -> {}", res));
                         state.heating_off = false;
                     }
-
-                    let calc = calculate_required_curve_for_target(
-                        config,
-                        target_leather,
-                        outside,
-                        live_dt,
-                        forecast.as_ref(),
-                    );
-
-                    model_forecast_outside = calc.forecast_outside_c;
-                    model_forecast_solar = calc.forecast_solar_w_m2;
-                    model_required_mwt = calc.required_mwt;
-                    model_required_flow = calc.required_flow;
-                    model_required_curve = calc.required_curve;
 
                     if let Some(target_flow) = calc.required_flow {
                         state.target_flow_c = Some(target_flow);
@@ -2136,6 +2187,15 @@ fn control_loop(
         Err(e) => error!("startup: failed to set Hc1MinFlowTempDesired=19: {}", e),
     }
 
+    // Clear DHW timer dedup state so sync_morning_dhw_timer re-evaluates
+    // on the first outer tick. Without this, a previous (possibly failed)
+    // timer write may suppress the retry indefinitely.
+    {
+        let mut state = runtime.lock().unwrap();
+        state.last_dhw_timer_weekday = None;
+        state.last_dhw_timer_morning_enabled = None;
+    }
+
     let mut last_outer = Instant::now() - Duration::from_secs(config.control_every_seconds);
 
     loop {
@@ -2374,27 +2434,36 @@ mod tests {
     }
 
     #[test]
-    fn overnight_trajectory_ramps_toward_waking_target() {
+    fn overnight_target_is_flat_comfort_floor() {
         let config = test_config();
         let late_evening = NaiveTime::from_hms_opt(23, 0, 0).unwrap();
+        let midnight = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
         let prewake = NaiveTime::from_hms_opt(6, 0, 0).unwrap();
         let waking = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
 
-        let evening_target = overnight_target_leather(&config.model, late_evening);
-        let prewake_target = overnight_target_leather(&config.model, prewake);
-        let waking_target = overnight_target_leather(&config.model, waking);
+        let expected_floor =
+            config.model.target_leather_c - OVERNIGHT_COMFORT_FLOOR_OFFSET_C;
 
-        assert!(evening_target < prewake_target);
-        assert!(prewake_target < waking_target);
-        assert!((waking_target - config.model.target_leather_c).abs() < 0.01);
+        // Overnight: flat at comfort floor
+        let evening = overnight_target_leather(&config.model, late_evening);
+        let mid = overnight_target_leather(&config.model, midnight);
+        let pre = overnight_target_leather(&config.model, prewake);
+        assert!((evening - expected_floor).abs() < 0.01);
+        assert!((mid - expected_floor).abs() < 0.01);
+        assert!((pre - expected_floor).abs() < 0.01);
+
+        // Waking: steps to midband target
+        let wake = overnight_target_leather(&config.model, waking);
+        assert!((wake - config.model.target_leather_c).abs() < 0.01);
     }
 
     #[test]
-    fn coast_only_when_above_trajectory_and_not_cold() {
+    fn coast_only_when_above_floor_and_not_cold() {
         let config = test_config();
         let now = NaiveTime::from_hms_opt(1, 0, 0).unwrap();
         let target = overnight_target_leather(&config.model, now);
 
+        // Above target + margin, mild outside => coast
         assert!(should_coast_overnight(
             &config.model,
             now,
@@ -2402,11 +2471,20 @@ mod tests {
             6.0,
             target,
         ));
+        // Above target + margin, freezing => no coast (cold protection)
         assert!(!should_coast_overnight(
             &config.model,
             now,
             target + OVERNIGHT_COAST_MARGIN_C + 0.2,
             1.0,
+            target,
+        ));
+        // Below target + margin => no coast (need to heat)
+        assert!(!should_coast_overnight(
+            &config.model,
+            now,
+            target + OVERNIGHT_COAST_MARGIN_C - 0.05,
+            6.0,
             target,
         ));
     }

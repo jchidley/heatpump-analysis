@@ -62,6 +62,27 @@ This only works on the dev machine where `ak` is installed. On pi5data without t
 | MQTT | Not used directly | N/A | Z2M sensors come via Telegraf→InfluxDB |
 | Open-Meteo | Controller (weather forecast) | None needed | Public API, no auth |
 
+## Ad-hoc InfluxDB queries from dev machine (WSL2)
+
+To query InfluxDB on pi5data from the dev machine without SSH:
+
+```bash
+INFLUX_TOKEN=$(ak get influxdb)
+curl -s -H "Authorization: Token $INFLUX_TOKEN" \
+  "http://pi5data:8086/api/v2/query?org=home" \
+  -H "Content-Type: application/vnd.flux" \
+  -H "Accept: application/csv" \
+  --data-raw 'from(bucket:"energy") |> range(start: -2h) |> filter(fn: (r) => r._measurement == "ebusd") |> last()'
+```
+
+Key details:
+- **API**: InfluxDB v2 Flux, `http://pi5data:8086`
+- **Org**: `home`, **Bucket**: `energy`
+- **Token source**: `ak get influxdb` (GPG-encrypted keystore)
+- **Measurements**: `ebusd`, `zigbee` (`_field="temperature"`), `adaptive_heating`, `tesla`, `dhw_inflection`, `dhw_capacity`
+
+Do NOT use the InfluxDB v1 compatibility endpoint (`/query?db=`) — it requires separate auth and the v2 Flux API works directly.
+
 ## What NOT to do
 
 - Don't hardcode tokens in source code or config files tracked by git

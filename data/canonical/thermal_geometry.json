@@ -104,7 +104,7 @@
       "floor_area": 21.0,
       "ceiling_height": 2.6,
       "construction": "brick",
-      "sensor": "zigbee2mqtt/conservatory_temp_humid",
+      "sensor": "ebusd/poll/Z2RoomTemp",
       "ventilation_ach": 1.0,
       "heat_recovery": 0.0,
       "overnight_occupants": 0,

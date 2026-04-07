@@ -165,5 +165,7 @@ Use `lat.md/` for current project truth and `docs/code-truth/` for code location
 - Adaptive controller API: `http://pi5data:3031` (phone proxy `http://pi5data:3030`)
 - Infrastructure rebuild/recovery: `heating-monitoring-setup.md`, `docs/emon-installation-runbook.md`
 - Secrets and tokens: `deploy/SECRETS.md`
+- **InfluxDB queries from dev machine**: `INFLUX_TOKEN=$(ak get influxdb)` then `curl` to `http://pi5data:8086/api/v2/query?org=home` with Flux. See `lat.md/infrastructure.md#Ad-hoc InfluxDB Queries from Dev Machine`.
+- **InfluxDB-first analysis**: push all filtering, aggregation, pivoting, and arithmetic into Flux queries. Client-side code (Python/shell) is for final formatting only. See `lat.md/constraints.md#InfluxDB-First Analysis`.
 
 For operational facts, gotchas, and hard boundaries, prefer `lat.md/` instead of duplicating them here.

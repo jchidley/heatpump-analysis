@@ -18,7 +18,7 @@ This file keeps detailed measurement notes and reference evidence that are usefu
 | Heat exchanger | Twin coil-in-coil; both coils in series for HP use |
 | Cold feed | Dip pipe from 490mm connection to bottom |
 | Standing heat loss | ~13W measured |
-| T1 decay rate | ~0.25°C/h |
+| T1 decay rate | ~0.23°C/h (P75 of 47 standby segments; mean 0.21) |
 
 ### Connection heights (outside / internal mm)
 

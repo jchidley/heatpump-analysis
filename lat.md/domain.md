@@ -43,25 +43,23 @@ Room geometry is defined in `data/canonical/thermal_geometry.json` (single sourc
 
 Ground-floor brick rooms (4,000–6,300 kJ/K) cool much slower than loft timber rooms (880–3,800 kJ/K). Thermal mass dominates cooling behaviour more than fabric U-values.
 
-- **Leather** (primary control room): door normally closed, no external walls, 2×DP DF rads. Exports heat to 5 neighbours before warming itself (+0.3°C in 2.5h despite biggest rads). τ=50h empirical.
+- **Leather** (primary control room): door normally closed, no external walls, 2×DP DF rads. Exports heat to 5 neighbours before warming itself (+0.3°C in 2.5h despite biggest rads). τ=36h operational (48h doors-closed).
 - **Kitchen**: no radiator. Heated by adjacent rooms + bare CH pipes in floor void (~25W each side at MWT=31).
 - **Hall/Landing/Top Landing**: one continuous stairwell column, 3 floors. Only 1 radiator (Hall, ground floor). Hall is flow-starved (15mm branch competing with Front).
 - **Sterling**: rad OFF, door closed. Gets ~19°C from Leather's floor heat alone. Occupant prefers cold.
 - **Conservatory**: dining room, cannot be closed off. Largest rads in house but cools fastest overnight (−1.9°C, glazed roof U=2.4).
-- **Elvina**: trickle vents open = faster cooling than expected from 2010 insulation spec.
+- **Elvina**: coldest occupied room (16.4–17.5°C at 07:00). Ratio-method moisture analysis shows ventilation ~3× Aldora’s rate (ΔAH 0.77 vs 2.36 g/m³); nearly all the excess UA (32 vs model 24.6 W/K) is ventilation, not fabric. LEVOIT Core 300 HEPA purifier (CADR 187 m³/h, 20W) already runs for child’s allergies. Closing trickle vents would cut UA to ~17 W/K and raise overnight temp by ~3°C while improving allergen control (no outdoor pollen ingress). Requires CO2 monitoring (door ajar or morning purge for Part F fresh air).
 - **Aldora**: very well sealed. Humidity reaches 58.8% RH overnight (surface ~71% = mould warning). Needs trickle vent + radiator upgrade.
 
 ## Leather Room
 
-The primary control room. Its thermal mass dominates control strategy with τ=50 h (empirical, from 53 cooling segments).
+The primary control room. Operational τ ≈ 36 h (median of 8 overnight cooling segments: calibration nights, DHW events, coast phases).
 
-The thermal model initially estimated τ=15 h — wrong by 3.3×. The empirical value comes from 18 calibration-night + 35 DHW mini-experiment cooling segments, all agreeing on ~50 h. Overnight planner uses the empirical value. Feed `503101` (indoor_temp) is the emonth2 in Leather only, not whole-house.
-
-Overnight τ is unknown — first coast night was confounded (curve 0.10 ≠ off, HP still cycling). K=7500 in code, empirical K≈20,600 from post-DHW segments.
+The original 50 h figure came from daytime segments where warmer neighbours reduced inter-room loss. Overnight with doors normal and outside ~10°C, Leather cools faster (τ 29–42 h). With all doors closed and outside 1.4°C (Night 2), τ rises to 48 h — purely external envelope loss. The ratio (1.36×) shows ~26% of Leather’s operational cooling is inter-room transfer to cooler neighbours. Overnight occupant: Parson Russell Terrier (~10 g/h moisture, door closed). Feed `503101` / emonth2 provides temperature and humidity.
 
 ## DHW Cylinder
 
-Kingspan Albion Ultrasteel Plus Solar 300L (AUXSN300ERP). 221L usable (91% plug flow efficiency). 45°C target. Standing loss 13W. T1 decay 0.25°C/h.
+Kingspan Albion Ultrasteel Plus Solar 300L (AUXSN300ERP). 221L usable (91% plug flow efficiency). 45°C target. Standing loss 13W. T1 decay 0.23°C/h (P75 of 47 standby segments, no draws).
 
 Twin coil-in-coil heat exchanger — solar (lower) + boiler (upper) both connected in series for HP, doubling surface area. Cold feed via dip pipe from 490mm to bottom.
 
@@ -89,7 +87,7 @@ Three independent temperature measurements at different cylinder heights.
 | HwcStorageTemp | ~600mm | `ebusd/poll/HwcStorageTemp` (30s) | VRC 700 charging trigger. **Misleading after draws** — reads 13°C with 100L of 45°C above |
 | DHW flow | — | `emon/multical/dhw_flow` (2s) | Tap-side, independent of HP circuit |
 
-T1 decays 0.19–0.25°C/h. 22:00 charge at 45°C → ~43°C by 07:00. Min acceptable T1 = 40°C (empirical: lowest T1 at shower start across 60 days, no complaints).
+T1 standby decay: mean 0.21, median 0.22, P75 0.23, P90 0.24 °C/h (47 segments, ≥2h each, 10-min resolution with Multical flow filtering, 18 days). Controller uses P75 (0.23°C/h) for slight pessimism. 22:00 charge at 45°C → ~42.9°C by 07:00 (standby only). Min acceptable T1 = 40°C (empirical: lowest T1 at shower start across 60 days, no complaints).
 
 ### Household Usage
 
@@ -109,9 +107,11 @@ VRC 700 timer windows aligned to Cosy tariff. DHW timing difference is <0.3p/sho
 
 | Window | Rationale |
 |---|---|
-| 05:30–07:00 | Morning Cosy. HP heats house 04:00–05:30 first |
-| 13:00–15:00 | Afternoon Cosy. Shortened from 16:00 to prevent peak spills |
+| 04:00–07:00 | Morning Cosy. Matches Cosy tariff window |
+| 13:00–16:00 | Afternoon Cosy |
 | 22:00–end of day | Evening Cosy. Bank hot water, serve concurrent showers |
+
+`sync_morning_dhw_timer` dynamically enables/disables the 04:00–07:00 window based on predicted T1 at waking time. When T1 is predicted above 40°C, the morning window is removed from the VRC 700 timer to prevent unnecessary charges that would contend with preheat.
 
 ⚠ Timer end times use `-:-` (TTM byte `0x90`), never `00:00`. See [[constraints#eBUS Timer Encoding]].
 
@@ -128,7 +128,7 @@ DHW steals 50–100 min of HP capacity per charge. Impact depends on outside tem
 | 10°C | ~0.2°C, recovers ~30 min |
 | 15°C | Negligible |
 
-On cold days, schedule DHW at 22:00 to keep preheat window clear.
+On cold days, schedule DHW during Cosy to avoid stealing HP capacity from heating — the recovery heat after DHW contention requires higher flow, reducing COP and increasing electrical cost.
 
 ## Cosy Tariff
 
@@ -141,7 +141,9 @@ Octopus Cosy tariff with three off-peak windows and a Powerwall battery. 95% of 
 
 For scheduling decisions use marginal rate (13.9p), not all-in (16.7p which includes 2.8p/kWh standing charge amortisation). But the important operational distinction is battery state: battery-backed non-Cosy kWh are only a small premium over Cosy, while grid-exposed non-Cosy kWh are much more expensive. Heating + DHW is the dominant controllable winter load, so battery adequacy before the next Cosy window is a key input to scheduling. `energy-hub` now publishes that as `emon/tesla/discretionary_headroom_to_next_cosy_kWh`, derived from Powerwall SoC and projected nondiscretionary load to the next Cosy window; the heating controller consumes the headroom signal instead of recomputing adequacy from raw telemetry.
 
-Operationally, battery scarcity is not symmetric across the three Cosy windows. Early morning is rarely battery-limited because the decision is already inside Cosy. Afternoon can be battery-sensitive and expensive if misjudged. True depletion risk, when it happens, usually appears in the evening / overnight gap before the next 04:00 Cosy window. This is an empirical sense check only: live scheduling decisions should still be driven by measured telemetry and explicit headroom models, not by hand-coded time-of-day heuristics. The controller therefore treats the published headroom signal as the primary battery-cost input, with time-of-day heuristics only as secondary guards.
+**During a Cosy window, battery state must never gate heating or DHW** — grid electricity is at its cheapest, so it's always the best time to run either. The headroom signal only matters for non-Cosy gaps. Note: the headroom value is unreliable during Cosy because it projects base-load drain from current SoC without accounting for active grid charging.
+
+Operationally, battery scarcity is not symmetric across the three gaps. The overnight gap (00:00–04:00) is the primary depletion risk window. Morning (07:00–13:00) is usually comfortable because the battery charged during the preceding Cosy. Afternoon/evening (16:00–22:00) can be battery-sensitive and expensive if misjudged. The controller treats the published headroom signal as the primary battery-cost input, with time-of-day heuristics only as secondary guards.
 
 ## Feeds
 

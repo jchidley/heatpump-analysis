@@ -102,7 +102,7 @@
 
 **Key finding**: eco mode fails below 5°C (95% hit 120-min timeout). Normal mode avg 60 min, works everywhere. See DHW duration model in `docs/dhw-plan.md`.
 
-**Preferred Phase 2 strategy**: charge at 22:00 Cosy window, monitor T1 overnight (0.25°C/h drop), top up at 04:00 Cosy if T1 below comfort threshold. Cosy windows preferred to reduce battery pressure on cold days.
+**Preferred Phase 2 strategy**: charge at 22:00 Cosy window, monitor T1 overnight (0.23°C/h standby drop, P75 of 47 measured segments), top up at 04:00 Cosy if T1 below comfort threshold. Cosy windows preferred to reduce battery pressure on cold days.
 
 ### D13: Legionella as monitored risk, not constant high setpoint
 
@@ -130,7 +130,7 @@ Need to query historical data for Aldora temperature when Leather is in the 20�
 
 ### OQ2: Minimum acceptable T1 for morning showers?
 
-45°C is definitely fine. 43°C might be. Needs household experiment. Determines whether a 22:00 charge to 45°C (→ ~43.3°C by morning after 0.25°C/h decay) is acceptable, or whether to charge to 47–48°C.
+45°C is definitely fine. 43°C might be. Needs household experiment. Determines whether a 22:00 charge to 45°C (→ ~42.9°C by morning after 0.23°C/h standby decay) is acceptable, or whether to charge to 47–48°C.
 
 ### OQ3: Overnight coast empirical K
 

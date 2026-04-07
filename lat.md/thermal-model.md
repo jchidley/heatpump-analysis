@@ -6,6 +6,8 @@
 
 Calculate equilibrium room temperatures for any outside temp and mean water temp (MWT), enabling the adaptive controller to find the minimum flow temp that holds Leather at target.
 
+Minimum flow directly minimises electrical input: lower flow → better COP → less electricity. See [[constraints#Minimum Electrical Input Principle]].
+
 Secondary uses: radiator flow distribution analysis, fabric improvement predictions, FRV recommendations, kitchen radiator decision. See `docs/room-thermal-model.md` for full methodology and experimental results.
 
 ## Energy Balance
@@ -58,7 +60,7 @@ Ventilation rates assigned by room type, validated by moisture balance analysis.
 |---|---|---|---|
 | MVHR (measured) | 0.75 (effective 0.16) | Bathroom | Spec validated by moisture (0.15 ACH) |
 | Very leaky (bay window) | 0.80 | Jack & Carol | Moisture: AH drops with 2 occupants |
-| Trickle vents (stack) | 0.70 | Elvina | Moisture: barely maintains AH with 1 person |
+| Trickle vents (stack) | 0.70 (model) | Elvina | Proxy-network overnight analysis implies ACH ≈ 1.0 (6.8× Aldora). Vents must stay open (child’s allergies + purifier 20W). Ventilation UA ≈ 21 W/K — nearly all the excess over model |
 | Infiltration (high) | 0.50 | Hall | Front door + stairwell base |
 | Open doors + draft | 0.30–0.35 | Kitchen, Conservatory, Front | RH drops overnight |
 | Sealed but inadequate | 0.30 | Aldora | Moisture: AH rises with 1 person. Mould risk |
@@ -67,11 +69,20 @@ Ventilation rates assigned by room type, validated by moisture balance analysis.
 
 ### Moisture Validation
 
-Moisture balance independently cross-checks ventilation rates. Outside absolute humidity from Open-Meteo, indoor from SNZB-02P sensors.
+Moisture balance independently cross-checks ventilation rates. Outside AH from the outdoor SNZB-02P (pending deployment); indoor from 12 per-room SNZB-02P sensors + emonth2 (Leather humidity).
 
-Moisture ACH measures infiltration to outside only. Thermal ACH includes inter-room doorway exchange. The difference between them IS the doorway exchange rate.
+AH_out estimated from unoccupied room proxy network (5 rooms: hall 7.66, kitchen 7.74, office 8.08, landing 8.11, front 8.22 g/m³). Mean 7.96 g/m³ = outside RH ≈ 82%. The outdoor SNZB-02P will eliminate this proxy step.
 
-Key finding: Aldora at 58.8% RH (surface ~71% at ΔT=3°C) = mould warning. Needs trickle vent (Part F requirement for bedroom).
+Overnight occupied-room findings (01:00–05:00, 6 nights, known occupancy):
+
+| Room | Occupants | Mean AH | ΔAH vs proxy | Implied ACH | Model ACH | Finding |
+|---|---|---|---|---|---|---|
+| Aldora | 1 child | 9.92 | +1.97 | 0.35 (anchored at 0.30) | 0.30 | Sealed room, calibration anchor. Mould risk (58.8% RH) |
+| Elvina | 1 child | 8.21 | +0.29 | ≈1.0 (ratio-method) | 0.51 | 3/6 nights drier than hallway. Ventilation is 6.8× Aldora |
+| J&C | 2 adults | 8.31 | +0.37 | unreliable | 0.80 | Door closed; ΔAH too small for 2 adults in 34 m³ — humidity method breaks down. τ-derived UA (21 W/K) is below model (31 W/K), contradicting high ACH |
+| Leather | 1 dog (PRT) | 8.35 | +0.39 | 0.5–0.7 | 0.67 | Consistent but dog M too uncertain to constrain |
+
+J&C demonstrates two limitations of the moisture method: (1) with 2 adults generating ~60–100 g/h in only 34 m³, even modest M and AH_out uncertainties produce implausible ACH (4+); (2) overnight outdoor AH is not constant — post-sunset dew formation and temperature drop shift AH_out by ~0.3 g/m³ over the night, which is comparable to J&C’s entire ΔAH signal. The τ-derived total UA (21.2 W/K) contradicts the high implied ACH — if ACH were 4+, the room would cool far faster than its measured τ=57h. Moisture balance is most reliable for rooms with a large ΔAH signal: sealed rooms (Aldora, ΔAH 1.97) or highly ventilated rooms with 1 occupant (Elvina, ΔAH 0.29 but robustly below proxy rooms on 3/6 nights).
 
 ## Thermal Mass
 
@@ -85,6 +96,30 @@ Construction-based estimates per room. Total house: **48,090 kJ/K**.
 | Timber (loft/landing) | Elvina, Aldora, Shower, Landing | 880–3,778 |
 
 Ground-floor brick rooms cool much slower than loft timber rooms. This dominates cooling behaviour more than fabric U-values.
+
+## Empirical Room Time Constants
+
+Fitted from 5–8 independent cooling segments per room (2 calibration nights, DHW events, controller coast phases) using Newton’s law: T(t) = T_out + (T₀ − T_out)·exp(−t/τ). Conservatory excluded (cannot be closed off, glazed roof).
+
+| Room | τ operational | τ doors-closed | Ratio | Segments | Interpretation |
+|---|---|---|---|---|---|
+| jackcarol | 57h | 87h | 1.5× | 6 | Well-insulated 1st floor |
+| shower | 42h | 82h | 2.0× | 6 | Tiny loft room, low UA |
+| elvina | 34h | 66h | 1.9× | 5 | **Model underpredicts loss by 30%** — proxy-network says 6.8× Aldora ventilation (ACH≈1.0). Fabric residual 11 W/K < model 14.5. Roof insulation fine; trickle vents are the entire problem |
+| aldora | 41h | 101h | 2.5× | 6 | Inter-room dominated (sealed, no trickle vent) |
+| leather | 36h | 48h | 1.4× | 8 | Primary control room, 26% inter-room loss |
+| landing | 35h | 70h | 2.0× | 6 | Stairwell, no radiator |
+| hall | 29h | 41h | 1.4× | 6 | Stairwell base, consistent |
+| kitchen | 27h | 86h | 3.2× | 7 | No radiator — 66% of cooling is inter-room |
+| front | 28h | 44h | 1.6× | 6 | Most consistent fits (R² > 0.93) |
+| bathroom | 25h | 69h | 2.8× | 6 | MVHR ventilation |
+| office | 22h | 30h | 1.4× | 6 | Fastest occupied room, high ACH |
+
+“Operational” = doors normal, outside ~10°C (median of coast/DHW segments). “Doors-closed” = Night 2 (1.4°C, all internal doors closed). The ratio reveals how much cooling comes from inter-room transfer vs external fabric loss. Sterling omitted (bimodal: τ=6h vs 160h — door-closed isolation makes it nearly adiabatic to outside).
+
+C-weighted mean operational τ: 35h. This means the coast-then-hold strategy (minimise electrical input by holding the comfort floor at equilibrium flow) applies to the whole house, not just Leather.
+
+Elvina is the key outlier: the model predicts τ=44h but empirical is 34h. Full overnight moisture analysis (13 sensors, 6 nights) shows the entire 7.4 W/K excess is ventilation (ACH ≈ 1.0 vs model 0.51). Fabric residual (11 W/K) is actually below model (14.5) — roof insulation appears fine. Closing trickle vents (with HEPA purifier running) would cut UA from 32 to ~17 W/K, gaining ~3°C overnight. See [[plan#Plan#Heating Controller#Actionable: Elvina Overnight Comfort]].
 
 ## Solver Functions
 
@@ -102,11 +137,12 @@ Energy balance: model total loss 4,374W vs HP meter 3,989W — 10% over-predicti
 
 | Parameter | Confidence | Source |
 |---|---|---|
-| Fabric U-values | High | Measured areas + standard U-values |
+| Fabric U-values (most rooms) | High | Measured areas + standard U-values |
+| Fabric U-values (Elvina roof) | **Medium** | Ratio-method analysis suggests fabric UA ≈ 14 W/K, close to model 14.5 — roof may be near spec. Absolute moisture ACH is too uncertain (ΔAH ≈ sensor noise) to separate fabric from ventilation reliably |
 | MVHR performance | High | Spec validated by moisture (0.16 vs 0.17 ACH) |
 | Pipe topology / radiator T50 | High | Physical survey |
 | Thermal mass (brick rooms) | Medium | Construction-based, not directly measured |
-| Ventilation (moisture-validated rooms) | Medium | Aldora, Elvina, J&C — some uncertainty in outside AH |
+| Ventilation (moisture-validated rooms) | Medium | Aldora (model anchor ACH 0.30, M_child ≈ 18 g/h), Elvina (ACH ≈ 1.0, 6.8× Aldora rate — nearly all excess UA). J&C unreliable (small room + 2 adults → ΔAH too small vs uncertainty). AH_out from 5-room proxy network (≈82% RH) pending outdoor sensor |
 | Ventilation (other rooms) | Low-Medium | Estimated, consistent with humidity trends |
 | Inter-room doorway exchange | Medium | Buoyancy Cd model with canonical doorway geometry |
 | Landing convective model | Medium-Low | Explicit chimney links modelled; reasonable fit |
@@ -116,7 +152,9 @@ Energy balance: model total loss 4,374W vs HP meter 3,989W — 10% over-predicti
 
 Model HTC (261 W/K) overpredicts actual overnight heat loss by ~30% vs 466 nights showing ~190 W/K.
 
-This may partly explain why the model's Leather τ=15h was wrong — lower real heat loss means slower cooling. The empirical τ=50h (53 segments) is used for control instead.
+The model’s original Leather τ=15h was wrong by 3.3×. Empirical overnight τ=36h (8 segments, operational conditions) is used for control. The earlier 50h figure was from daytime segments with reduced inter-room loss; see [[thermal-model#Empirical Room Time Constants]] for the full per-room analysis showing τ varies with door state and outside temperature.
+
+**Elvina per-room discrepancy**: model UA = 24.6 W/K, empirical UA = 32.0 W/K (+30%). The total UA is solid (τ fitted from cooling curves, R² > 0.95). Full proxy-network analysis (5 unoccupied rooms as AH_out reference, 6 nights) shows Elvina ΔAH = +0.29 g/m³ vs Aldora +1.97 — a ratio of 0.15, meaning Elvina ventilates **6.8× faster** than Aldora. On 3 of 6 nights Elvina was drier than the unoccupied hallway despite a child sleeping in it — outside air flushes through faster than the child adds moisture. Anchoring on Aldora ACH=0.30: implied Elvina ACH ≈ 1.0, ventilation UA ≈ 21 W/K, fabric residual ≈ 11 W/K (below model’s 14.5 — roof insulation appears fine). Nearly all the excess UA is trickle-vent ventilation. A HEPA purifier (LEVOIT Core 300, CADR 187 m³/h = 3.1 filtered ACH, 20W) already runs; closing vents would cut UA from 32 to ~17 W/K (+3°C overnight) while improving allergen control (no outdoor pollen ingress).
 
 ## Reproducibility and Regression
 

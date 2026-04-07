@@ -23,7 +23,8 @@ pub fn query_room_temps(
 ) -> ThermalResult<Vec<(DateTime<FixedOffset>, String, f64)>> {
     let mut conditions = Vec::new();
     for t in sensor_topics {
-        if *t == "emon/emonth2_23/temperature" {
+        if *t == "emon/emonth2_23/temperature" || t.starts_with("ebusd/poll/") {
+            // emon and ebusd_poll measurements use _field == "value"
             conditions.push(format!("(r.topic == \"{}\" and r._field == \"value\")", t));
         } else {
             conditions.push(format!(

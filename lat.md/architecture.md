@@ -58,7 +58,7 @@ InfluxDB (pi5data, bucket "energy") → `thermal/influx.rs` → calibration/vali
 
 ### Live Control Path
 
-Open-Meteo forecast drives the outer loop, which solves a trajectory-aware target flow and may launch DHW based on T1 plus Powerwall telemetry.
+Open-Meteo forecast drives the outer loop, which solves for minimum-electrical-input flow temp via the thermal model and may launch DHW based on T1 plus Powerwall telemetry.
 
 The path is: Open-Meteo forecast → outer loop → trajectory-aware [[src/thermal/display.rs#bisect_mwt_for_room]] solve → target flow → inner loop → eBUS `Hc1HeatCurve` write. The same outer loop queries Influx for DHW T1 plus the `energy-hub` headroom topic `emon/tesla/discretionary_headroom_to_next_cosy_kWh` (alongside raw Powerwall telemetry for observability) and logs decisions to InfluxDB + local JSONL.
 
