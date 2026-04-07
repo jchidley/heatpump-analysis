@@ -40,7 +40,7 @@ All ad-hoc data analysis must push filtering, aggregation, pivoting, and arithme
 
 Non-obvious code behaviours that have caused bugs or confusion.
 
-- Static domain constants belong in `config.toml` — edit there, not in code. Exception: Octopus unit rates AND tariff window times are both derived at runtime from the account API via the shared `octopus-tariff` crate (`~/github/octopus-tariff`); only `battery_coverage` remains in `config.toml`. The controller caches windows at `tariff_cache_path` and refreshes them every 12 h. TOML fallback windows in `model/adaptive-heating-mvp.toml` are used only when the API is unreachable.
+- Static domain constants belong in `config.toml` — edit there, not in code. Exception: Octopus unit rates AND tariff window times are both derived at runtime from the account API via the shared `octopus-tariff` crate (`~/github/octopus-tariff`); only `battery_coverage` remains in `config.toml`. The controller caches windows at `tariff_cache_path` and refreshes them every 12 h. TOML fallback windows in `model/adaptive-heating-mvp.toml` are used only when the API is unreachable. Credentials resolve in order: env vars → `~/.octopus-api-key` file → `~/github/octopus/.envrc`. See [[infrastructure#Secrets#Octopus API Credentials]].
 - `gaps.rs` bypasses `db.rs` and writes to SQLite directly. `fill_gap_interpolate()` has hardcoded feed IDs
 - `ERA5_BIAS_CORRECTION_C` is a Rust constant in `octopus.rs`, not in `config.toml`
 - `--all-data` start timestamp is hardcoded in `resolve_time_range()`, duplicating the `config.toml` value

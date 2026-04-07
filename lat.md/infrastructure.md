@@ -80,6 +80,16 @@ Temperature and humidity from separate sources.
 
 InfluxDB token on pi5data: `/etc/adaptive-heating-mvp.env` (root:root 0600, systemd EnvironmentFile). Same token as Telegraf. Dev machine: `ak get influxdb`. See `deploy/SECRETS.md`.
 
+### Octopus API Credentials
+
+Credentials for the `octopus-tariff` crate resolve in order: env vars → `~/.octopus-api-key` file → `~/github/octopus/.envrc` sourced via bash.
+
+- `OCTOPUS_API_KEY` / `OCTOPUS_ACCOUNT_NUMBER` env vars take priority
+- `~/.octopus-api-key` plain-text file (API key only, chmod 600) — used on emonpi where no `.envrc` is present
+- `~/github/octopus/.envrc` sourced via bash — canonical store on dev machines, shared across `octopus`, `octopus-tariff`, and `heatpump-analysis`
+
+On pi5data the env vars are injected by the systemd `EnvironmentFile` at `/etc/adaptive-heating-mvp.env`.
+
 ### Ad-hoc InfluxDB Queries from Dev Machine
 
 Query InfluxDB on pi5data from WSL using `ak get influxdb` for the token. InfluxDB v2 Flux API at `http://pi5data:8086`, org `home`, bucket `energy`.

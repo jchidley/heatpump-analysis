@@ -81,7 +81,7 @@ Four active config artifacts define four separate concerns.
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
 
-Tariff rate lookup and window discovery use the shared `octopus-tariff` crate (`~/github/octopus-tariff`). `src/octopus_tariff.rs` re-exports the crate's `TariffBook` and `CachedTariffWindows` types. Unit rates AND tariff window times (Cosy + peak) come from the Octopus account API at runtime. The live controller caches the window structure as JSON at `tariff_cache_path` (default `~/.local/state/adaptive-heating-mvp/tariff-windows.json`); the cache is refreshed when older than 12 hours. `model/adaptive-heating-mvp.toml` `[[dhw.cosy_windows]]` entries are TOML fallbacks only — used when the API is unreachable at startup. `config.toml` retains only the battery-coverage assumption for pricing battery-backed non-lowest-rate demand.
+Tariff rate lookup and window discovery use the shared `octopus-tariff` crate (`~/github/octopus-tariff`), declared as a path dependency in `Cargo.toml`. [[src/octopus_tariff.rs]] is a thin re-export module that re-exports `TariffBook`, `CachedTariffWindows`, `TariffTimeWindow`, `format_windows`, `naive_time_to_night_offset`, `OctopusCredentials`, `RateInterval`, and `AgreementMinRate` from the shared crate, keeping `crate::octopus_tariff::*` paths stable inside heatpump-analysis. Unit rates AND tariff window times (Cosy + peak) come from the Octopus account API at runtime. The live controller caches the window structure as JSON at `tariff_cache_path` (default `~/.local/state/adaptive-heating-mvp/tariff-windows.json`); the cache is refreshed when older than 12 hours. `model/adaptive-heating-mvp.toml` `[[dhw.cosy_windows]]` entries are TOML fallbacks only — used when the API is unreachable at startup. `config.toml` retains only the battery-coverage assumption for pricing battery-backed non-lowest-rate demand.
 
 ## Documentation Topology
 
@@ -119,7 +119,7 @@ Since Phase 1b, `adaptive-heating-mvp` calls `bisect_mwt_for_room()` directly fr
 
 Dev on laptop (fast `cargo check`), release build natively on pi5data (correct glibc). Cross-compile from WSL2 fails due to glibc version mismatch (host 2.39 vs pi5data bookworm 2.36).
 
-`scripts/sync-to-pi5data.sh` syncs sources: `src/bin/adaptive-heating-mvp.rs` → `src/main.rs`, thermal modules, `lib.rs`, `thermal_geometry.json`, and config. Then `cargo build --release` on pi5data (~33s incremental). The pi5data project has a cut-down `Cargo.toml` with only controller dependencies (no polars, no rusqlite). Service restart: `sudo systemctl restart adaptive-heating-mvp`.
+`scripts/sync-to-pi5data.sh` syncs sources: `src/bin/adaptive-heating-mvp.rs` → `src/main.rs`, thermal modules, `lib.rs`, `thermal_geometry.json`, config, `src/octopus_tariff.rs`, and the full `~/github/octopus-tariff/` path dependency to `~/github/octopus-tariff/` on pi5data. Then `cargo build --release` on pi5data (~33s incremental). The pi5data project (`~/adaptive-heating-mvp/Cargo.toml`) has a cut-down `Cargo.toml` with only controller dependencies (no polars, no rusqlite) plus `octopus-tariff = { path = "/home/jack/github/octopus-tariff" }`. Service restart: `sudo systemctl restart adaptive-heating-mvp`.
 
 ### History Review Session Scope
 

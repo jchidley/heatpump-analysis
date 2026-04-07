@@ -6,6 +6,8 @@ set -euo pipefail
 LOCAL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REMOTE="pi5data"
 REMOTE_DIR="/home/jack/adaptive-heating-mvp"
+OCTOPUS_TARIFF_SRC="${HOME}/github/octopus-tariff"
+OCTOPUS_TARIFF_REMOTE="/home/jack/github/octopus-tariff"
 
 echo "=== Syncing sources to ${REMOTE}:${REMOTE_DIR} ==="
 
@@ -21,8 +23,13 @@ scp "${LOCAL_ROOT}/src/lib.rs" "${REMOTE}:${REMOTE_DIR}/src/lib.rs"
 # thermal.rs (module declaration)
 scp "${LOCAL_ROOT}/src/thermal.rs" "${REMOTE}:${REMOTE_DIR}/src/thermal.rs"
 
-# Octopus tariff window fetching (window times + rates from account API)
+# octopus_tariff.rs — thin re-export of the shared octopus-tariff crate
 scp "${LOCAL_ROOT}/src/octopus_tariff.rs" "${REMOTE}:${REMOTE_DIR}/src/octopus_tariff.rs"
+
+# Shared octopus-tariff crate (path dependency — must exist on pi5data)
+ssh "${REMOTE}" "mkdir -p ${OCTOPUS_TARIFF_REMOTE}/src"
+scp "${OCTOPUS_TARIFF_SRC}/Cargo.toml" "${REMOTE}:${OCTOPUS_TARIFF_REMOTE}/Cargo.toml"
+scp "${OCTOPUS_TARIFF_SRC}/src/"*.rs "${REMOTE}:${OCTOPUS_TARIFF_REMOTE}/src/"
 
 # Data files
 scp "${LOCAL_ROOT}/data/canonical/thermal_geometry.json" \

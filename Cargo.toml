@@ -5,6 +5,7 @@ edition = "2021"
 description = "Analyse Vaillant Arotherm heat pump data from emoncms.org — state classification, COP analysis, gap-filling"
 
 [dependencies]
+octopus-tariff = { path = "/home/jack/github/octopus-tariff" }
 polars = { version = "0.46", features = ["lazy", "pivot", "dtype-datetime", "fmt", "round_series", "temporal", "csv", "strings"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
