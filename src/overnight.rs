@@ -596,10 +596,8 @@ fn actual_cost(night: &Night, tariff_book: &TariffBook) -> Result<SimResult> {
 // Schedule generation
 // ---------------------------------------------------------------------------
 
-fn generate_schedules(_dhw_stats: &DhwStats) -> Vec<Schedule> {
+fn generate_schedules(_dhw_stats: &DhwStats, cosy_start: u32, cosy_end: u32) -> Vec<Schedule> {
     let mut schedules = Vec::new();
-    let cosy_start = offset_for_hour(4); // 04:00 = offset 480
-    let cosy_end = offset_for_hour(7); // 07:00 = offset 660
 
     // DHW modes to try
     struct DhwMode {
@@ -951,7 +949,19 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     );
 
     // 3. Generate schedules and run backtest
-    let schedules = generate_schedules(&dhw);
+    //    Derive morning Cosy window from the TariffBook so we don't hardcode 04:00/07:00.
+    let (cosy_start, cosy_end) = nights
+        .first()
+        .and_then(|n| tariff_book.morning_cheapest_offsets(n.date).ok())
+        .unwrap_or_else(|| {
+            eprintln!("Warning: could not derive morning Cosy window from tariff API, falling back to 04:00–07:00");
+            (crate::octopus_tariff::naive_time_to_night_offset(
+                chrono::NaiveTime::from_hms_opt(4, 0, 0).unwrap(),
+            ), crate::octopus_tariff::naive_time_to_night_offset(
+                chrono::NaiveTime::from_hms_opt(7, 0, 0).unwrap(),
+            ))
+        });
+    let schedules = generate_schedules(&dhw, cosy_start, cosy_end);
     println!(
         "\n{} strategies × {} nights = {} simulations",
         schedules.len(),

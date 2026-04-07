@@ -40,12 +40,12 @@ All ad-hoc data analysis must push filtering, aggregation, pivoting, and arithme
 
 Non-obvious code behaviours that have caused bugs or confusion.
 
-- Static domain constants belong in `config.toml` — edit there, not in code. Exception: Octopus unit rates are derived at runtime from the account API via `src/octopus_tariff.rs`; only `battery_coverage` remains in `config.toml`.
+- Static domain constants belong in `config.toml` — edit there, not in code. Exception: Octopus unit rates AND tariff window times are both derived at runtime from the account API via `src/octopus_tariff.rs`; only `battery_coverage` remains in `config.toml`. The controller caches windows at `tariff_cache_path` and refreshes them every 12 h. TOML fallback windows in `model/adaptive-heating-mvp.toml` are used only when the API is unreachable.
 - `gaps.rs` bypasses `db.rs` and writes to SQLite directly. `fill_gap_interpolate()` has hardcoded feed IDs
 - `ERA5_BIAS_CORRECTION_C` is a Rust constant in `octopus.rs`, not in `config.toml`
 - `--all-data` start timestamp is hardcoded in `resolve_time_range()`, duplicating the `config.toml` value
 - Polars pinned to 0.46 (0.53 available) — untested on newer versions
-- `octopus.rs` reads from `~/github/octopus/data/` — path is hardcoded
+- `octopus.rs` data path comes from `config.toml` `[octopus] data_dir` (default `~/github/octopus/data`); tilde is expanded at runtime
 - Two HDD base temps exist: 15.5°C (UK standard, in config) vs 17°C (gas-era regression)
 - Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
 - `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.

@@ -1,6 +1,6 @@
 # Plan
 
-Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last data review: **2026-04-07 11:14 BST**.
+Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-07 15:40 BST**.
 
 ## Heating Controller
 
@@ -28,7 +28,7 @@ Physics: total electrical cost = ∫ Q_hp/COP(T_flow) dt. COP degrades with flow
 
 ### Progressing: Overnight Data Growing
 
-Now 5+ overnight-model nights logged. Still need cold (<5°C) night (unlikely before next winter). Coast-then-hold deployed 7 Apr — all prior nights used the old linear ramp.
+No longer a 3-night evidence base: now 5+ overnight-model nights are logged. Still open because we need a cold (<5°C) night and ideally a warmer >12°C heating day. Coast-then-hold deployed 7 Apr; earlier nights used the old ramp.
 
 4 Apr confounded (MinFlow=20), 5 Apr success at 9–12°C, 6 Apr success at 7–9°C (slight undershoot due to DHW contention during preheat). **6–7 Apr was the last ramp night and the strongest trajectory night**: model drove curve 0.76→0.51 over 5 hours (01:07–06:00), maintaining Leather at 20.1–20.2°C with outside 8.5–10°C. Flow temps held at 28.4–29.9°C throughout. Average overnight COP = 5.81 across 16 active ticks. A 2.6-hour coast phase (22:30–01:07) showed Leather dropping 20.7→20.1°C with heating off, implying τ≈44h (consistent with operational τ=36h within single-observation variance). Battery reached 100% by 03:57. This night's data confirmed the ramp problem and motivated the coast-then-hold fix. **7–8 Apr will be the first coast-then-hold night.**
 
@@ -68,13 +68,13 @@ Detailed plan: [`docs/dhw-plan.md`](../docs/dhw-plan.md)
 
 ### Open: Volume-Aware DHW Demand Prediction
 
-T1 standby decay is calibrated but the model assumes no draws occur.
+This remains the main actionable DHW software item. T1 standby decay is calibrated but the model still assumes no draws occur.
 
 On 47% of nights there's an overnight shower (avg 62L, max 120L). The 27 Mar night showed the risk: a 120L shower at 23:23 dropped T1 from 43.5→~37°C, below the 40°C comfort floor, and the model would have predicted 41.8°C. Demand slots aligned to Cosy charge windows: morning 07:00-13:00 (71% of days, avg 89L), afternoon 16:00-22:00 (24%, avg 72L), overnight 22:00-04:00 (47%, avg 62L). Next step: budget expected demand per slot using `dhw_capacity` from InfluxDB alongside T1.
 
 ### Open: Seasonal Eco→Normal Switch
 
-`hmu HwcMode` is read-only from eBUS - must be changed physically on the aroTHERM controller. Switch to normal (2.4 kWh charges) around November. No software fix possible.
+Still manual / calendar-driven. `hmu HwcMode` is read-only from eBUS - must be changed physically on the aroTHERM controller. Switch to normal (2.4 kWh charges) around November. No software fix possible.
 
 ## Pico eBUS Adapter
 
@@ -84,4 +84,4 @@ Detailed plan: [`docs/pico-ebus-plan.md`](../docs/pico-ebus-plan.md)
 
 ### Next: Phase 2 - PIO UART
 
-PIO RX + TX at 2400/8N1 on the Pico W. Test with loopback wire (GP4→GP5), verify timing with Saleae. Prerequisites: Pico W board, xyzroe eBus-TTL adapter (confirm purchased), Embassy runtime + PIO crate setup.
+Still waiting on hardware/test-bench time. Next step is PIO RX + TX at 2400/8N1 on the Pico W, validated by loopback and Saleae timing checks. Prerequisites: Pico W board, xyzroe eBus-TTL adapter, and Embassy + PIO setup.

@@ -13,6 +13,7 @@ use axum::routing::{get, post};
 use axum::Json;
 use chrono::{DateTime, Datelike, Local, NaiveTime, Timelike, Utc, Weekday};
 use clap::{Parser, Subcommand, ValueEnum};
+use heatpump_analysis::octopus_tariff::CachedTariffWindows;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
@@ -64,6 +65,10 @@ struct Config {
     /// Path to thermal_geometry.json (for live solver)
     #[serde(default = "default_geometry_path")]
     geometry_path: PathBuf,
+    /// Where to cache the Octopus tariff window structure (JSON).
+    /// Refreshed automatically when older than 12 hours.
+    #[serde(default = "default_tariff_cache_path")]
+    tariff_cache_path: PathBuf,
     control_every_seconds: u64,
     sample_every_seconds: u64,
     startup_grace_seconds: u64,
@@ -108,6 +113,10 @@ struct Topics {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DhwConfig {
     cosy_windows: Vec<TimeWindow>,
+    /// Peak-rate windows (highest rate tier, e.g. 16:00–19:00 on Cosy).
+    /// Populated at runtime from Octopus API; empty when not yet fetched.
+    #[serde(default)]
+    peak_windows: Vec<TimeWindow>,
     charge_trigger_c: f64,
     target_c: f64,
 }
@@ -218,7 +227,26 @@ fn default_tesla_home_power_topic() -> String {
 fn default_tesla_headroom_topic() -> String {
     "emon/tesla/discretionary_headroom_to_next_cosy_kWh".to_string()
 }
+fn default_tariff_cache_path() -> PathBuf {
+    dirs_or_fallback()
+        .join("tariff-windows.json")
+}
+fn dirs_or_fallback() -> PathBuf {
+    // Prefer XDG state dir, fall back to ~/.local/state/<app>
+    std::env::var("STATE_DIRECTORY")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME").ok().map(|h| {
+                PathBuf::from(h)
+                    .join(".local/state/adaptive-heating-mvp")
+            })
+        })
+        .unwrap_or_else(|| PathBuf::from("/tmp/adaptive-heating-mvp"))
+}
 fn default_dhw_cosy_windows() -> Vec<TimeWindow> {
+    // Fallback used only when the Octopus API is unreachable at startup.
+    // Normally overridden at runtime from CachedTariffWindows.
     vec![
         TimeWindow {
             start: "04:00".to_string(),
@@ -553,9 +581,11 @@ fn default_config() -> Config {
         },
         dhw: DhwConfig {
             cosy_windows: default_dhw_cosy_windows(),
+            peak_windows: Vec::new(),
             charge_trigger_c: 40.0,
             target_c: 45.0,
         },
+        tariff_cache_path: default_tariff_cache_path(),
         model: ModelConfig::default(),
     }
 }
@@ -901,11 +931,10 @@ fn is_preheat_time(model: &ModelConfig, now: NaiveTime) -> bool {
 }
 
 /// Classify current tariff period for logging/observability.
-/// Cosy windows come from config; only the fixed Peak window remains explicit.
-/// Verify against ~/github/energy-hub/scripts/octopus-tariff-windows.sh
+/// All window times come from the API-derived config (Cosy + peak).
 fn classify_tariff_period(config: &Config, now: NaiveTime) -> String {
-    let windows = sorted_cosy_windows(config);
-    for (idx, window) in windows.iter().enumerate() {
+    let cosy = sorted_cosy_windows(config);
+    for (idx, window) in cosy.iter().enumerate() {
         if within_window(now, window) {
             return match idx {
                 0 => "cosy_morning",
@@ -916,14 +945,15 @@ fn classify_tariff_period(config: &Config, now: NaiveTime) -> String {
             .to_string();
         }
     }
-
-    let peak_start = NaiveTime::from_hms_opt(16, 0, 0).unwrap();
-    let peak_end = NaiveTime::from_hms_opt(19, 0, 0).unwrap();
-    if now >= peak_start && now < peak_end {
-        "peak".to_string()
-    } else {
-        "standard".to_string()
+    // Check peak windows (highest-rate tier, e.g. 16:00–19:00 on Cosy tariff)
+    let mut peak: Vec<&TimeWindow> = config.dhw.peak_windows.iter().collect();
+    peak.sort_by_key(|w| parse_time(&w.start));
+    for window in &peak {
+        if within_window(now, window) {
+            return "peak".to_string();
+        }
     }
+    "standard".to_string()
 }
 
 fn hours_until_time(now: NaiveTime, target: NaiveTime) -> f64 {
@@ -2647,7 +2677,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Run);
-    let config = load_config(&cli.config)?;
+    let mut config = load_config(&cli.config)?;
 
     match command {
         Commands::RestoreBaseline => {
@@ -2741,6 +2771,38 @@ async fn main() -> Result<()> {
         ),
         Ok(None) => warn!("thermal solver: leather 20.5°C not achievable at 5°C (unexpected)"),
         Err(e) => anyhow::bail!("thermal solver failed to load geometry: {}", e),
+    }
+
+    // Load tariff window structure from Octopus API (cached; refreshed when >12 h old).
+    // Replaces the TOML fallback cosy_windows with account-derived times.
+    match CachedTariffWindows::load_or_fetch(
+        &config.tariff_cache_path,
+        Duration::from_secs(12 * 3600),
+    ) {
+        Ok(windows) => {
+            info!(
+                "tariff windows: {} Cosy, {} peak from {} (fetched {})",
+                windows.cosy_windows.len(),
+                windows.peak_windows.len(),
+                windows.tariff_code,
+                windows.fetched_at.with_timezone(&Local).format("%H:%M"),
+            );
+            config.dhw.cosy_windows = windows
+                .cosy_windows
+                .into_iter()
+                .map(|w| TimeWindow { start: w.start, end: w.end })
+                .collect();
+            config.dhw.peak_windows = windows
+                .peak_windows
+                .into_iter()
+                .map(|w| TimeWindow { start: w.start, end: w.end })
+                .collect();
+        }
+        Err(e) => {
+            warn!(
+                "tariff window fetch failed, using TOML fallback windows: {e:#}"
+            );
+        }
     }
 
     ensure_parent(&config.state_file)?;

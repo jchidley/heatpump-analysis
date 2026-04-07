@@ -11,7 +11,7 @@ Use these `lat.md` sections for the current operational truth behind this plan:
 - [`lat.md/architecture.md#Live Control Path`](../lat.md/architecture.md#live-control-path) — live control path and data flow
 - [`lat.md/constraints.md#Constraints`](../lat.md/constraints.md#constraints) — operational boundaries and gotchas
 
-## Current status (7 Apr 2026, 10:34 BST)
+## Current status (7 Apr 2026, 15:40 BST)
 
 V2 model-predictive controller is **live on pi5data** (`adaptive-heating-mvp` systemd service).
 
@@ -33,9 +33,9 @@ V2 model-predictive controller is **live on pi5data** (`adaptive-heating-mvp` sy
 
 **Open items:**
 - **Energy-hub headroom unreliable during Cosy windows**: doesn't account for active grid charging. No impact on control but misleading for observability.
-- **Overnight data growing**: 5+ trajectory nights logged. Still need cold (<5°C) night.
+- **Overnight evidence improved but still incomplete**: no longer just 3 nights; now 5+ trajectory nights logged. Still need a cold (<5°C) night and ideally a warmer >12°C heating day for broader coverage.
 - **Wind compensation and PV-aware curve**: modelled but not tuned. Low urgency.
-- **DHW charge decision is T1-only, no draw prediction**: volume-aware demand budgeting per Cosy slot is the next DHW improvement.
+- **DHW charge decision is T1-only, no draw prediction**: volume-aware demand budgeting per Cosy slot remains the main DHW software improvement.
 - **Elvina overnight comfort**: trickle vents are the problem (ACH ≈1.0). Close vents + HEPA purifier is the proposed fix. No controller changes.
 
 ## What this page is for

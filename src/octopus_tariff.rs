@@ -1,16 +1,20 @@
 //! Fetch Octopus import tariff agreements and unit rates from the account API.
 //!
-//! This removes hardcoded tariff prices from analysis code: historical and
-//! current rates are derived from the account's own agreements and the Octopus
-//! standard-unit-rates endpoint at runtime.
+//! This removes hardcoded tariff prices and window times from analysis code:
+//! historical and current rates, and Cosy/peak window times, are all derived
+//! from the account's own agreements via the Octopus API at runtime.
+//!
+//! Window structure is stable for months; use `CachedTariffWindows::load_or_fetch`
+//! with a long max-age (e.g. 12 hours) to avoid redundant API calls.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Timelike, Utc};
 use reqwest::blocking::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const API_BASE: &str = "https://api.octopus.energy/v1";
 const DEFAULT_ENVRC: &str = "~/github/octopus/.envrc";
@@ -30,9 +34,85 @@ struct RateInterval {
 
 #[derive(Debug, Clone)]
 struct AgreementMinRate {
+    tariff_code: String,
     valid_from: DateTime<Utc>,
     valid_to: DateTime<Utc>,
     min_rate_inc_vat: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Window caching types (stable for months — refresh at most daily)
+// ---------------------------------------------------------------------------
+
+/// A tariff time window expressed in UK local time (HH:MM strings).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TariffTimeWindow {
+    pub start: String, // "HH:MM" UK local
+    pub end: String,   // "HH:MM" UK local ("00:00" = midnight end-of-window)
+}
+
+impl TariffTimeWindow {
+    pub fn start_time(&self) -> Option<NaiveTime> {
+        parse_hhmm(&self.start)
+    }
+    pub fn end_time(&self) -> Option<NaiveTime> {
+        parse_hhmm(&self.end)
+    }
+}
+
+/// Cached tariff window structure derived from the Octopus account API.
+///
+/// Valid for months; check staleness via `fetched_at`.
+/// On-disk format is JSON for easy inspection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedTariffWindows {
+    pub fetched_at: DateTime<Utc>,
+    pub tariff_code: String,
+    /// Cheapest-rate (Cosy) windows, sorted by start time, UK local.
+    pub cosy_windows: Vec<TariffTimeWindow>,
+    /// Peak-rate (highest, distinct) windows, UK local.
+    /// Empty on single-rate or flat tariffs.
+    pub peak_windows: Vec<TariffTimeWindow>,
+}
+
+impl CachedTariffWindows {
+    /// Load from JSON cache file.  Returns `None` if missing, unparseable, or older than `max_age`.
+    pub fn load(cache_path: &Path, max_age: Duration) -> Option<Self> {
+        let text = std::fs::read_to_string(cache_path).ok()?;
+        let cached: Self = serde_json::from_str(&text).ok()?;
+        let age_secs = Utc::now()
+            .signed_duration_since(cached.fetched_at)
+            .num_seconds();
+        if age_secs < 0 || age_secs as u64 > max_age.as_secs() {
+            return None;
+        }
+        Some(cached)
+    }
+
+    /// Fetch fresh windows from the Octopus API.
+    pub fn fetch() -> Result<Self> {
+        let now = Utc::now();
+        // Load a 3-day window to cover DST transitions and time-of-day edge cases.
+        let book = TariffBook::load(now - chrono::Duration::days(1), now + chrono::Duration::days(2))?;
+        let today = chrono::Local::now().date_naive();
+        book.windows_for_local_date(today)
+    }
+
+    /// Load from cache or fetch from API if missing / stale.  Writes a fresh cache on refresh.
+    pub fn load_or_fetch(cache_path: &Path, max_age: Duration) -> Result<Self> {
+        if let Some(cached) = Self::load(cache_path, max_age) {
+            return Ok(cached);
+        }
+        let fresh = Self::fetch()?;
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let json = serde_json::to_string_pretty(&fresh)
+            .context("serialise CachedTariffWindows")?;
+        std::fs::write(cache_path, json)
+            .with_context(|| format!("write tariff window cache {}", cache_path.display()))?;
+        Ok(fresh)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +205,7 @@ impl TariffBook {
                 .map(|r| r.value_inc_vat)
                 .fold(f64::INFINITY, f64::min);
             agreement_mins.push(AgreementMinRate {
+                tariff_code: agreement.tariff_code.clone(),
                 valid_from: agreement.valid_from,
                 valid_to: agreement.valid_to,
                 min_rate_inc_vat: min_rate,
@@ -208,6 +289,126 @@ impl TariffBook {
             .iter()
             .map(|interval| interval.value_inc_vat)
             .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    // -----------------------------------------------------------------------
+    // Window extraction
+    // -----------------------------------------------------------------------
+
+    /// Derive cheap (Cosy) and peak window times for a given UK local date.
+    ///
+    /// Iterates over rate intervals that start on `date_local`, converts UTC
+    /// boundaries to UK local time, then classifies each by rate tier:
+    /// minimum rate = Cosy, maximum rate = Peak (if >1p above standard).
+    pub fn windows_for_local_date(&self, date_local: NaiveDate) -> Result<CachedTariffWindows> {
+        use chrono::TimeZone;
+
+        // UTC window that generously covers the local date (allow ±25h for DST)
+        let day_start_utc = chrono::Local
+            .from_local_datetime(&date_local.and_hms_opt(0, 0, 0).unwrap())
+            .earliest()
+            .ok_or_else(|| anyhow!("DST gap at start of {date_local}"))?
+            .with_timezone(&Utc);
+        let day_end_utc = day_start_utc + chrono::Duration::hours(25);
+
+        // Collect (local_start, local_end, rate) for intervals whose local start falls on date_local
+        let mut day_intervals: Vec<(NaiveTime, NaiveTime, f64)> = Vec::new();
+        for interval in &self.intervals {
+            if interval.valid_from >= day_end_utc || interval.valid_to <= day_start_utc {
+                continue;
+            }
+            let local_from = interval.valid_from.with_timezone(&chrono::Local);
+            if local_from.date_naive() != date_local {
+                continue;
+            }
+            let local_to = interval.valid_to.with_timezone(&chrono::Local);
+            day_intervals.push((
+                local_from.time(),
+                local_to.time(),
+                interval.value_inc_vat,
+            ));
+        }
+
+        if day_intervals.is_empty() {
+            bail!("no tariff intervals found for local date {date_local}");
+        }
+
+        let min_rate = day_intervals.iter().map(|r| r.2).fold(f64::INFINITY, f64::min);
+        let max_rate = day_intervals.iter().map(|r| r.2).fold(f64::NEG_INFINITY, f64::max);
+        // Only treat max as a distinct "peak" tier when it is notably above the others
+        let has_peak = max_rate - min_rate > 2.0;
+
+        let mut cosy_windows: Vec<TariffTimeWindow> = day_intervals
+            .iter()
+            .filter(|r| (r.2 - min_rate).abs() < 0.01)
+            .map(|(s, e, _)| TariffTimeWindow {
+                start: fmt_naive_time(s),
+                end: fmt_naive_time(e),
+            })
+            .collect();
+        cosy_windows.sort_by_key(|w| w.start.clone());
+
+        let mut peak_windows: Vec<TariffTimeWindow> = if has_peak {
+            day_intervals
+                .iter()
+                .filter(|r| (r.2 - max_rate).abs() < 0.01)
+                .map(|(s, e, _)| TariffTimeWindow {
+                    start: fmt_naive_time(s),
+                    end: fmt_naive_time(e),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        peak_windows.sort_by_key(|w| w.start.clone());
+
+        // Tariff code: find the agreement active on this date
+        let noon_utc = day_start_utc + chrono::Duration::hours(12);
+        let tariff_code = self
+            .agreements
+            .iter()
+            .find(|a| a.valid_from <= noon_utc && noon_utc < a.valid_to)
+            .map(|a| a.tariff_code.clone())
+            .unwrap_or_default();
+
+        Ok(CachedTariffWindows {
+            fetched_at: Utc::now(),
+            tariff_code,
+            cosy_windows,
+            peak_windows,
+        })
+    }
+
+    /// Return the morning cheapest-rate window as `(start_offset, end_offset)` in minutes
+    /// since 20:00 on `evening_date`.  Used by overnight.rs for schedule generation.
+    ///
+    /// "Morning" means the cheapest window that starts before 12:00 local on
+    /// `evening_date + 1 day`.  Falls back to the classic 04:00–07:00 if none is found.
+    pub fn morning_cheapest_offsets(&self, evening_date: NaiveDate) -> Result<(u32, u32)> {
+        let morning_date = evening_date
+            .succ_opt()
+            .ok_or_else(|| anyhow!("date overflow from {evening_date}"))?;
+        let windows = self.windows_for_local_date(morning_date)?;
+        let noon = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        let first_morning = windows
+            .cosy_windows
+            .iter()
+            .find(|w| w.start_time().map_or(false, |t| t < noon));
+        match first_morning {
+            Some(w) => {
+                let s = w.start_time().context("bad start time in cosy window")?;
+                let e = w.end_time().context("bad end time in cosy window")?;
+                Ok((naive_time_to_night_offset(s), naive_time_to_night_offset(e)))
+            }
+            None => {
+                // Fallback: classic 04:00–07:00
+                Ok((naive_time_to_night_offset(
+                    NaiveTime::from_hms_opt(4, 0, 0).unwrap(),
+                ), naive_time_to_night_offset(
+                    NaiveTime::from_hms_opt(7, 0, 0).unwrap(),
+                )))
+            }
+        }
     }
 }
 
@@ -374,6 +575,33 @@ fn expand_tilde(path: &str) -> PathBuf {
         PathBuf::from(home).join(rest)
     } else {
         PathBuf::from(path)
+    }
+}
+
+/// Format a NaiveTime as "HH:MM" (used for window start/end strings).
+fn fmt_naive_time(t: &NaiveTime) -> String {
+    format!("{:02}:{:02}", t.hour(), t.minute())
+}
+
+/// Parse "HH:MM" into NaiveTime.
+fn parse_hhmm(s: &str) -> Option<NaiveTime> {
+    let (h, m) = s.split_once(':')?;
+    let h: u32 = h.parse().ok()?;
+    let m: u32 = m.parse().ok()?;
+    NaiveTime::from_hms_opt(h, m, 0)
+}
+
+/// Convert a local NaiveTime (expressed on the morning after the evening date)
+/// to a minute offset from 20:00 on the evening date.
+/// e.g. 04:00 → 480, 07:00 → 660, 00:00 → 240.
+pub fn naive_time_to_night_offset(t: NaiveTime) -> u32 {
+    const NIGHT_START: u32 = 20;
+    let h = t.hour();
+    let m = t.minute();
+    if h >= NIGHT_START {
+        (h - NIGHT_START) * 60 + m
+    } else {
+        (24 - NIGHT_START + h) * 60 + m
     }
 }
 

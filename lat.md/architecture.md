@@ -25,7 +25,7 @@ main.rs (CLI)
   ├── db.rs          (SQLite: feeds, samples, sync_state)
   ├── analysis.rs    (state machine + Polars, no db.rs dependency)
   ├── gaps.rs        (bypasses db.rs, own SQLite tables)
-  ├── octopus.rs     (reads ~/github/octopus/data/)
+  ├── octopus.rs     (reads config.toml octopus.data_dir)
   ├── overnight.rs   (backtest model)
   └── thermal.rs     (facade → 17 submodules, own ThermalConfig)
 
@@ -74,14 +74,14 @@ Four active config artifacts define four separate concerns.
 
 | File | Used by | Concern |
 |------|---------|---------|
-| `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators, battery coverage assumption |
+| `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators, battery coverage assumption, Octopus data path |
 | `model/thermal-config.toml` | Thermal model + history commands | InfluxDB, test nights, calibration bounds |
-| `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, InfluxDB, Cosy windows, baseline, inner loop tuning |
+| `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, InfluxDB, fallback Cosy windows, baseline, inner loop tuning |
 | `artifacts/thermal/regression-thresholds.toml` | `thermal-regression-check` | Artifact regression gates |
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
 
-`src/octopus_tariff.rs` is the tariff truth bridge for analysis: current and historical unit rates now come from the Octopus account API at runtime, while `config.toml` retains only the battery-coverage assumption used to price battery-backed non-lowest-rate demand.
+`src/octopus_tariff.rs` is the tariff truth bridge for both analysis and the live controller. Unit rates AND tariff window times (Cosy + peak) come from the Octopus account API at runtime. The live controller caches the window structure as JSON at `tariff_cache_path` (default `~/.local/state/adaptive-heating-mvp/tariff-windows.json`); the cache is refreshed when older than 12 hours. `model/adaptive-heating-mvp.toml` `[[dhw.cosy_windows]]` entries are TOML fallbacks only — used when the API is unreachable at startup. `config.toml` retains only the battery-coverage assumption for pricing battery-backed non-lowest-rate demand.
 
 ## Documentation Topology
 

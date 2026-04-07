@@ -350,7 +350,7 @@ vectors from `yuhu-ebus/tests/Core/test_telegram.cpp`.
 
 ### Phase 2: PIO UART (Pico W, no eBUS) — NEXT
 
-PIO RX + TX at 2400/8N1. Test with loopback wire (GP4→GP5).
+Still waiting on hardware/test-bench time. PIO RX + TX at 2400/8N1. Test with loopback wire (GP4→GP5).
 Verify timing with Saleae.
 
 **Prerequisites**: Pico W board, xyzroe eBus-TTL adapter (confirm purchased),

@@ -18,12 +18,21 @@ static CONFIG: OnceCell<Config> = OnceCell::new();
 #[allow(dead_code)]
 pub struct Config {
     pub emoncms: Emoncms,
+    pub octopus: OctopusFiles,
     pub thresholds: Thresholds,
     pub tariff: Tariff,
     pub house: House,
     pub arotherm: Arotherm,
     pub radiators: Vec<Radiator>,
     pub gas_era: GasEra,
+}
+
+/// Location of the octopus project's data files (usage_merged.csv, weather.json, config.json).
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct OctopusFiles {
+    /// Path to the data directory. Tilde is expanded at runtime.
+    pub data_dir: String,
 }
 
 #[derive(Debug, Deserialize)]

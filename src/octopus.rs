@@ -23,13 +23,15 @@ use crate::config::config;
 /// Applied to ERA5 temps for gas-era days where no emoncms data exists.
 const ERA5_BIAS_CORRECTION_C: f64 = 1.0;
 
-/// Default location of the octopus project's data directory.
+/// Resolve the octopus data directory from config, expanding a leading `~/`.
 fn default_data_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/jack".to_string());
-    PathBuf::from(home)
-        .join("github")
-        .join("octopus")
-        .join("data")
+    let raw = &config().octopus.data_dir;
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/jack".to_string());
+        PathBuf::from(home).join(rest)
+    } else {
+        PathBuf::from(raw)
+    }
 }
 
 // ── Data schemas ─────────────────────────────────────────────────────────────

@@ -15,11 +15,14 @@ scp "${LOCAL_ROOT}/src/bin/adaptive-heating-mvp.rs" "${REMOTE}:${REMOTE_DIR}/src
 # Thermal library modules
 scp ${LOCAL_ROOT}/src/thermal/*.rs "${REMOTE}:${REMOTE_DIR}/src/thermal/"
 
-# lib.rs (re-exports thermal module)
+# lib.rs (re-exports thermal + octopus_tariff modules)
 scp "${LOCAL_ROOT}/src/lib.rs" "${REMOTE}:${REMOTE_DIR}/src/lib.rs"
 
 # thermal.rs (module declaration)
 scp "${LOCAL_ROOT}/src/thermal.rs" "${REMOTE}:${REMOTE_DIR}/src/thermal.rs"
+
+# Octopus tariff window fetching (window times + rates from account API)
+scp "${LOCAL_ROOT}/src/octopus_tariff.rs" "${REMOTE}:${REMOTE_DIR}/src/octopus_tariff.rs"
 
 # Data files
 scp "${LOCAL_ROOT}/data/canonical/thermal_geometry.json" \

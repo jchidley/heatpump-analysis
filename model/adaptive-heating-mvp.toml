@@ -8,6 +8,10 @@ http_bind = "0.0.0.0:3031"
 state_file = "/home/jack/.local/state/adaptive-heating-mvp/state.toml"
 jsonl_log_file = "/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl"
 control_table_path = "model/control-table.json"
+# Path to the Octopus tariff window cache (JSON). Refreshed automatically when
+# older than 12 hours. Requires OCTOPUS_API_KEY and OCTOPUS_ACCOUNT_NUMBER in env.
+tariff_cache_path = "/home/jack/.local/state/adaptive-heating-mvp/tariff-windows.json"
+
 control_every_seconds = 900
 sample_every_seconds = 60
 startup_grace_seconds = 120
@@ -49,10 +53,10 @@ tesla_headroom_to_next_cosy_kwh = "emon/tesla/discretionary_headroom_to_next_cos
 charge_trigger_c = 40.0
 target_c = 45.0
 
-# Octopus Cosy windows in UK local time.
-# Source of truth: ~/github/energy-hub/scripts/octopus-tariff-windows.sh
-# VRC 700 timers cannot encode 00:00 as an end time here, so the evening slot
-# is represented as 23:59 in this controller config.
+# Fallback Cosy windows used ONLY when the Octopus API is unreachable at startup.
+# At runtime these are replaced by account-derived values loaded from
+# tariff_cache_path (or fetched fresh from the Octopus account API).
+# The evening slot uses 23:59 because VRC 700 timers cannot encode 00:00 as an end time.
 [[dhw.cosy_windows]]
 start = "04:00"
 end = "07:00"

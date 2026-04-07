@@ -11,7 +11,7 @@ Use these `lat.md` sections for the current operational truth behind this plan:
 - [`lat.md/heating-control.md#Active DHW Scheduling`](../lat.md/heating-control.md#active-dhw-scheduling) — how the live controller currently makes DHW timing decisions
 - [`lat.md/architecture.md#Live Control Path`](../lat.md/architecture.md#live-control-path) — how telemetry and control decisions flow through the system
 
-## Current status (6 Apr 2026, 10:00 BST)
+## Current status (7 Apr 2026, 15:40 BST)
 
 DHW scheduling is **operational** within the adaptive heating controller.
 
@@ -27,7 +27,7 @@ DHW scheduling is **operational** within the adaptive heating controller.
 **Open items:**
 - **Energy-hub headroom unreliable during Cosy windows**: shows negative values despite active grid charging. No impact on control (controller ignores headroom during Cosy) but misleading for observability.
 - **Seasonal eco→normal switch still manual** (Nov–Mar). `hmu HwcMode` is read-only from eBUS — must be changed physically on the aroTHERM controller. No software fix possible.
-- **No draw prediction in T1 model**: standby decay is well-calibrated, but the model assumes no overnight draws. On nights with late showers (47% of nights), T1 prediction can be 5°C+ optimistic. Next step: volume-aware demand budgeting per Cosy-aligned slot.
+- **No draw prediction in T1 model**: standby decay is well-calibrated, but the model assumes no overnight draws. On nights with late showers (47% of nights), T1 prediction can be 5°C+ optimistic. This remains the main actionable DHW software item. Next step: volume-aware demand budgeting per Cosy-aligned slot.
 
 ## What this page is for
 
