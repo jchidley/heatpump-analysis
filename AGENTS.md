@@ -149,7 +149,7 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 | Controller logs | `ssh pi5data 'journalctl -u adaptive-heating-mvp --since "1 hour ago" --no-pager'` |
 
 
-`--apikey` only needed for `feeds` and `sync`. `overnight` additionally needs Octopus account access via `OCTOPUS_API_KEY` + `OCTOPUS_ACCOUNT_NUMBER` or `~/github/octopus/.envrc`, because tariff rates are now fetched from the account API at runtime. Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands. Three binaries total: `adaptive-heating-mvp` is the live pilot controller. Dev on laptop (`cargo check`), release build natively on pi5data (cross-compile fails due to glibc mismatch).
+`--apikey` only needed for `feeds` and `sync`. `overnight` additionally needs Octopus account access via `OCTOPUS_API_KEY` + `OCTOPUS_ACCOUNT_NUMBER` or `~/github/octopus/.envrc`, because tariff rates are fetched from the account API at runtime via the shared `octopus-tariff` crate (`~/github/octopus-tariff`). Two binaries: use `cargo run --bin heatpump-analysis` for thermal commands. Three binaries total: `adaptive-heating-mvp` is the live pilot controller. Dev on laptop (`cargo check`), release build natively on pi5data (cross-compile fails due to glibc mismatch).
 
 ## Where To Read Next
 

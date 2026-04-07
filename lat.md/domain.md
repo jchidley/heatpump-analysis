@@ -136,7 +136,7 @@ On cold days, schedule DHW during Cosy to avoid stealing HP capacity from heatin
 
 Octopus Cosy tariff with three off-peak (Cosy) windows, a peak window, and standard rate otherwise. 95% of import is off-peak via Powerwall.
 
-- **Window times AND rate values** are both derived from the Octopus account API at runtime via `[[src/octopus_tariff.rs]]` — neither is hardcoded in config or source. The live controller caches the window structure as JSON (`tariff_cache_path`, refreshed every 12 h); analysis builds a `TariffBook` per run.
+- **Window times AND rate values** are both derived from the Octopus account API at runtime via the shared `octopus-tariff` crate (`~/github/octopus-tariff`) — neither is hardcoded in config or source. The live controller caches the window structure as JSON (`tariff_cache_path`, refreshed every 12 h); analysis builds a `TariffBook` per run.
 - **Current windows** (from API, automatically updated on tariff rollover): 04:00–07:00, 13:00–16:00, 22:00–00:00 Cosy; 16:00–19:00 peak. Inspect live: `cat ~/.local/state/adaptive-heating-mvp/tariff-windows.json` on pi5data.
 - **Rate tier structure**: three rates (cheap/standard/peak). `model/adaptive-heating-mvp.toml` `[[dhw.cosy_windows]]` are fallback-only — used when the API is unreachable at startup.
 - **Battery pricing assumption** remains explicit: `config.toml` stores only `tariff.battery_coverage = 0.95`, meaning 95% of non-lowest-rate demand is treated as battery-backed energy charged at the agreement's cheapest import rate.

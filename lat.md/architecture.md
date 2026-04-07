@@ -81,7 +81,7 @@ Four active config artifacts define four separate concerns.
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
 
-`src/octopus_tariff.rs` is the tariff truth bridge for both analysis and the live controller. Unit rates AND tariff window times (Cosy + peak) come from the Octopus account API at runtime. The live controller caches the window structure as JSON at `tariff_cache_path` (default `~/.local/state/adaptive-heating-mvp/tariff-windows.json`); the cache is refreshed when older than 12 hours. `model/adaptive-heating-mvp.toml` `[[dhw.cosy_windows]]` entries are TOML fallbacks only — used when the API is unreachable at startup. `config.toml` retains only the battery-coverage assumption for pricing battery-backed non-lowest-rate demand.
+Tariff rate lookup and window discovery use the shared `octopus-tariff` crate (`~/github/octopus-tariff`). `src/octopus_tariff.rs` re-exports the crate's `TariffBook` and `CachedTariffWindows` types. Unit rates AND tariff window times (Cosy + peak) come from the Octopus account API at runtime. The live controller caches the window structure as JSON at `tariff_cache_path` (default `~/.local/state/adaptive-heating-mvp/tariff-windows.json`); the cache is refreshed when older than 12 hours. `model/adaptive-heating-mvp.toml` `[[dhw.cosy_windows]]` entries are TOML fallbacks only — used when the API is unreachable at startup. `config.toml` retains only the battery-coverage assumption for pricing battery-backed non-lowest-rate demand.
 
 ## Documentation Topology
 
