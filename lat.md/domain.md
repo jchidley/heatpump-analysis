@@ -134,14 +134,15 @@ On cold days, schedule DHW during Cosy to avoid stealing HP capacity from heatin
 
 ## Cosy Tariff
 
-Octopus Cosy tariff with three off-peak windows and a Powerwall battery. 95% of import is off-peak via Powerwall.
+Octopus Cosy tariff with three off-peak (Cosy) windows, a peak window, and standard rate otherwise. 95% of import is off-peak via Powerwall.
 
-- **Windows**: 04:00–07:00, 13:00–16:00, 22:00–00:00
-- **Current and historical unit rates** are derived from the Octopus account API at runtime, not stored in repo config. Analysis uses `src/octopus_tariff.rs`; operators can inspect today's windows with `~/github/energy-hub/scripts/octopus-tariff-windows.sh`.
+- **Three Cosy (cheap) windows** (UK local time): 04:00–07:00, 13:00–16:00, 22:00–00:00
+- **Peak window**: 16:00–19:00 — a distinct third rate tier, significantly above standard, verified from account API data
+- **Rate tier structure**: the Cosy tariff has three rates (cheap/standard/peak). All actual p/kWh values are derived from the Octopus account API at runtime, not stored in repo config. Analysis uses `[[src/octopus_tariff.rs]]`; operators can inspect today's rates with `~/github/energy-hub/scripts/octopus-tariff-windows.sh`.
 - **Battery pricing assumption** remains explicit: `config.toml` stores only `tariff.battery_coverage = 0.95`, meaning 95% of non-lowest-rate demand is treated as battery-backed energy charged at the agreement's cheapest import rate.
 - **All-in household rate** is an external accounting metric, not controller truth; recompute it from Octopus account data when needed rather than hardcoding a snapshot here.
 
-For scheduling decisions use account-derived marginal import rates, not a hardcoded tariff table or an all-in annualised rate that mixes standing charge amortisation into every kWh. The important operational distinction is battery state: battery-backed non-Cosy kWh are only a small premium over the agreement's cheapest rate, while grid-exposed non-Cosy kWh are much more expensive. Heating + DHW is the dominant controllable winter load, so battery adequacy before the next Cosy window is a key input to scheduling. `energy-hub` now publishes that as `emon/tesla/discretionary_headroom_to_next_cosy_kWh`, derived from Powerwall SoC and projected nondiscretionary load to the next Cosy window; the heating controller consumes the headroom signal instead of recomputing adequacy from raw telemetry.
+For scheduling decisions use account-derived marginal import rates, not a hardcoded tariff table or an all-in annualised rate that mixes standing charge amortisation into every kWh. The important operational distinction is battery state: battery-backed non-Cosy kWh are only a small premium over the agreement's cheapest rate, while grid-exposed non-Cosy kWh are much more expensive (peak hours 16–19 most so). Heating + DHW is the dominant controllable winter load, so battery adequacy before the next Cosy window is a key input to scheduling. `energy-hub` now publishes that as `emon/tesla/discretionary_headroom_to_next_cosy_kWh`, derived from Powerwall SoC and projected nondiscretionary load to the next Cosy window; the heating controller consumes the headroom signal instead of recomputing adequacy from raw telemetry.
 
 **During a Cosy window, battery state must never gate heating or DHW** — grid electricity is at its cheapest, so it's always the best time to run either. The headroom signal only matters for non-Cosy gaps. Note: the headroom value is unreliable during Cosy because it projects base-load drain from current SoC without accounting for active grid charging.
 
