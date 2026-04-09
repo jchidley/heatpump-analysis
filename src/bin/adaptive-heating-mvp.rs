@@ -59,6 +59,8 @@ struct Config {
     influx_org: String,
     influx_bucket: String,
     influx_token_env: String,
+    #[serde(default = "default_influx_token_credential")]
+    influx_token_credential: String,
     http_bind: String,
     state_file: PathBuf,
     jsonl_log_file: PathBuf,
@@ -353,12 +355,6 @@ fn horizontal_to_sw_vertical(direct_rad: f64) -> f64 {
 // Heat curve formula
 // ---------------------------------------------------------------------------
 
-/// Forward: curve + outside → flow temp
-fn flow_for_curve(curve: f64, setpoint: f64, outside: f64, exponent: f64) -> f64 {
-    let delta = (setpoint - outside).max(0.01);
-    setpoint + curve * delta.powf(exponent)
-}
-
 /// Inverse: target_flow + outside → required curve
 fn curve_for_flow(target_flow: f64, setpoint: f64, outside: f64, exponent: f64) -> f64 {
     let delta = (setpoint - outside).max(0.01);
@@ -372,6 +368,10 @@ const CURVE_FLOOR: f64 = 0.10;
 const CURVE_CEILING: f64 = 4.00;
 /// Warn if curve exceeds this
 const CURVE_WARN_THRESHOLD: f64 = 1.50;
+/// Above the VRC setpoint the inverse heat-curve formula becomes ill-conditioned.
+/// In that region the outer loop seeds a known-safe baseline curve and lets the
+/// inner loop/black-box readback handle any real residual demand.
+const WARM_END_FORMULA_DISABLE_MARGIN_C: f64 = 0.0;
 
 fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
@@ -379,6 +379,21 @@ fn round2(v: f64) -> f64 {
 
 fn clamp_curve(v: f64) -> f64 {
     v.clamp(CURVE_FLOOR, CURVE_CEILING)
+}
+
+fn should_defer_outer_curve_reset(
+    current_curve: f64,
+    target_curve: f64,
+    target_flow: f64,
+    flow_desired: Option<f64>,
+    deadband_c: f64,
+) -> bool {
+    let fd = match flow_desired {
+        Some(v) if v >= 1.0 => v,
+        _ => return false,
+    };
+
+    target_curve < current_curve && fd < (target_flow - deadband_c)
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +513,6 @@ struct AwayRequest {
 struct ServiceState {
     config: Config,
     runtime: Arc<Mutex<RuntimeState>>,
-    forecast_cache: Arc<Mutex<Option<ForecastCache>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +561,10 @@ struct DecisionLog {
 // Config helpers
 // ---------------------------------------------------------------------------
 
+fn default_influx_token_credential() -> String {
+    "influx_token".to_string()
+}
+
 fn default_config() -> Config {
     Config {
         ebusd_host: "127.0.0.1".to_string(),
@@ -555,6 +573,7 @@ fn default_config() -> Config {
         influx_org: "home".to_string(),
         influx_bucket: "energy".to_string(),
         influx_token_env: "INFLUX_TOKEN".to_string(),
+        influx_token_credential: default_influx_token_credential(),
         http_bind: "0.0.0.0:3031".to_string(),
         state_file: PathBuf::from("/home/jack/.local/state/adaptive-heating-mvp/state.toml"),
         jsonl_log_file: PathBuf::from("/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl"),
@@ -628,30 +647,46 @@ static INFLUX_TOKEN_CACHE: OnceLock<String> = OnceLock::new();
 
 /// Get InfluxDB token (cached after first call).
 ///
-/// Production (systemd): loaded from EnvironmentFile `/etc/adaptive-heating-mvp.env`
-/// which sets INFLUX_TOKEN. File is root:root 0600.
+/// Production (systemd): prefer a credential loaded via `LoadCredential=` and exposed at
+/// `$CREDENTIALS_DIRECTORY/<credential-name>`. Legacy env-var injection remains supported as a
+/// fallback for manual runs.
 ///
 /// Development: falls back to `ak get influxdb` (GPG-encrypted keystore on dev machine).
 /// This fallback will fail on pi5data if ak is not installed — that's intentional.
-fn influx_token(env_name: &str) -> Result<String> {
+fn influx_token(config: &Config) -> Result<String> {
     if let Some(cached) = INFLUX_TOKEN_CACHE.get() {
         return Ok(cached.clone());
     }
-    let token = resolve_influx_token(env_name)?;
+    let token = resolve_influx_token(config)?;
     let _ = INFLUX_TOKEN_CACHE.set(token.clone());
     Ok(token)
 }
 
-fn resolve_influx_token(env_name: &str) -> Result<String> {
-    // Primary: environment variable (set by systemd EnvironmentFile)
+fn resolve_influx_token(config: &Config) -> Result<String> {
+    let env_name = &config.influx_token_env;
+
     if let Ok(v) = std::env::var(env_name) {
         if !v.trim().is_empty() {
             return Ok(v);
         }
     }
-    // Fallback: ak keystore (development only)
+
+    let env_file_name = format!("{env_name}_FILE");
+    if let Ok(path) = std::env::var(&env_file_name) {
+        if let Ok(token) = read_token_file(Path::new(&path)) {
+            return Ok(token);
+        }
+    }
+
+    if let Ok(dir) = std::env::var("CREDENTIALS_DIRECTORY") {
+        let path = Path::new(&dir).join(&config.influx_token_credential);
+        if let Ok(token) = read_token_file(&path) {
+            return Ok(token);
+        }
+    }
+
     warn!(
-        "{} not set in environment — falling back to 'ak get influxdb' (dev mode)",
+        "{} not available via env, *_FILE, or systemd credential — falling back to 'ak get influxdb' (dev mode)",
         env_name
     );
     let output = Command::new("ak")
@@ -659,19 +694,28 @@ fn resolve_influx_token(env_name: &str) -> Result<String> {
         .arg("influxdb")
         .output()
         .context(format!(
-            "{} not set and 'ak get influxdb' failed. \
-             Production: set {} in /etc/adaptive-heating-mvp.env",
-            env_name, env_name
+            "{} not available via env, *_FILE, or systemd credential and 'ak get influxdb' failed. \
+             Production: configure LoadCredential={}:/path/to/token or set {}_FILE",
+            env_name, config.influx_token_credential, env_name
         ))?;
     if !output.status.success() {
         return Err(anyhow!(
-            "{} not set and 'ak get influxdb' returned error. \
-             Production: set {} in /etc/adaptive-heating-mvp.env",
+            "{} not available via env, *_FILE, or systemd credential and 'ak get influxdb' returned error. \
+             Production: configure LoadCredential={}:/path/to/token or set {}_FILE",
             env_name,
+            config.influx_token_credential,
             env_name
         ));
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
+}
+
+fn read_token_file(path: &Path) -> Result<String> {
+    let token = fs::read_to_string(path)?.trim().to_string();
+    if token.is_empty() {
+        return Err(anyhow!("token file {} is empty", path.display()));
+    }
+    Ok(token)
 }
 
 // ---------------------------------------------------------------------------
@@ -733,7 +777,7 @@ fn query_latest_topic_value(
     field: &str,
     lookback: &str,
 ) -> Result<Option<f64>> {
-    let token = influx_token(&config.influx_token_env)?;
+    let token = influx_token(config)?;
     let flux = format!(
         "from(bucket: \"{}\") |> range(start: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> last() |> keep(columns: [\"_value\"])",
         config.influx_bucket, lookback, topic, field
@@ -804,7 +848,7 @@ fn write_jsonl(path: &Path, entry: &DecisionLog) -> Result<()> {
 }
 
 fn write_influx_decision(client: &Client, config: &Config, entry: &DecisionLog) -> Result<()> {
-    let token = influx_token(&config.influx_token_env)?;
+    let token = influx_token(config)?;
     let mode = format!("{:?}", entry.mode).to_lowercase();
     let action = entry.action.replace(' ', "_");
     let fields: Vec<String> = [
@@ -888,12 +932,6 @@ fn sorted_cosy_windows(config: &Config) -> Vec<TimeWindow> {
     windows
 }
 
-fn in_any_window(config: &Config, now: NaiveTime) -> bool {
-    sorted_cosy_windows(config)
-        .iter()
-        .any(|w| within_window(now, w))
-}
-
 fn is_waking_hours(model: &ModelConfig, now: NaiveTime) -> bool {
     match (
         parse_time(&model.waking_start),
@@ -901,32 +939,6 @@ fn is_waking_hours(model: &ModelConfig, now: NaiveTime) -> bool {
     ) {
         (Some(s), Some(e)) => now >= s && now < e,
         _ => true, // default to always waking if parse fails
-    }
-}
-
-/// Is now within the pre-heat window before waking hours?
-fn is_preheat_time(model: &ModelConfig, now: NaiveTime) -> bool {
-    if let Some(waking) = parse_time(&model.waking_start) {
-        let preheat_mins = (model.preheat_hours * 60.0) as u32;
-        // Compute preheat start time (may wrap around midnight)
-        let waking_mins = waking.hour() * 60 + waking.minute();
-        let preheat_start_mins = if waking_mins >= preheat_mins {
-            waking_mins - preheat_mins
-        } else {
-            1440 + waking_mins - preheat_mins
-        };
-        let preheat_start =
-            NaiveTime::from_hms_opt((preheat_start_mins / 60) % 24, preheat_start_mins % 60, 0)
-                .unwrap_or(waking);
-
-        if preheat_start <= waking {
-            now >= preheat_start && now < waking
-        } else {
-            // Wraps midnight
-            now >= preheat_start || now < waking
-        }
-    } else {
-        false
     }
 }
 
@@ -1233,18 +1245,25 @@ fn calculate_required_curve_for_target(
     let required_flow = required_mwt.map(|mwt| mwt + delta_t / 2.0);
 
     // Step 3: flow → curve (initial guess via formula; inner loop will converge)
+    let mut warm_end_curve_fallback = false;
     let required_curve = required_flow.map(|flow| {
-        let curve = curve_for_flow(
-            flow,
-            model.setpoint_c,
-            effective_outside,
-            model.heat_curve_exponent,
-        );
+        let outside_gap_c = model.setpoint_c - effective_outside;
+        let curve = if outside_gap_c <= WARM_END_FORMULA_DISABLE_MARGIN_C {
+            warm_end_curve_fallback = true;
+            config.baseline.hc1_heat_curve
+        } else {
+            curve_for_flow(
+                flow,
+                model.setpoint_c,
+                effective_outside,
+                model.heat_curve_exponent,
+            )
+        };
         round2(clamp_curve(curve))
     });
 
     let reason = format!(
-        "target={:.1}°C {} outside={:.1}°C solar={:.0}W/m² → MWT={} flow={} curve={}",
+        "target={:.1}°C {} outside={:.1}°C solar={:.0}W/m² → MWT={} flow={} curve={}{}",
         target_leather_c,
         source,
         effective_outside,
@@ -1258,6 +1277,14 @@ fn calculate_required_curve_for_target(
         required_curve
             .map(|v| format!("{:.2}", v))
             .unwrap_or("N/A".into()),
+        if warm_end_curve_fallback {
+            format!(
+                " (warm-end fallback: outside {:.1}°C ≥ setpoint {:.1}°C, using baseline seed)",
+                effective_outside, model.setpoint_c
+            )
+        } else {
+            String::new()
+        },
     );
 
     ModelCalculation {
@@ -1495,20 +1522,6 @@ fn plan_dhw_schedule(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: Overnight planner
-// ---------------------------------------------------------------------------
-
-/// House effective thermal time constant for leather room (hours).
-/// Calibrated from Night 1/Night 2 (24-26 Mar 2026).
-/// Leather cooling time constant (hours) under operational conditions
-/// (doors normal, outside ~10°C).  Fitted from 8 independent cooling
-/// segments (2 calibration nights + 3 DHW events + 3 coast phases):
-///   median 36h, range 29–62h.  The 50h value was from daytime segments
-///   where warmer neighbours reduced inter-room loss; operational
-///   overnight cooling is faster.
-/// Night 2 (all doors closed, 1.4°C) gives 48h — purely external loss.
-const LEATHER_TAU_H: f64 = 36.0;
-
 /// Cylinder-top T1 standby decay used for morning DHW skip logic.
 /// Measured from 47 standby segments (no draws, no charging, ≥2h each,
 /// 10-min resolution with Multical flow filtering) over 18 days:
@@ -1517,230 +1530,6 @@ const LEATHER_TAU_H: f64 = 36.0;
 /// unnecessarily than run cold).
 const DHW_T1_DECAY_C_PER_H: f64 = 0.23;
 
-/// HP max thermal output (W) — 5kW Arotherm Plus.
-const HP_MAX_OUTPUT_W: f64 = 5000.0;
-
-/// Whole-house HTC (W/K).
-const HOUSE_HTC_W_K: f64 = 261.0;
-
-/// Simulate leather temperature cooling from `start_temp` over `hours`,
-/// given a constant outside temperature. No heating applied.
-/// Uses exponential decay toward the no-heating equilibrium.
-fn simulate_cooling(start_temp: f64, outside_temp: f64, hours: f64) -> f64 {
-    // Equilibrium with no heating: leather tracks toward outside + internal gains
-    // Use the solver for accuracy, but as a fast approximation:
-    // leather_eq ≈ outside + 2.5°C (internal gains at ~650W, HTC 261)
-    // For accuracy we should use the solver, but that's expensive in a loop.
-    // Use the fast approximation; the solver is used for MWT calculation.
-    let internal_gain_offset = 2.5; // ~650W internal gains / 261 W/K
-    let equilibrium = outside_temp + internal_gain_offset;
-    equilibrium + (start_temp - equilibrium) * (-hours / LEATHER_TAU_H).exp()
-}
-
-/// Estimate hours needed to reheat leather from `start_temp` to `target_temp`
-/// at a given outside temperature. Returns None if HP is in deficit.
-fn estimate_reheat_hours(start_temp: f64, target_temp: f64, outside_temp: f64) -> Option<f64> {
-    if start_temp >= target_temp {
-        return Some(0.0);
-    }
-
-    // HP surplus at the midpoint temperature (average during reheat)
-    let mid_temp = (start_temp + target_temp) / 2.0;
-    let heat_loss_at_mid = HOUSE_HTC_W_K * (mid_temp - outside_temp).max(0.0);
-    let surplus_w = HP_MAX_OUTPUT_W - heat_loss_at_mid;
-
-    if surplus_w <= 50.0 {
-        return None; // HP can't effectively reheat
-    }
-
-    // Empirical reheat rate: leather rises at rate proportional to HP surplus.
-    // Calibrated from two data points:
-    //   1-2 Apr (outside 10°C): leather 19.9→20.5°C in 2h, surplus ~2260W → 0.3°C/h
-    //   Night 1 recovery (25 Mar, outside 5-7°C): leather 17.5→20°C in 6h, surplus ~1200W → 0.42°C/h
-    // Rate ≈ surplus/7500 °C/h (7500 W per °C/h, accounts for thermal lag + modulation)
-    let rate_c_per_h = surplus_w / 7500.0;
-    let delta_t = target_temp - start_temp;
-    let hours = delta_t / rate_c_per_h;
-    Some(hours)
-}
-
-/// Overnight plan result.
-#[derive(Debug, Clone)]
-struct OvernightPlan {
-    /// When to start preheat (hours from now, 0 = start immediately)
-    preheat_start_hours_from_now: f64,
-    /// Curve to use during preheat (from model)
-    preheat_curve: f64,
-    /// Target flow during preheat
-    preheat_target_flow: f64,
-    /// Whether to maintain heating overnight (cold nights)
-    maintain_heating: bool,
-    /// Overnight curve if maintaining heating
-    overnight_heating_curve: f64,
-    /// Projected leather temp at preheat start
-    projected_leather_at_start: f64,
-    /// Explanation
-    reason: String,
-}
-
-/// Plan the overnight heating strategy.
-///
-/// Inputs:
-///   - current_leather: current leather room temp
-///   - forecast: hourly forecast from now until 07:00
-///   - waking_time: NaiveTime for target (07:00)
-///   - config: model config for setpoint, exponent, etc.
-///
-/// Returns an OvernightPlan with preheat start time and curves.
-fn plan_overnight(
-    current_leather: f64,
-    forecast: &[ForecastHour],
-    now: NaiveTime,
-    waking_time: NaiveTime,
-    config: &ModelConfig,
-) -> OvernightPlan {
-    let target = config.target_leather_c; // 20.5°C
-
-    // Hours until waking
-    let now_mins = now.hour() as f64 * 60.0 + now.minute() as f64;
-    let wake_mins = waking_time.hour() as f64 * 60.0 + waking_time.minute() as f64;
-    let hours_until_wake = if wake_mins > now_mins {
-        (wake_mins - now_mins) / 60.0
-    } else {
-        (1440.0 - now_mins + wake_mins) / 60.0
-    };
-
-    // Get average overnight outside temp from forecast
-    let avg_outside = if forecast.is_empty() {
-        5.0 // conservative fallback
-    } else {
-        forecast.iter().map(|f| f.temperature_c).sum::<f64>() / forecast.len() as f64
-    };
-
-    // Minimum overnight outside temp (worst case for reheat)
-    let min_outside = forecast
-        .iter()
-        .map(|f| f.temperature_c)
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap_or(avg_outside);
-
-    // --- Cold night: HP can't recover, must maintain heating ---
-    if min_outside < 2.0 {
-        // Solve for the MWT needed to maintain ~19.5°C at this outside temp
-        let maintain_target = target - 1.0; // 19.5°C — don't fight for full 20.5
-        let mwt = heatpump_analysis::thermal::bisect_mwt_for_room(
-            "leather",
-            maintain_target,
-            min_outside,
-            0.0,
-            0.0,
-        )
-        .ok()
-        .flatten()
-        .unwrap_or(30.0);
-
-        let delta_t = config.default_delta_t_c;
-        let flow = mwt + delta_t / 2.0;
-        let curve = curve_for_flow(
-            flow,
-            config.setpoint_c,
-            min_outside,
-            config.heat_curve_exponent,
-        );
-        let curve = round2(clamp_curve(curve));
-
-        return OvernightPlan {
-            preheat_start_hours_from_now: 0.0,
-            preheat_curve: curve,
-            preheat_target_flow: flow,
-            maintain_heating: true,
-            overnight_heating_curve: curve,
-            projected_leather_at_start: current_leather,
-            reason: format!(
-                "cold night (min {:.1}°C < 2°C): maintain heating at curve {:.2} (MWT {:.1}°C) for {:.1}°C",
-                min_outside, curve, mwt, maintain_target
-            ),
-        };
-    }
-
-    // --- Mild/cool night: find latest safe preheat start ---
-    // Scan backward from waking time in 30-min steps.
-    // At each candidate, simulate cooling to that point, then check reheat time.
-    let step_h = 0.5; // 30-min resolution
-    let mut best_start = 0.0; // default: start now
-    let mut best_projected = current_leather;
-
-    // Use the minimum forecast outside temp for reheat estimate (conservative)
-    let reheat_outside = min_outside;
-
-    let max_steps = (hours_until_wake / step_h) as usize;
-    for i in (0..=max_steps).rev() {
-        let coast_hours = i as f64 * step_h;
-        let projected = simulate_cooling(current_leather, avg_outside, coast_hours);
-        let remaining_hours = hours_until_wake - coast_hours;
-
-        // Can we reheat from projected temp to target in the remaining time?
-        if let Some(reheat_h) = estimate_reheat_hours(projected, target, reheat_outside) {
-            // Add 30-min safety margin
-            if reheat_h + 0.5 <= remaining_hours {
-                best_start = coast_hours;
-                best_projected = projected;
-                break; // Found the latest safe start — maximum coast time
-            }
-        }
-        // If reheat not possible (deficit) or too slow, try earlier start
-    }
-
-    // Calculate the preheat curve for the start conditions
-    let preheat_outside = min_outside; // conservative
-    let mwt = heatpump_analysis::thermal::bisect_mwt_for_room(
-        "leather",
-        target,
-        preheat_outside,
-        0.0,
-        0.0,
-    )
-    .ok()
-    .flatten()
-    .unwrap_or(30.0);
-    let delta_t = config.default_delta_t_c;
-    let flow = mwt + delta_t / 2.0;
-    let curve = curve_for_flow(
-        flow,
-        config.setpoint_c,
-        preheat_outside,
-        config.heat_curve_exponent,
-    );
-    let curve = round2(clamp_curve(curve));
-
-    let preheat_time_str = {
-        let start_mins = now_mins + best_start * 60.0;
-        let h = ((start_mins / 60.0) as u32) % 24;
-        let m = (start_mins % 60.0) as u32;
-        format!("{:02}:{:02}", h, m)
-    };
-
-    OvernightPlan {
-        preheat_start_hours_from_now: best_start,
-        preheat_curve: curve,
-        preheat_target_flow: flow,
-        maintain_heating: false,
-        overnight_heating_curve: CURVE_FLOOR, // 0.10 = no heating
-        projected_leather_at_start: best_projected,
-        reason: format!(
-            "coast {:.1}h to {:.1}°C, preheat at {} (MWT {:.1}°C curve {:.2}), \
-             avg outside {:.1}°C min {:.1}°C, {:.1}h to reheat",
-            best_start,
-            best_projected,
-            preheat_time_str,
-            mwt,
-            curve,
-            avg_outside,
-            min_outside,
-            estimate_reheat_hours(best_projected, target, reheat_outside).unwrap_or(99.0),
-        ),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Outer loop: model-predictive control (every control_every_seconds = 900s)
@@ -1964,7 +1753,14 @@ fn run_outer_cycle(
 
                         if let Some(target_curve) = calc.required_curve {
                             let change = (target_curve - current_curve).abs();
-                            if change > config.model.curve_deadband {
+                            let defer_reset = should_defer_outer_curve_reset(
+                                current_curve,
+                                target_curve,
+                                target_flow,
+                                flow_desired,
+                                config.model.inner_loop_deadband_c,
+                            );
+                            if change > config.model.curve_deadband && !defer_reset {
                                 let res = ebusd_write(
                                     config,
                                     "700",
@@ -1991,14 +1787,26 @@ fn run_outer_cycle(
                                 }
                             } else {
                                 action = "hold".to_string();
-                                reason = format!(
-                                    "trajectory target {:.1}°C target_flow={:.1}°C, model curve {:.2} within deadband of current {:.2}: {}",
-                                    target_leather,
-                                    target_flow,
-                                    target_curve,
-                                    current_curve,
-                                    calc.reason
-                                );
+                                reason = if defer_reset {
+                                    format!(
+                                        "trajectory target {:.1}°C target_flow={:.1}°C, deferring curve reset from {:.2} to {:.2} while VRC still wants {:.1}°C (< target): {}",
+                                        target_leather,
+                                        target_flow,
+                                        current_curve,
+                                        target_curve,
+                                        flow_desired.unwrap_or_default(),
+                                        calc.reason
+                                    )
+                                } else {
+                                    format!(
+                                        "trajectory target {:.1}°C target_flow={:.1}°C, model curve {:.2} within deadband of current {:.2}: {}",
+                                        target_leather,
+                                        target_flow,
+                                        target_curve,
+                                        current_curve,
+                                        calc.reason
+                                    )
+                                };
                             }
                         }
                     } else {
@@ -2601,6 +2409,59 @@ mod tests {
     }
 
     #[test]
+    fn warm_end_curve_uses_baseline_seed_above_setpoint() {
+        let config = test_config();
+        let calc = calculate_required_curve_for_target(&config, 20.5, 24.0, None, None);
+
+        assert_eq!(calc.required_curve, Some(config.baseline.hc1_heat_curve));
+        assert!(calc.reason.contains("warm-end fallback"));
+    }
+
+    #[test]
+    fn cold_weather_curve_still_uses_formula() {
+        let config = test_config();
+        let calc = calculate_required_curve_for_target(&config, 20.5, 5.0, None, None);
+
+        let curve = calc.required_curve.expect("curve should be present");
+        assert_ne!(curve, config.baseline.hc1_heat_curve);
+        assert!(!calc.reason.contains("warm-end fallback"));
+    }
+
+    #[test]
+    fn outer_loop_defers_downward_curve_reset_while_flow_still_lags() {
+        assert!(should_defer_outer_curve_reset(1.73, 1.32, 28.4, Some(26.3), 0.5));
+        assert!(should_defer_outer_curve_reset(2.04, 1.24, 27.8, Some(24.9), 0.5));
+    }
+
+    #[test]
+    fn outer_loop_allows_downward_curve_reset_once_flow_has_converged() {
+        assert!(!should_defer_outer_curve_reset(1.73, 1.32, 28.4, Some(27.9), 0.5));
+        assert!(!should_defer_outer_curve_reset(1.73, 1.32, 28.4, Some(28.0), 0.5));
+        assert!(!should_defer_outer_curve_reset(1.20, 1.32, 28.4, Some(26.0), 0.5));
+    }
+
+    #[test]
+    fn replay_2026_04_09_morning_relearn_cycles_now_defer_resets() {
+        let samples = [
+            (1.52, 1.13, 28.3, 26.2),
+            (1.52, 1.09, 28.3, 25.9),
+            (1.62, 1.12, 28.6, 25.8),
+            (1.73, 1.32, 28.4, 26.3),
+            (2.04, 1.24, 27.8, 24.9),
+        ];
+
+        for (current_curve, target_curve, target_flow, flow_desired) in samples {
+            assert!(should_defer_outer_curve_reset(
+                current_curve,
+                target_curve,
+                target_flow,
+                Some(flow_desired),
+                0.5,
+            ));
+        }
+    }
+
+    #[test]
     fn battery_headroom_detects_when_signal_can_cover_dhw_event() {
         let adequacy = assess_battery_headroom(Some(3.2), Some("normal"))
             .expect("headroom signal should produce an adequacy assessment");
@@ -2814,7 +2675,6 @@ async fn main() -> Result<()> {
     let service_state = ServiceState {
         config: config.clone(),
         runtime: runtime.clone(),
-        forecast_cache: forecast_cache.clone(),
     };
 
     let loop_config = config.clone();

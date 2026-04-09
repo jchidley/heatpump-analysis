@@ -48,9 +48,8 @@ Non-obvious code behaviours that have caused bugs or confusion.
 - `octopus.rs` data path comes from `config.toml` `[octopus] data_dir` (default `~/github/octopus/data`); tilde is expanded at runtime
 - Two HDD base temps exist: 15.5°C (UK standard, in config) vs 17°C (gas-era regression)
 - Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
-- `cosy-scheduler` binary removed from pi5data (2026-03-30). Source in `src/bin/cosy-scheduler.rs` kept for reference. Do not deploy.
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging
-- DHW auto-trigger removed Mar 2026. `scripts/dhw-auto-trigger.py` is buggy legacy — do not deploy. DHW boost via z2m-hub.
+- DHW boost via z2m-hub only — no auto-trigger script.
 - `Hc1ActualFlowTempDesired` reads 0.0 during HP standby — inner loop must guard against this or it ramps the curve to max
 - Cross-compiling for pi5data (aarch64) from WSL2 fails: `gnu` target needs GLIBC 2.39 but pi5data has 2.36 (bookworm). `musl` target exists but is slow to build. Current workflow: dev on laptop (`cargo check`), release build natively on pi5data via `scripts/sync-to-pi5data.sh`. See [[architecture#Implicit Contracts#Deployment Workflow]].
 - ebusd container has no persistent volumes — `docker restart` re-downloads config CSVs from CDN. If CDN is unreachable, message definitions are lost. Always use `docker compose restart` (recreates properly) not bare `docker restart`.
@@ -96,8 +95,8 @@ The VRC 700 has undocumented internal behaviours that break naive modelling.
 - **Optimum Start**: firmware ramps setpoint ~3h before day timer (observed 03:00 for 06:00 timer). `Hc1ActualFlowTempDesired` jumps without any curve or setpoint change. No eBUS register to disable — use `Z1OpMode=night` to eliminate.
 - **Hidden floor**: `Hc1MinFlowTempDesired`=20°C acts as undocumented floor on flow temp
 - **Effective setpoint**: back-solving gives ~20°C, not the written 19°C or 21°C
-- **Curve formula**: `flow = setpoint + curve × (setpoint − outside)^1.25` is a rough approximation only. Vaillant manual says exponent 1.10 but underpredicts by 2.5–3.1°C at curves ≥0.50. IEEE 754 float resolution: 0.01 step = ~0.20°C flow change at SP=19.
-- **Do not model the formula for control** — the inner feedback loop closes on `Hc1ActualFlowTempDesired` readback, treating VRC 700 as a black box.
+- **Curve formula**: `flow = setpoint + curve × (setpoint − outside)^1.25` is a rough approximation only. Vaillant manual says exponent 1.10 but underpredicts by 2.5–3.1°C at curves ≥0.50. IEEE 754 float resolution: 0.01 step = ~0.20°C flow change at SP=19. Its inverse becomes ill-conditioned at the warm end: as outside approaches or exceeds setpoint, the inferred curve tends to infinity for only modest target-flow uplift.
+- **Do not model the formula for control** — the inner feedback loop closes on `Hc1ActualFlowTempDesired` readback, treating VRC 700 as a black box. The outer loop now bypasses the inverse formula entirely when forecast outside is at/above setpoint and seeds the baseline curve instead.
 
 ## Data Duplication
 

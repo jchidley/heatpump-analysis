@@ -16,7 +16,7 @@ VRC 700 treated as a black box. `Z1OpMode=night` (SP=19) on startup eliminates O
 
 Runs every 900s ([[src/bin/adaptive-heating-mvp.rs#run_outer_cycle]]). Open-Meteo forecast + live thermal solver ([[src/thermal/display.rs#bisect_mwt_for_room]]) → target flow temp → initial curve guess via [[src/bin/adaptive-heating-mvp.rs#calculate_required_curve_for_target]].
 
-Uses forecast temperature, solar irradiance, and humidity. `ForecastCache` refreshes every 3600s. When compressor is not actively heating, falls back to `default_delta_t_c` (4.0°C) instead of live flow-return ΔT — prevents target oscillation when flow ≈ return. Model calculation runs every tick even during DHW charges — only eBUS writes are suppressed. Action is logged as `dhw_active` with full model fields so the controller is never blind.
+Uses forecast temperature, solar irradiance, and humidity. `ForecastCache` refreshes every 3600s. When compressor is not actively heating, falls back to `default_delta_t_c` (4.0°C) instead of live flow-return ΔT — prevents target oscillation when flow ≈ return. At the warm end, when forecast outside is at or above the VRC setpoint (19°C), the outer loop no longer inverts the heat-curve formula because that mapping becomes ill-conditioned; it seeds the known-safe baseline curve (0.55) and lets the inner loop / `Hc1ActualFlowTempDesired` readback handle any residual demand. During active heating, the outer loop also avoids ratcheting the curve back down when the model seed is below the current curve but `Hc1ActualFlowTempDesired` is still materially below `target_flow_c`; this stops the 15-minute loop from fighting the 60-second feedback loop while the VRC is still converging. Model calculation runs every tick even during DHW charges — only eBUS writes are suppressed. Action is logged as `dhw_active` with full model fields so the controller is never blind.
 
 Space-heating demand is generated from a Leather trajectory. During waking hours the target is the midband comfort setpoint (20.5°C). Overnight the target steps down to the comfort-band floor (20.0°C) — a flat hold, not a ramp. Coast is allowed when Leather is above the floor and outside temperature is not in the cold-deficit region. This minimises electrical input: coast is free, and holding the floor at equilibrium flow uses the lowest possible flow temp. See [[heating-control#Overnight Strategy#Trajectory Logic]].
 
@@ -89,14 +89,12 @@ Coast turns heating **off** via `Z1OpMode=off` — not a low curve. This was cha
 
 ### Empirical Parameters
 
-Hardcoded constants in `adaptive-heating-mvp.rs` that drive overnight decisions.
+Named constants in `adaptive-heating-mvp.rs` that drive overnight decisions. Leather τ (36h) and house HTC (261 W/K) are calibrated parameters in the thermal model (`thermal_geometry.json`), not named constants in the controller.
 
-| Parameter | Code value | Empirical | Status |
-|---|---|---|---|
-| Leather τ | 36h | 36h median (8 segments: cal nights + DHW + coast) | Revised from 50h — operational overnight cooling is faster than daytime |
-| Comfort floor offset | 0.5°C below target | — | Band floor = 20.0°C when target = 20.5 |
-| Coast margin | 0.15°C | sensor resolution 0.1°C | Avoids hunting without wasting coast |
-| Effective HTC | 261 W/K (model) | ~190 W/K (466 nights) | Model overpredicts loss by ~30% |
+| Constant | Value | Rationale |
+|---|---|---|
+| `OVERNIGHT_COMFORT_FLOOR_OFFSET_C` | 0.5°C | Band floor = 20.0°C when target = 20.5°C |
+| `OVERNIGHT_COAST_MARGIN_C` | 0.15°C | Deadband above floor before heating resumes; 0.1°C is sensor resolution, 0.15°C avoids hunting |
 
 ### 466-Night Analysis
 
@@ -157,6 +155,7 @@ Key findings from V1 and V2 deployment that shaped the current design.
 - **Forecast nulls during DHW fixed** (6 Apr 2026): root cause was `!is_dhw` guard skipping the entire model calculation block, not just eBUS writes. Fix: model (forecast + thermal solver) now runs every tick regardless of HP mode. During DHW, writes suppressed but `target_flow_c` populated and action logged as `dhw_active` with full model fields. Inner loop can resume immediately when DHW finishes.
 - **T1 standby decay recalibrated** (6 Apr 2026): 47 flow-filtered standby segments (≥2h each, 10-min resolution, 18 days) measured: mean 0.21, median 0.22, P75 0.23, P90 0.24 °C/h. Constant set to P75 (0.23°C/h). Previous value 0.25 was at P90, directionally correct. Initial naive analysis from hourly averages had wrongly suggested 0.12 — the hourly windows spanned charge events and were unreliable.
 - **Three fixes deployed** (7 Apr 2026, 10:34 BST): coast-then-hold (flat 20.0°C overnight target replacing linear ramp), forecast nulls during DHW fix (model runs every tick), DHW timer dedup fix (clear state on failure + startup). Also τ 50→36h, T1 decay 0.25→0.23. Built natively on pi5data after discovering cross-compile glibc mismatch (host 2.39 vs bookworm 2.36). Established `scripts/sync-to-pi5data.sh` workflow: dev on laptop, release build on pi5data.
+- **Outer loop fought inner-loop convergence** (9 Apr 2026): during active morning heating, the 15-minute outer loop kept resetting `Hc1HeatCurve` to the model seed (~1.1–1.3) even while `Hc1ActualFlowTempDesired` still lagged the target by >0.5°C, so the 60-second inner loop had to relearn the same correction and repeatedly climbed to ~2.0. Fixed in repo: defer downward outer-loop resets while the VRC still wants materially less flow than target. A unit replay of the captured 9 Apr samples now guards against regression.
 
 ## Writable eBUS Registers
 
