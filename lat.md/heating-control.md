@@ -118,7 +118,7 @@ The controller targets Leather but all rooms are on the same circuit. Empirical 
 |---|---|---|---|---|
 | aldora | 41 | 20.0–21.3°C | Yes (child) | ✅ Fine — sealed room + body heat holds temp. Mould risk is the problem, not cold. |
 | jackcarol | 57 | not yet tracked | Yes (2 adults) | ✅ Likely fine — slowest-cooling bedroom, 2 occupants |
-| elvina | 34 | **16.4–19.4°C** | Yes (child, allergies) | ⚠️ **Actionable** — regularly 17°C at 07:00. Nearly all excess loss is ventilation (~3× Aldora rate). HEPA purifier already runs. Closing trickle vents + door ajar would cut UA 32→17 W/K, gaining ~3°C. Validate with CO2 monitor. |
+| elvina | 34 | **16.4–19.4°C** | Yes (child, allergies) | ⚠️ **Accepted cold room** — regularly 17°C at 07:00. Current moisture analysis says ventilation is **6.8× Aldora’s rate**. The occupant preference is to keep vents open and the internal door closed, accepting the colder winter room rather than pursuing the vent-closure intervention. |
 | leather | 36 | 20.0–20.5°C | Dog (PRT, door closed) | ✅ Primary control room, held at comfort floor |
 | office | 22 | not yet tracked | No | Fastest cooling but unoccupied overnight |
 | bathroom | 25 | not yet tracked | No | MVHR ventilation loss, unoccupied overnight |
@@ -126,7 +126,7 @@ The controller targets Leather but all rooms are on the same circuit. Empirical 
 | hall | 29 | not yet tracked | No | Stairwell, transit only |
 | kitchen | 27 | not yet tracked | No | No radiator, unoccupied |
 
-Actual morning temps from 7 days of sensor data (31 Mar–7 Apr). Elvina is the only occupied bedroom with a comfort problem: it cools from ~18–20°C at bedtime to 16–17°C by morning. Full overnight moisture analysis (13 sensors as proxy network) shows nearly all excess UA is ventilation (ACH ≈1.0 vs model 0.51), not fabric. Closing trickle vents would cut UA 32→17 W/K (+3°C overnight) while the HEPA purifier provides better allergen control. Leather emonth2 humidity confirms low ventilation (dog + closed door → ΔAH 0.39 g/m³, consistent with ACH ~0.6). Aldora is the opposite — sealed and warm overnight but with a mould risk from inadequate ventilation.
+Actual morning temps from 7 days of sensor data (31 Mar–7 Apr). Elvina is the only occupied bedroom with a comfort problem: it cools from ~18–20°C at bedtime to 16–17°C by morning. Current overnight moisture analysis (full proxy-network baseline, now cross-checkable against the deployed outdoor sensor) says nearly all excess UA is ventilation (ACH ≈1.0 vs model 0.51; **6.8× Aldora’s rate**), not fabric. A vent-closure intervention would likely cut UA 32→17 W/K (+3°C overnight), but that is no longer the operational plan: the occupant wants vents open, the internal door closed, and accepts the colder room in winter. Leather emonth2 humidity confirms low ventilation (dog + closed door → ΔAH 0.39 g/m³, consistent with ACH ~0.6). Aldora is the opposite — sealed and warm overnight but with a mould risk from inadequate ventilation.
 
 ### Active DHW Scheduling
 
@@ -177,7 +177,7 @@ Source, config, and deployment files for the adaptive heating controller.
 
 | File | Purpose |
 |---|---|
-| `src/bin/adaptive-heating-mvp.rs` | Controller binary (~2,053 lines) |
+| `src/bin/adaptive-heating-mvp.rs` | Controller binary |
 | `model/adaptive-heating-mvp.toml` | Config (eBUS, InfluxDB, Cosy windows, baseline, tuning) |
 | `src/thermal/display.rs` | [[src/thermal/display.rs#bisect_mwt_for_room]], [[src/thermal/display.rs#solve_equilibrium_temps]] |
 | `data/canonical/thermal_geometry.json` | Room geometry for solver |

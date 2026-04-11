@@ -605,3 +605,80 @@ fn get_array_len(root: &Value, pointer: &str) -> Result<usize, String> {
         .map(Vec::len)
         .ok_or_else(|| format!("field is not an array: {pointer}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn write_temp_file(prefix: &str, ext: &str, content: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{prefix}-{unique}.{ext}"));
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn baseline_json(command: &str, config_sha: &str) -> String {
+        format!(
+            r#"{{
+  "command": "{command}",
+  "config_sha256": "{config_sha}",
+  "calibration": {{
+    "final_score": 1.0,
+    "rmse_night1": 0.5,
+    "rmse_night2": 0.6,
+    "leather_ach": 0.3,
+    "landing_ach": 1.3,
+    "conservatory_ach": 0.2,
+    "office_ach": 0.4,
+    "doorway_cd": 0.2
+  }}
+}}"#
+        )
+    }
+
+    fn default_thresholds_toml() -> &'static str {
+        "[global]\nenforce_command_match = true\nenforce_config_sha256_match = true\n"
+    }
+
+    // @lat: [[tests#Thermal regression gates#Global regression gate requires matching command and config]]
+    #[test]
+    fn run_rejects_command_or_config_mismatches_before_metric_comparison() {
+        let thresholds =
+            write_temp_file("regression-thresholds", "toml", default_thresholds_toml());
+        let baseline = write_temp_file(
+            "regression-baseline",
+            "json",
+            &baseline_json("thermal-calibrate", "abc"),
+        );
+        let bad_command = write_temp_file(
+            "regression-candidate-command",
+            "json",
+            &baseline_json("thermal-validate", "abc"),
+        );
+        let bad_hash = write_temp_file(
+            "regression-candidate-hash",
+            "json",
+            &baseline_json("thermal-calibrate", "def"),
+        );
+
+        let err = run(Cli {
+            baseline: baseline.clone(),
+            candidate: bad_command,
+            thresholds: thresholds.clone(),
+        })
+        .expect_err("command mismatch should fail");
+        assert!(err.contains("regression gate FAILED"));
+
+        let err = run(Cli {
+            baseline,
+            candidate: bad_hash,
+            thresholds,
+        })
+        .expect_err("config hash mismatch should fail");
+        assert!(err.contains("regression gate FAILED"));
+    }
+}

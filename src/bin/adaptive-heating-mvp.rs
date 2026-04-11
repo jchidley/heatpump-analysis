@@ -230,8 +230,7 @@ fn default_tesla_headroom_topic() -> String {
     "emon/tesla/discretionary_headroom_to_next_cosy_kWh".to_string()
 }
 fn default_tariff_cache_path() -> PathBuf {
-    dirs_or_fallback()
-        .join("tariff-windows.json")
+    dirs_or_fallback().join("tariff-windows.json")
 }
 fn dirs_or_fallback() -> PathBuf {
     // Prefer XDG state dir, fall back to ~/.local/state/<app>
@@ -239,10 +238,9 @@ fn dirs_or_fallback() -> PathBuf {
         .ok()
         .map(PathBuf::from)
         .or_else(|| {
-            std::env::var("HOME").ok().map(|h| {
-                PathBuf::from(h)
-                    .join(".local/state/adaptive-heating-mvp")
-            })
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".local/state/adaptive-heating-mvp"))
         })
         .unwrap_or_else(|| PathBuf::from("/tmp/adaptive-heating-mvp"))
 }
@@ -1062,7 +1060,10 @@ fn sync_morning_dhw_timer(
         state.last_dhw_timer_weekday = Some(weekday_name.clone());
         state.last_dhw_timer_morning_enabled = Some(morning_enabled);
     } else {
-        warn!("DHW timer write failed ({}), will retry next tick: {}", result, register);
+        warn!(
+            "DHW timer write failed ({}), will retry next tick: {}",
+            result, register
+        );
         // Clear dedup state so next tick retries
         state.last_dhw_timer_weekday = None;
         state.last_dhw_timer_morning_enabled = None;
@@ -1488,9 +1489,7 @@ fn plan_dhw_schedule(
     let battery_summary = match battery {
         Some(b) => format!(
             "headroom_signal={:.2}kWh dhw={:.2}kWh adequate={}",
-            b.discretionary_headroom_kwh,
-            b.dhw_event_kwh,
-            b.adequate_to_next_cosy,
+            b.discretionary_headroom_kwh, b.dhw_event_kwh, b.adequate_to_next_cosy,
         ),
         None => "headroom_signal=unavailable".to_string(),
     };
@@ -1529,7 +1528,6 @@ fn plan_dhw_schedule(
 /// Use P75 for a slightly pessimistic estimate (better to charge
 /// unnecessarily than run cold).
 const DHW_T1_DECAY_C_PER_H: f64 = 0.23;
-
 
 // ---------------------------------------------------------------------------
 // Outer loop: model-predictive control (every control_every_seconds = 900s)
@@ -1596,10 +1594,8 @@ fn run_outer_cycle(
     )
     .ok()
     .flatten();
-    let battery_adequacy = assess_battery_headroom(
-        battery_headroom_to_next_cosy_kwh,
-        hwc_mode.as_deref(),
-    );
+    let battery_adequacy =
+        assess_battery_headroom(battery_headroom_to_next_cosy_kwh, hwc_mode.as_deref());
 
     let tariff_period = classify_tariff_period(&config, now_time);
 
@@ -1728,8 +1724,13 @@ fn run_outer_cycle(
                             .unwrap_or("N/A".into()),
                         calc.reason
                     );
-                } else if should_coast_overnight(&config.model, now_time, leather, outside, target_leather)
-                {
+                } else if should_coast_overnight(
+                    &config.model,
+                    now_time,
+                    leather,
+                    outside,
+                    target_leather,
+                ) {
                     state.target_flow_c = None;
                     if !state.heating_off {
                         let res = ebusd_write(config, "700", "Z1OpMode", "off")?;
@@ -2049,7 +2050,10 @@ fn control_loop(
     {
         let state = runtime.lock().unwrap();
         if state.mode == Mode::Disabled || state.mode == Mode::MonitorOnly {
-            info!("startup: mode is {:?}, skipping eBUS initialisation", state.mode);
+            info!(
+                "startup: mode is {:?}, skipping eBUS initialisation",
+                state.mode
+            );
         } else {
             drop(state);
             match reinitialize_ebus(&config) {
@@ -2347,6 +2351,7 @@ async fn api_kill(State(state): State<ServiceState>) -> Json<serde_json::Value> 
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use proptest::prelude::*;
 
     fn test_config() -> Config {
         default_config()
@@ -2360,8 +2365,7 @@ mod tests {
         let prewake = NaiveTime::from_hms_opt(6, 0, 0).unwrap();
         let waking = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
 
-        let expected_floor =
-            config.model.target_leather_c - OVERNIGHT_COMFORT_FLOOR_OFFSET_C;
+        let expected_floor = config.model.target_leather_c - OVERNIGHT_COMFORT_FLOOR_OFFSET_C;
 
         // Overnight: flat at comfort floor
         let evening = overnight_target_leather(&config.model, late_evening);
@@ -2429,15 +2433,45 @@ mod tests {
 
     #[test]
     fn outer_loop_defers_downward_curve_reset_while_flow_still_lags() {
-        assert!(should_defer_outer_curve_reset(1.73, 1.32, 28.4, Some(26.3), 0.5));
-        assert!(should_defer_outer_curve_reset(2.04, 1.24, 27.8, Some(24.9), 0.5));
+        assert!(should_defer_outer_curve_reset(
+            1.73,
+            1.32,
+            28.4,
+            Some(26.3),
+            0.5
+        ));
+        assert!(should_defer_outer_curve_reset(
+            2.04,
+            1.24,
+            27.8,
+            Some(24.9),
+            0.5
+        ));
     }
 
     #[test]
     fn outer_loop_allows_downward_curve_reset_once_flow_has_converged() {
-        assert!(!should_defer_outer_curve_reset(1.73, 1.32, 28.4, Some(27.9), 0.5));
-        assert!(!should_defer_outer_curve_reset(1.73, 1.32, 28.4, Some(28.0), 0.5));
-        assert!(!should_defer_outer_curve_reset(1.20, 1.32, 28.4, Some(26.0), 0.5));
+        assert!(!should_defer_outer_curve_reset(
+            1.73,
+            1.32,
+            28.4,
+            Some(27.9),
+            0.5
+        ));
+        assert!(!should_defer_outer_curve_reset(
+            1.73,
+            1.32,
+            28.4,
+            Some(28.0),
+            0.5
+        ));
+        assert!(!should_defer_outer_curve_reset(
+            1.20,
+            1.32,
+            28.4,
+            Some(26.0),
+            0.5
+        ));
     }
 
     #[test]
@@ -2479,6 +2513,216 @@ mod tests {
         assert!(adequacy.discretionary_headroom_kwh < adequacy.dhw_event_kwh);
     }
 
+    // @lat: [[tests#Controller tariff and timer helpers#Tariff period classification follows sorted windows]]
+    #[test]
+    fn tariff_period_classification_sorts_windows_before_labelling() {
+        let mut config = test_config();
+        config.dhw.cosy_windows = vec![
+            TimeWindow {
+                start: "22:00".to_string(),
+                end: "23:59".to_string(),
+            },
+            TimeWindow {
+                start: "13:00".to_string(),
+                end: "16:00".to_string(),
+            },
+            TimeWindow {
+                start: "04:00".to_string(),
+                end: "07:00".to_string(),
+            },
+        ];
+        config.dhw.peak_windows = vec![TimeWindow {
+            start: "16:00".to_string(),
+            end: "19:00".to_string(),
+        }];
+
+        assert_eq!(
+            classify_tariff_period(&config, NaiveTime::from_hms_opt(4, 30, 0).unwrap()),
+            "cosy_morning"
+        );
+        assert_eq!(
+            classify_tariff_period(&config, NaiveTime::from_hms_opt(14, 0, 0).unwrap()),
+            "cosy_afternoon"
+        );
+        assert_eq!(
+            classify_tariff_period(&config, NaiveTime::from_hms_opt(17, 0, 0).unwrap()),
+            "peak"
+        );
+        assert_eq!(
+            classify_tariff_period(&config, NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            "standard"
+        );
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#DHW slot mapping respects tariff boundaries]]
+    #[test]
+    fn current_dhw_slot_maps_expected_tariff_boundaries() {
+        let config = test_config();
+
+        assert_eq!(
+            current_dhw_slot(&config, NaiveTime::from_hms_opt(0, 30, 0).unwrap()),
+            Some("overnight_battery")
+        );
+        assert_eq!(
+            current_dhw_slot(&config, NaiveTime::from_hms_opt(4, 0, 0).unwrap()),
+            Some("cosy_morning")
+        );
+        assert_eq!(
+            current_dhw_slot(&config, NaiveTime::from_hms_opt(13, 0, 0).unwrap()),
+            Some("afternoon_fallback")
+        );
+        assert_eq!(
+            current_dhw_slot(&config, NaiveTime::from_hms_opt(22, 30, 0).unwrap()),
+            Some("evening_bank")
+        );
+        assert_eq!(
+            current_dhw_slot(&config, NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+            None
+        );
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#Morning DHW timer skip uses dash-colon padding]]
+    #[test]
+    fn dhw_timer_payload_skips_morning_window_and_uses_padding_marker() {
+        let config = test_config();
+
+        assert_eq!(
+            dhw_timer_payload(&config, true),
+            "04:00;07:00;13:00;16:00;22:00;23:59"
+        );
+        assert_eq!(
+            dhw_timer_payload(&config, false),
+            "13:00;16:00;22:00;23:59;-:-;-:-"
+        );
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#DHW timer weekday rolls after waking]]
+    #[test]
+    fn target_dhw_timer_weekday_rolls_after_waking() {
+        let waking = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+        let before = Local.with_ymd_and_hms(2026, 4, 6, 6, 30, 0).unwrap();
+        let after = Local.with_ymd_and_hms(2026, 4, 6, 8, 0, 0).unwrap();
+
+        assert_eq!(target_dhw_timer_weekday(before, waking), Weekday::Mon);
+        assert_eq!(target_dhw_timer_weekday(after, waking), Weekday::Tue);
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#T1 prediction wraps across midnight]]
+    #[test]
+    fn predict_t1_wraps_across_midnight() {
+        let now = NaiveTime::from_hms_opt(23, 30, 0).unwrap();
+        let target = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+        let predicted = predict_t1_at_time(45.0, now, target);
+
+        assert!((hours_until_time(now, target) - 7.5).abs() < 1e-9);
+        assert!((predicted - (45.0 - 7.5 * DHW_T1_DECAY_C_PER_H)).abs() < 1e-9);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Overnight coast guard near waking]]
+    #[test]
+    fn overnight_coast_guard_stops_at_half_hour_prewake_boundary() {
+        let config = test_config();
+        let target =
+            overnight_target_leather(&config.model, NaiveTime::from_hms_opt(1, 0, 0).unwrap());
+
+        assert!(should_coast_overnight(
+            &config.model,
+            NaiveTime::from_hms_opt(6, 29, 0).unwrap(),
+            target + OVERNIGHT_COAST_MARGIN_C,
+            6.0,
+            target,
+        ));
+        assert!(!should_coast_overnight(
+            &config.model,
+            NaiveTime::from_hms_opt(6, 30, 0).unwrap(),
+            target + OVERNIGHT_COAST_MARGIN_C,
+            6.0,
+            target,
+        ));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Battery headroom threshold depends on DHW mode]]
+    #[test]
+    fn battery_headroom_threshold_depends_on_dhw_mode() {
+        let eco = assess_battery_headroom(Some(DHW_ECO_ELEC_KWH), Some("eco"))
+            .expect("eco headroom should produce an adequacy assessment");
+        let normal = assess_battery_headroom(Some(DHW_ECO_ELEC_KWH), Some("normal"))
+            .expect("normal headroom should produce an adequacy assessment");
+
+        assert!(eco.adequate_to_next_cosy);
+        assert_eq!(eco.dhw_event_kwh, DHW_ECO_ELEC_KWH);
+        assert!(!normal.adequate_to_next_cosy);
+        assert_eq!(normal.dhw_event_kwh, DHW_NORMAL_ELEC_KWH);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Cosy windows ignore battery gating for DHW]]
+    #[test]
+    fn dhw_scheduler_launches_during_cosy_even_with_low_or_missing_battery_signal() {
+        let config = test_config();
+        let cases = [
+            (
+                Local.with_ymd_and_hms(2026, 4, 5, 4, 30, 0).unwrap(),
+                assess_battery_headroom(Some(0.1), Some("normal")),
+                ":cosy_morning",
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 4, 5, 13, 30, 0).unwrap(),
+                None,
+                ":afternoon_fallback",
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 4, 5, 22, 30, 0).unwrap(),
+                assess_battery_headroom(Some(0.0), Some("normal")),
+                ":evening_bank",
+            ),
+        ];
+
+        for (now, battery, expected_slot_suffix) in cases {
+            let plan = plan_dhw_schedule(
+                &config,
+                now,
+                Some(8.0),
+                Some(39.0),
+                Some(39.0),
+                Some("normal"),
+                battery.as_ref(),
+            )
+            .expect("Cosy slots should still produce a DHW plan when charge is needed");
+
+            assert!(plan.launch_now, "expected immediate launch for {}", now);
+            assert!(
+                plan.slot_key.ends_with(expected_slot_suffix),
+                "unexpected slot {}",
+                plan.slot_key
+            );
+            assert!(plan.reason.contains("launch now"));
+        }
+    }
+
+    proptest! {
+        // @lat: [[tests#Adaptive heating controller#Battery headroom adequacy is monotonic]]
+        #[test]
+        fn battery_headroom_adequacy_is_monotonic(
+            mode in prop_oneof![Just("eco"), Just("normal")],
+            low in 0.0f64..6.0,
+            delta in 0.0f64..6.0,
+        ) {
+            let high = low + delta;
+            let low_assessment = assess_battery_headroom(Some(low), Some(mode))
+                .expect("generated headroom should always produce an assessment");
+            let high_assessment = assess_battery_headroom(Some(high), Some(mode))
+                .expect("generated headroom should always produce an assessment");
+
+            prop_assert!(
+                !low_assessment.adequate_to_next_cosy || high_assessment.adequate_to_next_cosy,
+                "adequacy regressed for mode={mode}, low={low}, high={high}"
+            );
+            prop_assert!(
+                high_assessment.discretionary_headroom_kwh >= low_assessment.discretionary_headroom_kwh
+            );
+        }
+    }
+
     #[test]
     fn dhw_scheduler_waits_until_morning_when_battery_cannot_bridge() {
         let config = test_config();
@@ -2498,6 +2742,30 @@ mod tests {
         assert!(!plan.launch_now);
         assert_eq!(plan.battery_adequate_to_next_cosy, Some(false));
         assert!(plan.reason.contains("wait for next Cosy slot"));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Eco-mode overnight DHW bypasses the battery gate]]
+    #[test]
+    fn dhw_scheduler_launches_overnight_in_eco_mode_even_without_battery_headroom() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 5, 1, 0, 0).unwrap();
+        let battery = assess_battery_headroom(Some(1.0), Some("eco"));
+        let plan = plan_dhw_schedule(
+            &config,
+            now,
+            Some(6.0),
+            Some(41.2),
+            Some(41.0),
+            Some("eco"),
+            battery.as_ref(),
+        )
+        .expect("eco overnight slot should still plan a charge when T1 falls below trigger");
+
+        assert!(plan.launch_now);
+        assert_eq!(plan.slot_key, "2026-04-05:overnight_battery");
+        assert_eq!(plan.battery_adequate_to_next_cosy, Some(false));
+        assert!(plan.reason.contains("hwc_mode=eco"));
+        assert!(plan.reason.contains("launch now"));
     }
 
     #[test]
@@ -2651,18 +2919,22 @@ async fn main() -> Result<()> {
             config.dhw.cosy_windows = windows
                 .cosy_windows
                 .into_iter()
-                .map(|w| TimeWindow { start: w.start, end: w.end })
+                .map(|w| TimeWindow {
+                    start: w.start,
+                    end: w.end,
+                })
                 .collect();
             config.dhw.peak_windows = windows
                 .peak_windows
                 .into_iter()
-                .map(|w| TimeWindow { start: w.start, end: w.end })
+                .map(|w| TimeWindow {
+                    start: w.start,
+                    end: w.end,
+                })
                 .collect();
         }
         Err(e) => {
-            warn!(
-                "tariff window fetch failed, using TOML fallback windows: {e:#}"
-            );
+            warn!("tariff window fetch failed, using TOML fallback windows: {e:#}");
         }
     }
 

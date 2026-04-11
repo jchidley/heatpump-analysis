@@ -59,7 +59,7 @@ Non-obvious code behaviours that have caused bugs or confusion.
 Known sensor issues that affect data interpretation.
 
 - SNZB-02P v2.1.0 bug: readings freeze at power-on value. v2.2.0 fixes it. Always verify readings vary after deployment.
-- `conservatory_temp_humid` Zigbee device has been removed from Z2M and will be re-paired as `outside_temp_humid` when deployed outdoors. Conservatory temperature now uses `ebusd/poll/Z2RoomTemp` (VRC 700 Zone 2 sensor, reads ~1°C below old SNZB-02P position). Updated in `thermal_geometry.json`.
+- `conservatory_temp_humid` Zigbee device was removed from Z2M and re-paired as `outside_temp_humid`, which was deployed outdoors on 7 Apr 2026. Conservatory temperature now uses `ebusd/poll/Z2RoomTemp` (VRC 700 Zone 2 sensor, reads ~1°C below the old SNZB-02P position). Updated in `thermal_geometry.json`.
 - emonth2 in Leather reports humidity (`emon/emonth2_23/humidity`, `_field="value"`). Useful for overnight moisture analysis (Leather + dog). External temperature probe port is unconnected (reads 0).
 - Bathroom sensor was in the airing cupboard until 25 Mar 2026 21:00 — historical data reads ~3°C high before that date
 - PV calibration factor 0.087 is for the sloping plane; divide by 1.4 for vertical. P3 CT reads 6.7 kW for a 3.08 kWp array (includes Powerwall).

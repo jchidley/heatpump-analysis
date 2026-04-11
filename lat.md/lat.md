@@ -11,3 +11,4 @@ This index maps the project's structured knowledge graph so agents can find the 
 - [[infrastructure]] — Monitoring devices, MQTT topology, eBUS stack, sensors, VRC 700 baseline
 - [[plan]] — Open items, next steps, and links to detailed plan docs in `docs/`
 - [[reviews]] — Archived dated plan-item reviews so `plan.md` only carries the latest status note per active item
+- [[tests]] — Targeted executable specs for controller invariants and other migration-sensitive behaviour that need explicit code coverage

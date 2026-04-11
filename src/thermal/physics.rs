@@ -508,3 +508,57 @@ pub(crate) fn full_room_energy_balance_components(
         total,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // @lat: [[tests#Thermal physics primitives#Doorway exchange scales with opening state]]
+    #[test]
+    fn doorway_exchange_respects_opening_state() {
+        let closed = Doorway {
+            room_a: "a",
+            room_b: "b",
+            width: 1.0,
+            height: 2.0,
+            state: "closed",
+        };
+        let partial = Doorway {
+            state: "partial",
+            ..closed.clone()
+        };
+        let open = Doorway {
+            state: "open",
+            ..closed.clone()
+        };
+
+        let closed_q = doorway_exchange(&closed, 22.0, 18.0, 0.2);
+        let partial_q = doorway_exchange(&partial, 22.0, 18.0, 0.2);
+        let open_q = doorway_exchange(&open, 22.0, 18.0, 0.2);
+
+        assert_eq!(closed_q, 0.0);
+        assert!(partial_q.abs() > 0.0);
+        assert!(open_q.abs() > partial_q.abs());
+    }
+
+    proptest! {
+        // @lat: [[tests#Thermal physics primitives#Radiator output is monotonic above room temperature]]
+        #[test]
+        fn radiator_output_is_monotonic_above_room_temp(
+            room_temp in 5.0f64..25.0,
+            t50 in 100.0f64..3000.0,
+            low_delta in 0.1f64..20.0,
+            extra_delta in 0.1f64..20.0,
+        ) {
+            let low_mwt = room_temp + low_delta;
+            let high_mwt = low_mwt + extra_delta;
+
+            let low = radiator_output(t50, low_mwt, room_temp);
+            let high = radiator_output(t50, high_mwt, room_temp);
+
+            prop_assert!(high >= low);
+            prop_assert!(low > 0.0);
+        }
+    }
+}

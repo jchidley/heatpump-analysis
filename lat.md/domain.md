@@ -30,7 +30,7 @@ The Rust thermal model uses `BuildingCircuitFlow` (L/h) from eBUS for state dete
 1930s solid-brick semi-detached, 180 m², 2010 loft extension. Total thermal mass 48,090 kJ/K.
 
 - **HTC**: 261 W/K (model calibrated), ~190 W/K (actual overnight from 466 nights of heat meter data — model overpredicts heat loss by ~30%)
-- **13 rooms**, all sensored: 12× SNZB-02P (v2.2.0) + 1 emonth2 (Leather). Office + Landing added 24 Mar 2026 for 13/13 coverage.
+- **13 rooms monitored**: 11× indoor SNZB-02P (v2.2.0), 1 emonth2 in Leather, and the conservatory via `ebusd/poll/Z2RoomTemp`. Office + Landing sensors were added 24 Mar 2026 for full indoor coverage; `outside_temp_humid` was deployed 7 Apr 2026 as the outdoor humidity / AH reference.
 - **15 radiators**, no TRVs (all valves wide open). Kitchen and Landing have no radiator. Sterling rad OFF.
 - **Conservatory** excluded from thermal scoring (30 m² glass, sub-hour time constant)
 - **Landing** excluded from thermal scoring (chimney model wrong for heating)
@@ -50,7 +50,7 @@ Ground-floor brick rooms (4,000–6,300 kJ/K) cool much slower than loft timber 
 - **Front**: unoccupied, also used for clothes drying. Same overnight control-room value as Office.
 - **Sterling**: rad OFF, door closed. Gets ~19°C from Leather's floor heat alone. Occupant prefers cold.
 - **Conservatory**: dining room, cannot be closed off. Largest rads in house but cools fastest overnight (−1.9°C, glazed roof U=2.4).
-- **Elvina**: coldest occupied room (16.4–17.5°C at 07:00). Ratio-method moisture analysis shows ventilation ~3× Aldora’s rate (ΔAH 0.77 vs 2.36 g/m³); nearly all the excess UA (32 vs model 24.6 W/K) is ventilation, not fabric. LEVOIT Core 300 HEPA purifier (CADR 187 m³/h, 20W) already runs for child’s allergies. Closing trickle vents would cut UA to ~17 W/K and raise overnight temp by ~3°C while improving allergen control (no outdoor pollen ingress). Requires CO2 monitoring (door ajar or morning purge for Part F fresh air).
+- **Elvina**: coldest occupied room (16.4–17.5°C at 07:00). Current proxy-network moisture analysis says Elvina ventilates **6.8× faster** than Aldora (ACH ≈ 1.0 vs model 0.51); nearly all the excess UA (32 vs model 24.6 W/K) is ventilation, not fabric, and the fabric residual is only ~11 W/K versus model 14.5. LEVOIT Core 300 HEPA purifier (CADR 187 m³/h, 20W) already runs for child’s allergies. Current accepted operating preference: trickle vents stay open, the bedroom door stays closed, and the room remains cold in winter rather than pursuing a vent-closure intervention.
 - **Aldora**: very well sealed. Humidity reaches 58.8% RH overnight (surface ~71% = mould warning). Needs trickle vent + radiator upgrade.
 
 ## Leather Room

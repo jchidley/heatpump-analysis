@@ -2252,3 +2252,112 @@ fn print_numeric_summary_line(label: &str, summary: &Option<NumericSummary>) {
         None => println!("{label}: unavailable"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Offset, TimeZone, Utc};
+
+    fn dt(y: i32, m: u32, d: u32, hh: u32, mm: u32) -> DateTime<FixedOffset> {
+        Utc.fix().with_ymd_and_hms(y, m, d, hh, mm, 0).unwrap()
+    }
+
+    // @lat: [[tests#History evidence helpers#Sampling stats report interval summary]]
+    #[test]
+    fn sampling_stats_reports_interval_summary() {
+        let since = dt(2026, 4, 10, 7, 0);
+        let until = dt(2026, 4, 10, 8, 0);
+        let times = vec![
+            dt(2026, 4, 10, 7, 0),
+            dt(2026, 4, 10, 7, 5),
+            dt(2026, 4, 10, 7, 15),
+            dt(2026, 4, 10, 7, 20),
+        ];
+
+        let stats = sampling_stats_from_timestamps("leather", &since, &until, &times);
+
+        assert_eq!(stats.samples, 4);
+        assert_eq!(stats.min_step_seconds, Some(300.0));
+        assert_eq!(stats.median_step_seconds, Some(300.0));
+        assert_eq!(stats.max_step_seconds, Some(600.0));
+    }
+
+    // @lat: [[tests#History evidence helpers#Waking-hour clipping excludes overnight-only time]]
+    #[test]
+    fn clip_period_to_waking_hours_splits_and_excludes_overnight_time() {
+        let period = Period {
+            start: dt(2026, 4, 10, 22, 30).to_rfc3339(),
+            end: dt(2026, 4, 11, 8, 30).to_rfc3339(),
+            duration_minutes: 600.0,
+        };
+
+        let clipped = clip_period_to_waking_hours(&period);
+
+        assert_eq!(clipped.len(), 2);
+        assert_eq!(clipped[0].start, dt(2026, 4, 10, 22, 30).to_rfc3339());
+        assert_eq!(clipped[0].end, dt(2026, 4, 10, 23, 0).to_rfc3339());
+        assert_eq!(clipped[1].start, dt(2026, 4, 11, 7, 0).to_rfc3339());
+        assert_eq!(clipped[1].end, dt(2026, 4, 11, 8, 30).to_rfc3339());
+    }
+
+    // @lat: [[tests#History evidence helpers#Sawtooth detection requires repeated alternation]]
+    #[test]
+    fn detect_sawtooth_requires_repeated_significant_alternation() {
+        let rows = vec![
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 0),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.8),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 15),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(1.0),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 30),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.85),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 45),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(1.05),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 7, 0),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.9),
+                flow_desired_c: None,
+            },
+        ];
+
+        let (sawtooth, alternations) = detect_sawtooth(&rows);
+        assert!(sawtooth);
+        assert_eq!(alternations, 3);
+
+        let calm_rows = rows[..3].to_vec();
+        let (sawtooth, alternations) = detect_sawtooth(&calm_rows);
+        assert!(!sawtooth);
+        assert_eq!(alternations, 0);
+    }
+}

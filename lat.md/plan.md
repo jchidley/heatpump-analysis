@@ -38,17 +38,15 @@ The exact review window shows the restart at **22:52 BST**, `startup: reinitiali
 
 **11 Apr data review (08:39 BST)**: New item opened from the review window. Immediate next step: correlate the migration work with ebus/influx/socket state, system load, and service restarts on pi5data to see whether infrastructure churn rather than controller logic stretched outer-loop work into **148–962s** hangs.
 
-#### Actionable: Elvina Overnight Comfort
+#### Open: Elvina Overnight Comfort (Accepted Occupant Preference)
 
-Elvina still runs too cool overnight on mild nights, and the evidence points to excessive ventilation rather than insufficient heat input.
+Elvina still runs too cool overnight on mild nights, but the current occupant preference is to keep the vents open and the internal door closed even if that means the room stays cold in winter.
 
-Child's bedroom hits 16.4–17.5°C at 07:00 on mild nights. Full proxy-network moisture analysis (13 sensors, 6 nights) says Elvina ventilates **6.8× faster** than Aldora (ACH ≈ 1.0 vs model 0.51), while the fabric residual is only 11 W/K versus model 14.5.
+Child's bedroom hits 16.4–17.5°C at 07:00 on mild nights. Full proxy-network moisture analysis (13 sensors, 6 nights) says Elvina ventilates **6.8× faster** than Aldora (ACH ≈ 1.0 vs model 0.51), while the fabric residual is only 11 W/K versus model 14.5. The evidence still points to excessive ventilation rather than insufficient heat input, but this is now an accepted comfort trade-off rather than a pending intervention.
 
-**Proposed fix: close trickle vents, rely on HEPA purifier for allergen control.** The LEVOIT Core 300 (CADR 187 m3/h = 3.1 filtered ACH in 60 m3 room, 20W) already runs and should provide better allergen control with vents closed because it avoids outdoor pollen ingress and filters recirculated air. Closing vents cuts UA from ~32 to ~17 W/K, raising overnight temperature by ~3°C. Part F fresh air shortfall with vents closed: need ~14 L/s, infiltration provides ~2.5 L/s. Mitigate with door ajar or morning purge vent. Validate with a £15 CO2 monitor (≤1000 ppm target). No controller changes are needed; the room should simply retain more heat at the same flow temperature.
+The previously proposed vent-closure intervention is no longer the working plan: Elvina has confirmed that she wants the trickle vents left open, wants the bedroom door kept closed, and accepts that the room will therefore be cold in winter. No controller change is planned for this room on that basis.
 
-**Measurement plan**: (1) ~~deploy SNZB-02P to shaded SE wall as `outside_temp_humid`~~ **done 7 Apr** (paired, LQ=6 at install, so monitor stability); (2) record baseline Elvina overnight AH and temperature for 1 week; (3) close trickle vents; (4) record post-change for 1 week; (5) compare ΔAH rise (confirms ACH reduction), temperature gain, and CO2 (if monitor fitted).
-
-**11 Apr data review (08:39 BST)**: Baseline collection still looks healthy. Since the last review, `elvina_temp_humid` reported **102** temperature samples with a window range of **18.4→24.4°C** and an overnight floor of **19.6°C** at **08:24 BST**; `outside_temp_humid` reported **181** samples with a window range of **9.3→17.5°C** and an overnight floor of **10.8°C** at **02:31 BST**. Both sensors stayed online through the night, and there is still no vent intervention yet; keep collecting the baseline week.
+**11 Apr status update**: Occupant preference supersedes the earlier vent-closure proposal. Keep the evidence because it explains why the room is cold, but treat this item as a documented accepted condition unless preferences change later.
 
 #### Open: Forecast API Reliability
 

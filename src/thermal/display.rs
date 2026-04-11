@@ -1012,3 +1012,85 @@ fn query_room_humidity(
     out.sort_by_key(|(t, _, _)| *t);
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn leather_temp_at(outside_c: f64, mwt: f64) -> f64 {
+        *solve_equilibrium_temps(outside_c, mwt, 0.0, 0.0)
+            .expect("solver should succeed")
+            .get("leather")
+            .expect("leather room should exist")
+    }
+
+    // @lat: [[tests#Thermal solver#Leather equilibrium rises with MWT]]
+    #[test]
+    fn leather_equilibrium_rises_with_higher_mwt() {
+        let low = leather_temp_at(8.0, 25.0);
+        let high = leather_temp_at(8.0, 35.0);
+
+        assert!(
+            high > low,
+            "expected higher MWT to warm leather: low={low}, high={high}"
+        );
+    }
+
+    // @lat: [[tests#Thermal solver#MWT bisection hits the requested room target]]
+    #[test]
+    fn bisected_mwt_hits_leather_target_with_small_error() {
+        let target = 20.5;
+        let mwt = bisect_mwt_for_room("leather", target, 10.0, 0.0, 0.0)
+            .expect("bisection should succeed")
+            .expect("target should be achievable");
+
+        let temp = leather_temp_at(10.0, mwt);
+        assert!(
+            (temp - target).abs() <= 0.05,
+            "target miss too large: mwt={mwt}, temp={temp}"
+        );
+
+        let slightly_lower = leather_temp_at(10.0, mwt - 0.2);
+        assert!(
+            slightly_lower < target,
+            "bisection should return a near-minimum MWT: mwt={mwt}, lower_temp={slightly_lower}, target={target}"
+        );
+    }
+
+    // @lat: [[tests#Thermal solver#Unreachable targets return no MWT]]
+    #[test]
+    fn unreachable_target_returns_none() {
+        let max_temp = leather_temp_at(-5.0, 60.0);
+        let unreachable = max_temp + 0.5;
+
+        let mwt = bisect_mwt_for_room("leather", unreachable, -5.0, 0.0, 0.0)
+            .expect("bisection should succeed for unreachable case");
+
+        assert_eq!(
+            mwt, None,
+            "target above max achievable temp should return None"
+        );
+    }
+
+    proptest! {
+        // @lat: [[tests#Thermal solver#Leather equilibrium is monotonic in MWT]]
+        #[test]
+        fn leather_equilibrium_is_monotonic_in_mwt(
+            low in 15.0f64..55.0,
+            delta in 0.1f64..5.0,
+            outside in -2.0f64..16.0,
+        ) {
+            let high = (low + delta).min(60.0);
+            prop_assume!(high > low);
+
+            let low_temp = leather_temp_at(outside, low);
+            let high_temp = leather_temp_at(outside, high);
+
+            prop_assert!(
+                high_temp + 1e-6 >= low_temp,
+                "equilibrium regressed: outside={outside}, low={low}, high={high}, low_temp={low_temp}, high_temp={high_temp}"
+            );
+        }
+    }
+}
