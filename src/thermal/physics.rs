@@ -680,6 +680,234 @@ mod tests {
         assert!((components.total - scalar).abs() < 1e-9);
     }
 
+    // @lat: [[tests#Thermal physics primitives#Thermal mass primitives scale with area]]
+    #[test]
+    fn thermal_mass_air_scales_with_volume() {
+        assert!((thermal_mass_air(10.0) - 12.0).abs() < 1e-9);
+        assert!((thermal_mass_air(0.0) - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn thermal_mass_brick_int_scales_with_area() {
+        assert!((thermal_mass_brick_int(5.0) - 360.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn thermal_mass_brick_ext_scales_with_area() {
+        assert!((thermal_mass_brick_ext(5.0) - 360.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn thermal_mass_concrete_scales_with_area() {
+        assert!((thermal_mass_concrete(3.0) - 600.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn thermal_mass_timber_floor_scales_with_area() {
+        assert!((thermal_mass_timber_floor(4.0) - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn thermal_mass_plaster_scales_with_area() {
+        assert!((thermal_mass_plaster(10.0) - 170.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn thermal_mass_furniture_scales_with_area() {
+        assert!((thermal_mass_furniture(10.0) - 150.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn thermal_mass_timber_stud_scales_with_area() {
+        assert!((thermal_mass_timber_stud(6.0) - 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn estimate_thermal_mass_brick_ground_floor() {
+        let room = test_room("living");
+        let connections = vec![InternalConnection {
+            room_a: "living",
+            room_b: "hall",
+            ua: 4.74, // implies area = 4.74 / 2.37 = 2.0
+            description: "internal wall",
+        }];
+        let c = estimate_thermal_mass(&room, &connections);
+
+        // air: 1.2 * 12.0 * 2.4 = 34.56
+        // ext wall (brick): 72.0 * 8.0 = 576.0, plaster on ext wall: 17.0 * 8.0 = 136.0
+        // int wall (brick): 72.0 * 2.0 = 144.0, plaster on int wall: 17.0 * 2.0 = 34.0
+        // concrete floor (Gnd, brick): 200.0 * 12.0 = 2400.0
+        // ceiling plaster: 17.0 * 12.0 = 204.0
+        // furniture: 15.0 * 12.0 = 180.0
+        let expected = 34.56 + 576.0 + 136.0 + 144.0 + 34.0 + 2400.0 + 204.0 + 180.0;
+        assert!((c - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn estimate_thermal_mass_timber_upper_floor() {
+        let mut room = test_room("bedroom");
+        room.construction = "timber";
+        room.floor = "1st";
+        let c = estimate_thermal_mass(&room, &[]);
+
+        // air: 1.2 * 12.0 * 2.4 = 34.56
+        // ext wall (timber_stud): 10.0 * 8.0 = 80.0, plaster: 17.0 * 8.0 = 136.0
+        // no internal connections
+        // timber floor (not Gnd): 50.0 * 12.0 = 600.0
+        // ceiling plaster: 17.0 * 12.0 = 204.0
+        // furniture: 15.0 * 12.0 = 180.0
+        let expected = 34.56 + 80.0 + 136.0 + 600.0 + 204.0 + 180.0;
+        assert!((c - expected).abs() < 1e-9);
+    }
+
+    // @lat: [[tests#Thermal physics primitives#External and ventilation loss follow temperature difference]]
+    #[test]
+    fn external_loss_positive_when_room_warmer() {
+        let elements = vec![ExternalElement {
+            description: "wall",
+            area: 10.0,
+            u_value: 0.3,
+            to_ground: false,
+        }];
+        let loss = external_loss(&elements, 20.0, 5.0);
+        // 0.3 * 10.0 * (20.0 - 5.0) = 45.0
+        assert!((loss - 45.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn external_loss_uses_ground_temp_for_ground_elements() {
+        let elements = vec![ExternalElement {
+            description: "floor",
+            area: 12.0,
+            u_value: 0.25,
+            to_ground: true,
+        }];
+        let loss = external_loss(&elements, 20.0, 0.0);
+        // Uses GROUND_TEMP_C (10.5), not outside_temp (0.0)
+        // 0.25 * 12.0 * (20.0 - 10.5) = 28.5
+        assert!((loss - 28.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ventilation_loss_basic() {
+        let loss = ventilation_loss(0.5, 30.0, 20.0, 5.0, 0.0, 1.0);
+        // VENT_FACTOR * 0.5 * 1.0 * 30.0 * 15.0 * 1.0
+        let expected = VENT_FACTOR * 0.5 * 30.0 * 15.0;
+        assert!((loss - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ventilation_loss_with_heat_recovery() {
+        let no_recovery = ventilation_loss(1.0, 20.0, 20.0, 5.0, 0.0, 1.0);
+        let with_recovery = ventilation_loss(1.0, 20.0, 20.0, 5.0, 0.5, 1.0);
+        assert!((with_recovery - no_recovery * 0.5).abs() < 1e-9);
+    }
+
+    // @lat: [[tests#Thermal physics primitives#Wall conduction is proportional to temperature difference]]
+    #[test]
+    fn wall_conduction_proportional_to_dt() {
+        assert!((wall_conduction(5.0, 20.0, 18.0) - 10.0).abs() < 1e-9);
+        assert!((wall_conduction(5.0, 18.0, 20.0) - -10.0).abs() < 1e-9);
+        assert!((wall_conduction(5.0, 20.0, 20.0) - 0.0).abs() < 1e-9);
+    }
+
+    // @lat: [[tests#Thermal physics primitives#Solar gain follows orientation and PV irradiance conversion]]
+    #[test]
+    fn solar_gain_full_sw_vertical() {
+        let glazing = vec![SolarGlazingDef {
+            area: 2.0,
+            orientation: "SW",
+            tilt: "vertical",
+            g_value: 0.7,
+            shading: 1.0,
+        }];
+        let gain = solar_gain_full(&glazing, 200.0, 50.0, 40.0);
+        // 200.0 * 2.0 * 0.7 * 1.0 = 280.0
+        assert!((gain - 280.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn solar_gain_full_ne_vertical_and_empty() {
+        let glazing = vec![SolarGlazingDef {
+            area: 3.0,
+            orientation: "NE",
+            tilt: "vertical",
+            g_value: 0.5,
+            shading: 0.8,
+        }];
+        let gain = solar_gain_full(&glazing, 200.0, 80.0, 60.0);
+        // ne_vert=80, 80 * 3.0 * 0.5 * 0.8 = 96.0
+        assert!((gain - 96.0).abs() < 1e-9);
+
+        // Empty glazing returns zero
+        assert_eq!(solar_gain_full(&[], 200.0, 80.0, 60.0), 0.0);
+    }
+
+    #[test]
+    fn pv_to_sw_vertical_irradiance_negative_pv_generates() {
+        // pv_watts negative means generation; gen = -pv_watts
+        let irr = pv_to_sw_vertical_irradiance(-1000.0);
+        let expected = 1000.0 * PV_TO_SLOPING_IRRADIANCE / SLOPING_TO_VERTICAL_RATIO;
+        assert!((irr - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pv_to_sw_vertical_irradiance_positive_pv_returns_zero() {
+        // Positive pv_watts means consuming, no generation
+        assert_eq!(pv_to_sw_vertical_irradiance(500.0), 0.0);
+        assert_eq!(pv_to_sw_vertical_irradiance(0.0), 0.0);
+    }
+
+    // @lat: [[tests#Thermal physics primitives#Door state override preserves chimney state]]
+    #[test]
+    fn doors_all_closed_except_chimney_preserves_chimney() {
+        let doors = vec![
+            Doorway {
+                room_a: "a",
+                room_b: "b",
+                width: 0.9,
+                height: 2.0,
+                state: "open",
+            },
+            Doorway {
+                room_a: "b",
+                room_b: "c",
+                width: 0.8,
+                height: 2.0,
+                state: "chimney",
+            },
+            Doorway {
+                room_a: "c",
+                room_b: "d",
+                width: 0.9,
+                height: 2.0,
+                state: "partial",
+            },
+        ];
+        let result = doors_all_closed_except_chimney(&doors);
+        assert_eq!(result[0].state, "closed");
+        assert_eq!(result[1].state, "chimney");
+        assert_eq!(result[2].state, "closed");
+    }
+
+    // @lat: [[tests#Thermal physics primitives#Radiator output regression anchor at dt50]]
+    #[test]
+    fn radiator_output_regression_anchor_at_dt50() {
+        // At dt=50 (the reference point), output should exactly equal t50.
+        // This pins the exponent: 1500 * (50/50)^1.3 == 1500.
+        let out = radiator_output(1500.0, 70.0, 20.0);
+        assert!((out - 1500.0).abs() < 1e-9, "at dt=50, output should equal t50");
+
+        // At dt=25 (half reference), output depends on the exponent.
+        // (25/50)^1.3 ≈ 0.406, so 1500 * 0.406 ≈ 609.
+        let out_half = radiator_output(1500.0, 45.0, 20.0);
+        assert!(
+            (out_half - 609.0).abs() < 2.0,
+            "at dt=25, expected ~609 W but got {:.1}",
+            out_half
+        );
+    }
+
     proptest! {
         // @lat: [[tests#Thermal physics primitives#Radiator output is monotonic above room temperature]]
         #[test]
@@ -697,6 +925,26 @@ mod tests {
 
             prop_assert!(high >= low);
             prop_assert!(low > 0.0);
+        }
+
+        // @lat: [[tests#Thermal physics primitives#Ventilation loss scales with temperature difference]]
+        #[test]
+        fn ventilation_loss_scales_with_temperature_difference(
+            ach in 0.1f64..2.0,
+            volume in 10.0f64..100.0,
+            room_temp in 15.0f64..25.0,
+            small_dt in 1.0f64..10.0,
+            extra_dt in 0.1f64..10.0,
+        ) {
+            let close_outside = room_temp - small_dt;
+            let far_outside = room_temp - small_dt - extra_dt;
+
+            let loss_close = ventilation_loss(ach, volume, room_temp, close_outside, 0.0, 1.0);
+            let loss_far = ventilation_loss(ach, volume, room_temp, far_outside, 0.0, 1.0);
+
+            prop_assert!(loss_far > loss_close,
+                "larger dT should produce more ventilation loss: {loss_far} vs {loss_close}");
+            prop_assert!(loss_close > 0.0);
         }
     }
 }

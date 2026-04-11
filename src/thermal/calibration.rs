@@ -732,6 +732,119 @@ mod tests {
         assert!(!room_avgs.contains_key("empty"));
     }
 
+    // -- avg_series_in_window edge cases ------------------------------------
+
+    #[test]
+    fn avg_series_in_window_empty_series_returns_default() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 0);
+        assert!((avg_series_in_window(&[], start, end, 42.0) - 42.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn avg_series_in_window_single_sample_returns_that_value() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 0);
+        let series = vec![(dt(2026, 4, 10, 7, 30), 5.5)];
+        assert!((avg_series_in_window(&series, start, end, 0.0) - 5.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn avg_series_in_window_boundary_samples_are_inclusive() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 0);
+        // samples exactly on start and end should both be included
+        let series = vec![(start, 10.0), (end, 20.0)];
+        assert!((avg_series_in_window(&series, start, end, 0.0) - 15.0).abs() < 1e-12);
+    }
+
+    // -- avg_room_temps_in_window edge cases --------------------------------
+
+    #[test]
+    fn avg_room_temps_in_window_empty_map_returns_empty() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 0);
+        let empty: TempSeries = HashMap::new();
+        assert!(avg_room_temps_in_window(&empty, start, end).is_empty());
+    }
+
+    #[test]
+    fn avg_room_temps_in_window_multiple_rooms_averaged_independently() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 0);
+        let series: TempSeries = HashMap::from([
+            (
+                "room_a".to_string(),
+                vec![(dt(2026, 4, 10, 7, 0), 10.0), (dt(2026, 4, 10, 7, 30), 20.0)],
+            ),
+            (
+                "room_b".to_string(),
+                vec![(dt(2026, 4, 10, 7, 15), 30.0)],
+            ),
+        ]);
+        let avgs = avg_room_temps_in_window(&series, start, end);
+        assert_eq!(avgs.len(), 2);
+        assert!((avgs["room_a"] - 15.0).abs() < 1e-12);
+        assert!((avgs["room_b"] - 30.0).abs() < 1e-12);
+    }
+
+    // -- parse_validation_windows -------------------------------------------
+
+    #[test]
+    fn parse_validation_windows_happy_path() {
+        let cfgs = vec![
+            ValidationWindowCfg {
+                name: "night_a".to_string(),
+                start: "2026-04-10T00:00:00+00:00".to_string(),
+                end: "2026-04-10T06:00:00+00:00".to_string(),
+                door_state: "normal".to_string(),
+            },
+            ValidationWindowCfg {
+                name: "night_b".to_string(),
+                start: "2026-04-11T00:00:00+00:00".to_string(),
+                end: "2026-04-11T06:00:00+00:00".to_string(),
+                door_state: "closed".to_string(),
+            },
+        ];
+        let parsed = parse_validation_windows(&cfgs).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].name, "night_a");
+        assert_eq!(parsed[0].start, dt(2026, 4, 10, 0, 0));
+        assert_eq!(parsed[0].end, dt(2026, 4, 10, 6, 0));
+        assert_eq!(parsed[0].door_state, "normal");
+        assert_eq!(parsed[1].name, "night_b");
+        assert_eq!(parsed[1].door_state, "closed");
+    }
+
+    #[test]
+    fn parse_validation_windows_empty_input() {
+        let parsed = parse_validation_windows(&[]).unwrap();
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_validation_windows_rejects_bad_datetime() {
+        let cfgs = vec![ValidationWindowCfg {
+            name: "bad".to_string(),
+            start: "not-a-datetime".to_string(),
+            end: "2026-04-10T06:00:00+00:00".to_string(),
+            door_state: "normal".to_string(),
+        }];
+        assert!(parse_validation_windows(&cfgs).is_err());
+    }
+
+    // -- frange additional cases --------------------------------------------
+
+    #[test]
+    fn frange_single_element_when_min_equals_max() {
+        assert_eq!(frange(0.5, 0.5, 0.1), vec![0.5]);
+    }
+
+    #[test]
+    fn frange_returns_empty_when_min_exceeds_max() {
+        assert!(frange(1.0, 0.5, 0.1).is_empty());
+    }
+
     // @lat: [[tests#Thermal calibration helpers#Room series map known sensor topics and sort samples]]
     #[test]
     fn build_room_series_maps_known_topics_and_sorts_samples() {

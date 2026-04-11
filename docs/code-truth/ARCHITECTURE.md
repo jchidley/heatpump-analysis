@@ -19,7 +19,7 @@ main.rs (CLI)
   ├── octopus_tariff.rs (re-exports shared octopus-tariff crate)
   ├── overnight.rs   (reads config.tariff; uses analysis::enrich + octopus_tariff)
   │     └── analysis.rs, config.rs, octopus_tariff.rs
-  └── thermal.rs     (thin facade — re-exports from 16 submodules)
+  └── thermal.rs     (thin facade — re-exports from 17 submodules)
         └── thermal/  (own config from model/thermal-config.toml)
               └── display.rs  (equilibrium solver, MWT bisection, control table)
               └── dhw_sessions.rs  (DHW draw/charge analysis)

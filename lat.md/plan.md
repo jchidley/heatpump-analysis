@@ -2,6 +2,8 @@
 
 Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-11 08:39 BST**. The previous review snapshot lives in [[reviews]].
 
+The repo-local PostgreSQL cutover plan now lives in [[postgres-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/timescaledb-migration.md`.
+
 ## Heating Controller
 
 V2 model-predictive controller is live, and this section tracks only the remaining controller questions plus their fixed baseline context.

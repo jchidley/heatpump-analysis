@@ -1,5 +1,7 @@
 # Hydraulic Analysis: Pump, Flow Rates, and System Resistance
 
+This document is a self-contained investigation report covering flow-rate degradation, root-cause diagnosis, and remediation. The canonical current operating-state thresholds live in [`../lat.md/domain.md#Operating States`](../lat.md/domain.md#operating-states); flow-rate monitoring context lives in [`../lat.md/infrastructure.md`](../lat.md/infrastructure.md).
+
 ## How the Arotherm 5kW circulates water
 
 The Vaillant Arotherm Plus 5kW (VWL 55/6) has a single internal circulation pump that serves both heating and DHW circuits. A diverter valve switches flow between the radiator circuit and the cylinder coil. The pump runs on a fixed-speed curve — it does not vary speed to maintain a flow target.

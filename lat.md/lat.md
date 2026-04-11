@@ -12,3 +12,4 @@ This index maps the project's structured knowledge graph so agents can find the 
 - [[plan]] — Open items, next steps, and links to detailed plan docs in `docs/`
 - [[reviews]] — Archived dated plan-item reviews so `plan.md` only carries the latest status note per active item
 - [[tests]] — Targeted executable specs for controller invariants and other migration-sensitive behaviour that need explicit code coverage
+- [[postgres-migration]] — Repo-local PostgreSQL/TimescaleDB migration plan aligned with the shared energy-hub cutover

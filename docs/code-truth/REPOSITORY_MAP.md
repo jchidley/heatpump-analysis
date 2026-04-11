@@ -58,7 +58,7 @@ Exposes `pub mod thermal` so standalone binaries (`adaptive-heating-mvp`) can ca
 
 ### `src/thermal.rs` — Thin facade (34 lines)
 
-Re-exports public entry points from 16 submodules. Solver re-exports: `bisect_mwt_for_room`, `solve_equilibrium_temps`, `ThermalError`, `ThermalResult`.
+Re-exports public entry points from 17 submodules. Solver re-exports: `bisect_mwt_for_room`, `solve_equilibrium_temps`, `ThermalError`, `ThermalResult`.
 
 ### `src/thermal/` — Thermal model submodules (~5,500 lines total)
 
