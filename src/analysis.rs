@@ -984,3 +984,165 @@ pub fn design_comparison(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::sync::Once;
+
+    static INIT_CONFIG: Once = Once::new();
+
+    fn ensure_config_loaded() {
+        INIT_CONFIG.call_once(|| {
+            crate::config::load(Path::new("config.toml")).expect("config.toml should load for tests");
+        });
+    }
+
+    // @lat: [[tests#CLI state classification#DHW classification holds through the transition band]]
+    #[test]
+    fn dhw_classification_holds_through_transition_band() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let transition = (thresholds.dhw_enter_flow_rate + thresholds.dhw_exit_flow_rate) / 2.0;
+
+        let states = classify_states(
+            &[Some(thresholds.elec_running_w + 100.0); 4],
+            &[Some(2000.0); 4],
+            &[
+                Some(thresholds.dhw_enter_flow_rate + 0.1),
+                Some(transition),
+                Some(thresholds.dhw_exit_flow_rate + 0.01),
+                Some(thresholds.dhw_exit_flow_rate - 0.01),
+            ],
+            &[1.0; 4],
+        );
+
+        assert_eq!(states, vec!["dhw", "dhw", "dhw", "heating"]);
+    }
+
+    // @lat: [[tests#CLI state classification#Defrost recovery preserves the pre-defrost circuit state]]
+    #[test]
+    fn defrost_recovery_preserves_pre_defrost_state() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let transition = (thresholds.dhw_enter_flow_rate + thresholds.dhw_exit_flow_rate) / 2.0;
+
+        let states = classify_states(
+            &[Some(thresholds.elec_running_w + 100.0); 3],
+            &[Some(2000.0), Some(-200.0), Some(2000.0)],
+            &[
+                Some(thresholds.dhw_enter_flow_rate + 0.2),
+                Some(transition),
+                Some(transition),
+            ],
+            &[1.0, thresholds.defrost_dt_threshold - 0.1, 1.0],
+        );
+
+        assert_eq!(states, vec!["dhw", "defrost", "dhw"]);
+    }
+
+    // @lat: [[tests#CLI state classification#Idle precedence wins over defrost-like noise]]
+    #[test]
+    fn idle_precedence_wins_over_defrost_like_noise() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+
+        let states = classify_states(
+            &[Some(thresholds.elec_running_w - 1.0), Some(thresholds.elec_running_w + 100.0)],
+            &[Some(-200.0), Some(2000.0)],
+            &[Some(thresholds.dhw_enter_flow_rate + 0.2), Some(thresholds.dhw_exit_flow_rate - 0.1)],
+            &[thresholds.defrost_dt_threshold - 0.1, 1.0],
+        );
+
+        assert_eq!(states, vec!["idle", "heating"]);
+    }
+
+    // @lat: [[tests#CLI state classification#Heating to DHW to heating cycle transitions cleanly]]
+    #[test]
+    fn heating_dhw_heating_cycle() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let e = Some(thresholds.elec_running_w + 100.0);
+
+        let states = classify_states(
+            &[e; 5],
+            &[Some(2000.0); 5],
+            &[
+                Some(thresholds.dhw_enter_flow_rate - 0.5), // heating
+                Some(thresholds.dhw_enter_flow_rate + 0.5), // enter DHW
+                Some(thresholds.dhw_enter_flow_rate + 1.0), // stay DHW
+                Some(thresholds.dhw_exit_flow_rate - 0.1),  // exit DHW → heating
+                Some(thresholds.dhw_exit_flow_rate - 0.5),  // stay heating
+            ],
+            &[1.0; 5],
+        );
+
+        assert_eq!(states, vec!["heating", "dhw", "dhw", "heating", "heating"]);
+    }
+
+    // @lat: [[tests#CLI state classification#Defrost entry from heating preserves heating as pre-defrost]]
+    #[test]
+    fn defrost_from_heating_recovers_to_heating() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let e = Some(thresholds.elec_running_w + 100.0);
+        let transition = (thresholds.dhw_enter_flow_rate + thresholds.dhw_exit_flow_rate) / 2.0;
+
+        let states = classify_states(
+            &[e; 3],
+            &[Some(2000.0), Some(-200.0), Some(2000.0)],
+            &[
+                Some(14.0), // heating
+                Some(14.0), // defrost (heat <= 0)
+                Some(transition), // recovery → pre_defrost=heating
+            ],
+            &[1.0, -1.0, 1.0],
+        );
+
+        assert_eq!(states, vec!["heating", "defrost", "heating"]);
+    }
+
+    // @lat: [[tests#CLI state classification#Defrost DT boundary is exclusive]]
+    #[test]
+    fn defrost_dt_boundary_is_exclusive() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let e = Some(thresholds.elec_running_w + 100.0);
+
+        // At exactly the threshold, should NOT enter defrost (< is strict)
+        let at_boundary = classify_states(
+            &[e],
+            &[Some(2000.0)],
+            &[Some(14.0)],
+            &[thresholds.defrost_dt_threshold],
+        );
+        assert_eq!(at_boundary, vec!["heating"], "exact threshold should be heating, not defrost");
+
+        // Just below threshold → defrost
+        let below = classify_states(
+            &[e],
+            &[Some(2000.0)],
+            &[Some(14.0)],
+            &[thresholds.defrost_dt_threshold - 0.001],
+        );
+        assert_eq!(below, vec!["defrost"]);
+    }
+
+    // @lat: [[tests#CLI state classification#Missing flow rate defaults to heating not DHW]]
+    #[test]
+    fn none_flow_rate_defaults_to_heating() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let e = Some(thresholds.elec_running_w + 100.0);
+
+        let states = classify_states(
+            &[e; 2],
+            &[Some(2000.0); 2],
+            &[None, None], // flow_rate missing → 0.0
+            &[1.0; 2],
+        );
+
+        assert_eq!(states, vec!["heating", "heating"]);
+    }
+}

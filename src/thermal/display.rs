@@ -1073,6 +1073,28 @@ mod tests {
         );
     }
 
+    // @lat: [[tests#Thermal physics primitives#Absolute humidity rises with temperature]]
+    #[test]
+    fn absolute_humidity_rises_with_temperature() {
+        let low = absolute_humidity(10.0, 50.0);
+        let high = absolute_humidity(20.0, 50.0);
+        assert!(high > low, "warmer air holds more moisture: {low} vs {high}");
+        // Known reference: ~20°C, 50% RH → ~8.6 g/m³
+        let ref_val = absolute_humidity(20.0, 50.0);
+        assert!(ref_val > 7.0 && ref_val < 10.0, "reference check: {ref_val}");
+    }
+
+    // @lat: [[tests#Thermal physics primitives#Surface RH reaches 100 pct at dew point]]
+    #[test]
+    fn surface_rh_saturates_at_cold_surface() {
+        // Very cold surface relative to room → should saturate at 100%
+        let rh = surface_rh(20.0, 60.0, 5.0);
+        assert_eq!(rh, 100.0, "cold surface should saturate");
+        // Surface at air temperature → should equal air RH
+        let rh = surface_rh(20.0, 60.0, 20.0);
+        assert!((rh - 60.0).abs() < 0.1, "same-temp surface = air RH: {rh}");
+    }
+
     proptest! {
         // @lat: [[tests#Thermal solver#Leather equilibrium is monotonic in MWT]]
         #[test]
@@ -1090,6 +1112,33 @@ mod tests {
             prop_assert!(
                 high_temp + 1e-6 >= low_temp,
                 "equilibrium regressed: outside={outside}, low={low}, high={high}, low_temp={low_temp}, high_temp={high_temp}"
+            );
+        }
+
+        // @lat: [[tests#Thermal physics primitives#Absolute humidity is monotonic in temperature]]
+        #[test]
+        fn absolute_humidity_monotonic_in_temp(
+            t_low in -10.0f64..35.0,
+            delta in 0.1f64..10.0,
+            rh in 10.0f64..100.0,
+        ) {
+            let t_high = t_low + delta;
+            prop_assert!(
+                absolute_humidity(t_high, rh) >= absolute_humidity(t_low, rh),
+                "humidity should rise with temperature"
+            );
+        }
+
+        // @lat: [[tests#Thermal physics primitives#Surface RH equals air RH at same temperature]]
+        #[test]
+        fn surface_rh_identity_at_same_temp(
+            temp in 5.0f64..30.0,
+            rh in 10.0f64..90.0,
+        ) {
+            let result = surface_rh(temp, rh, temp);
+            prop_assert!(
+                (result - rh).abs() < 0.1,
+                "surface at air temp should give air RH: result={result}, rh={rh}"
             );
         }
     }

@@ -736,9 +736,8 @@ fn compute_recommended_capacity(capacity: &[&InflectionResult]) -> CapacityRecom
             let best_cold_vol = vols.iter().fold(0.0f64, |a, &b| a.max(b));
             let best_cold_t2 = cold.iter().map(|r| r.mains_temp).fold(0.0f64, f64::max);
             let wwhr_estimate = best_cold_vol + slope * (25.0 - best_cold_t2);
-            let min_vol = vols.iter().fold(f64::INFINITY, |a, &b| a.min(b));
             return CapacityRecommendation {
-                recommended_full_litres: Some(wwhr_estimate.max(min_vol).round()),
+                recommended_full_litres: Some(wwhr_estimate.max(best_cold_vol).round()),
                 method: format!(
                     "regression (slope={:.1} L/°C, {} cold measurements)",
                     slope,
@@ -1169,4 +1168,184 @@ pub fn dhw_sessions(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Offset, TimeZone, Utc};
+
+    fn sample_time(offset_seconds: i64) -> DateTime<FixedOffset> {
+        Utc.fix()
+            .with_ymd_and_hms(2026, 4, 1, 6, 0, 0)
+            .unwrap()
+            + Duration::seconds(offset_seconds)
+    }
+
+    fn sample_draw() -> DrawEvent {
+        DrawEvent {
+            start: sample_time(0),
+            end: sample_time(600),
+            volume_register_start: 120.0,
+            volume_register_end: 180.0,
+            volume_drawn: 60.0,
+            preceding_charge: Some(ChargeEvent {
+                start: sample_time(-3600),
+                end: sample_time(-3000),
+                t1_pre: 30.0,
+                hwc_end: 48.0,
+                t1_end: 44.0,
+                crossover: true,
+                volume_at_end: 100.0,
+            }),
+            cumulative_since_charge: 60.0,
+            gap_hours: 1.0,
+            during_charge: false,
+        }
+    }
+
+    fn sample_result(mains_temp: f64, definitive_cumulative: f64) -> InflectionResult {
+        InflectionResult {
+            draw: sample_draw(),
+            hint_cumulative: Some(definitive_cumulative - 5.0),
+            definitive_cumulative: Some(definitive_cumulative),
+            definitive_draw_vol: Some(40.0),
+            definitive_rate: Some(-0.02),
+            t1_start: 44.0,
+            t1_at_definitive: Some(40.0),
+            mains_temp,
+            peak_flow_rate: 500.0,
+            hwc_pre: 48.0,
+            hwc_min: 41.0,
+            hwc_drop: 7.0,
+        }
+    }
+
+    // @lat: [[tests#DHW session analysis#Settled mains temperature uses the flushed tail of the draw]]
+    #[test]
+    fn settled_mains_temperature_uses_flushed_tail() {
+        let t2_raw: TsVal = vec![30.0, 29.0, 28.0, 27.0, 20.0, 18.0, 16.0, 14.0]
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| (sample_time(i as i64 * 2), value))
+            .collect();
+        let flow_raw: TsVal = (0..8)
+            .map(|i| (sample_time(i as i64 * 2), DRAW_FLOW_MIN + 50.0))
+            .collect();
+
+        assert_eq!(settled_mains_temp(&t2_raw, &flow_raw), 16.0);
+    }
+
+    // @lat: [[tests#DHW session analysis#WWHR capacity recommendation prefers direct measurements]]
+    #[test]
+    fn wwhr_capacity_recommendation_prefers_direct_measurements() {
+        let wwhr_a = sample_result(WWHR_T2_THRESHOLD + 1.0, 132.4);
+        let wwhr_b = sample_result(WWHR_T2_THRESHOLD + 3.0, 145.2);
+        let cold = sample_result(WWHR_T2_THRESHOLD - 5.0, 160.0);
+
+        let recommendation = compute_recommended_capacity(&[&wwhr_a, &wwhr_b, &cold]);
+
+        assert_eq!(recommendation.recommended_full_litres, Some(145.0));
+        assert!(recommendation.method.starts_with("direct_wwhr"));
+    }
+
+    // @lat: [[tests#DHW session analysis#Single cold capacity measurement stays conservative]]
+    #[test]
+    fn single_cold_capacity_measurement_stays_conservative() {
+        let cold = sample_result(WWHR_T2_THRESHOLD - 6.0, 100.0);
+
+        let recommendation = compute_recommended_capacity(&[&cold]);
+
+        assert_eq!(recommendation.recommended_full_litres, Some(97.0));
+        assert!(recommendation.method.starts_with("conservative_ratio"));
+    }
+
+    // @lat: [[tests#DHW session analysis#Cold mains regression never undercuts measured capacity]]
+    #[test]
+    fn cold_mains_regression_never_undercuts_measured_capacity() {
+        let colder = sample_result(8.0, 130.0);
+        let warmer = sample_result(14.0, 110.0);
+
+        let recommendation = compute_recommended_capacity(&[&colder, &warmer]);
+
+        assert_eq!(recommendation.recommended_full_litres, Some(130.0));
+        assert!(recommendation.method.starts_with("regression"));
+    }
+
+    // @lat: [[tests#DHW session analysis#Draw type classifies bath shower and tap by flow rate]]
+    #[test]
+    fn draw_type_classifies_by_flow_rate() {
+        let mut r = sample_result(10.0, 100.0);
+
+        // Bath: peak_flow_rate >= 650
+        r.peak_flow_rate = BATH_FLOW_MIN;
+        assert_eq!(r.draw_type(), DrawType::Bath);
+        r.peak_flow_rate = BATH_FLOW_MIN + 100.0;
+        assert_eq!(r.draw_type(), DrawType::Bath);
+
+        // Shower: >= 350 and volume >= 20
+        r.peak_flow_rate = SHOWER_FLOW_MIN;
+        assert_eq!(r.draw_type(), DrawType::Shower);
+
+        // Tap: below shower threshold
+        r.peak_flow_rate = SHOWER_FLOW_MIN - 1.0;
+        assert_eq!(r.draw_type(), DrawType::Tap);
+
+        // Shower requires volume >= 20 — small volume → tap
+        r.peak_flow_rate = SHOWER_FLOW_MIN + 10.0;
+        r.draw.volume_drawn = 19.9;
+        assert_eq!(r.draw_type(), DrawType::Tap);
+    }
+
+    // @lat: [[tests#DHW session analysis#Inflection category depends on charge state and T1]]
+    #[test]
+    fn inflection_category_depends_on_charge_and_t1() {
+        let r = sample_result(10.0, 100.0);
+        // Default fixture has crossover=true, t1_end=44.0, definitive_cumulative=Some
+        assert_eq!(r.inflection_category(), InflectionCategory::Capacity);
+
+        // Partial: definitive exists but charge didn't crossover
+        let mut partial = sample_result(10.0, 100.0);
+        partial.draw.preceding_charge.as_mut().unwrap().crossover = false;
+        assert_eq!(partial.inflection_category(), InflectionCategory::Partial);
+
+        // Partial: T1 end below 43°C
+        let mut low_t1 = sample_result(10.0, 100.0);
+        low_t1.draw.preceding_charge.as_mut().unwrap().t1_end = 42.9;
+        assert_eq!(low_t1.inflection_category(), InflectionCategory::Partial);
+
+        // LowerBound: no definitive cumulative
+        let mut lb = sample_result(10.0, 100.0);
+        lb.definitive_cumulative = None;
+        assert_eq!(lb.inflection_category(), InflectionCategory::LowerBound);
+    }
+
+    // @lat: [[tests#DHW session analysis#Last known value finds nearest preceding sample]]
+    #[test]
+    fn lkv_finds_nearest_preceding() {
+        let sorted = vec![(100, 1.0), (200, 2.0), (300, 3.0)];
+
+        assert_eq!(lkv(&sorted, 50), None);       // before all
+        assert_eq!(lkv(&sorted, 100), Some(1.0));  // exact match
+        assert_eq!(lkv(&sorted, 150), Some(1.0));  // between
+        assert_eq!(lkv(&sorted, 300), Some(3.0));  // exact last
+        assert_eq!(lkv(&sorted, 400), Some(3.0));  // after all
+        assert_eq!(lkv(&[], 100), None);           // empty
+    }
+
+    // @lat: [[tests#DHW session analysis#To sorted deduplicates and orders by timestamp]]
+    #[test]
+    fn to_sorted_deduplicates_and_orders() {
+        let t1 = sample_time(100);
+        let t2 = sample_time(200);
+        let t3 = sample_time(50);
+
+        let data: TsVal = vec![(t1, 1.0), (t2, 2.0), (t3, 3.0), (t1, 1.5)];
+        let sorted = to_sorted(&data);
+
+        // Should be ordered by epoch and deduplicated
+        assert_eq!(sorted.len(), 3);
+        assert!(sorted[0].0 < sorted[1].0);
+        assert!(sorted[1].0 < sorted[2].0);
+    }
 }

@@ -2360,4 +2360,223 @@ mod tests {
         assert!(!sawtooth);
         assert_eq!(alternations, 0);
     }
+
+    // @lat: [[tests#History evidence helpers#Sawtooth detection ignores sub-threshold noise]]
+    #[test]
+    fn detect_sawtooth_ignores_sub_threshold_noise() {
+        let rows = vec![
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 0),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.80),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 15),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.84),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 30),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.80),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 45),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.84),
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 7, 0),
+                mode: "occupied".into(),
+                action: "heat".into(),
+                tariff: "standard".into(),
+                target_flow_c: None,
+                curve_after: Some(0.80),
+                flow_desired_c: None,
+            },
+        ];
+
+        let (sawtooth, alternations) = detect_sawtooth(&rows);
+        assert!(!sawtooth);
+        assert_eq!(alternations, 0);
+    }
+
+    // @lat: [[tests#History evidence helpers#Mode changes only emit on actual transitions]]
+    #[test]
+    fn controller_mode_changes_only_emit_real_transitions() {
+        let rows = vec![
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 0),
+                mode: "eco".into(),
+                action: "hold".into(),
+                tariff: "standard".into(),
+                target_flow_c: Some(30.0),
+                curve_after: None,
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 15),
+                mode: "eco".into(),
+                action: "hold".into(),
+                tariff: "standard".into(),
+                target_flow_c: Some(31.0),
+                curve_after: None,
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 30),
+                mode: "comfort".into(),
+                action: "heat".into(),
+                tariff: "cosy".into(),
+                target_flow_c: Some(35.0),
+                curve_after: None,
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 6, 45),
+                mode: "comfort".into(),
+                action: "heat".into(),
+                tariff: "cosy".into(),
+                target_flow_c: Some(36.0),
+                curve_after: None,
+                flow_desired_c: None,
+            },
+            ControllerRow {
+                ts: dt(2026, 4, 10, 7, 0),
+                mode: "setback".into(),
+                action: "coast".into(),
+                tariff: "peak".into(),
+                target_flow_c: Some(28.0),
+                curve_after: None,
+                flow_desired_c: None,
+            },
+        ];
+
+        let changes = controller_mode_changes(&rows);
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].from, None);
+        assert_eq!(changes[0].to, "eco");
+        assert_eq!(changes[1].from.as_deref(), Some("eco"));
+        assert_eq!(changes[1].to, "comfort");
+        assert_eq!(changes[2].from.as_deref(), Some("comfort"));
+        assert_eq!(changes[2].to, "setback");
+    }
+
+    // @lat: [[tests#History evidence helpers#Numeric summaries preserve extrema and recency]]
+    #[test]
+    fn summarize_numeric_preserves_extrema_and_latest_points() {
+        let series = vec![
+            (dt(2026, 4, 10, 6, 0), 18.5),
+            (dt(2026, 4, 10, 6, 15), 17.0),
+            (dt(2026, 4, 10, 6, 30), 19.25),
+        ];
+
+        let summary = summarize_numeric(&series).unwrap();
+
+        assert_eq!(summary.samples, 3);
+        assert_eq!(summary.start.as_ref().unwrap().ts, dt(2026, 4, 10, 6, 0).to_rfc3339());
+        assert_eq!(summary.end.as_ref().unwrap().ts, dt(2026, 4, 10, 6, 30).to_rfc3339());
+        assert_eq!(summary.latest.as_ref().unwrap().value, 19.25);
+        assert_eq!(summary.min.as_ref().unwrap().value, 17.0);
+        assert_eq!(summary.max.as_ref().unwrap().value, 19.25);
+        assert!(summarize_numeric(&[]).is_none());
+    }
+
+    // @lat: [[tests#History evidence helpers#Recent-end lookback ignores invalid periods]]
+    #[test]
+    fn period_contains_recent_end_requires_valid_period_inside_lookback() {
+        let until = dt(2026, 4, 10, 8, 0);
+        let fresh = Period {
+            start: dt(2026, 4, 10, 7, 45).to_rfc3339(),
+            end: dt(2026, 4, 10, 7, 55).to_rfc3339(),
+            duration_minutes: 10.0,
+        };
+        let stale = Period {
+            start: dt(2026, 4, 10, 7, 0).to_rfc3339(),
+            end: dt(2026, 4, 10, 7, 10).to_rfc3339(),
+            duration_minutes: 10.0,
+        };
+        let invalid = Period {
+            start: "invalid".into(),
+            end: "also-invalid".into(),
+            duration_minutes: 0.0,
+        };
+
+        assert!(period_contains_recent_end(&fresh, &until, 600));
+        assert!(!period_contains_recent_end(&stale, &until, 600));
+        assert!(!period_contains_recent_end(&invalid, &until, 600));
+    }
+
+    // @lat: [[tests#History evidence helpers#Missing-data warnings only flag absent evidence]]
+    #[test]
+    fn missing_data_warnings_only_emit_for_missing_inputs() {
+        let mut warnings = Vec::new();
+        let series = vec![(dt(2026, 4, 10, 7, 0), 21.0)];
+        let summary = summarize_numeric(&series);
+
+        add_missing_numeric_warning(&mut warnings, "flow", &series);
+        add_missing_summary_warning(&mut warnings, "return", &summary);
+        assert!(warnings.is_empty());
+
+        add_missing_numeric_warning(&mut warnings, "flow", &[]);
+        add_missing_summary_warning(&mut warnings, "return", &None);
+        assert_eq!(warnings, vec![
+            "flow unavailable in this window".to_string(),
+            "return unavailable in this window".to_string(),
+        ]);
+    }
+
+    // @lat: [[tests#History evidence helpers#Period from times computes correct duration]]
+    #[test]
+    fn period_from_times_computes_duration() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 30);
+        let p = period_from_times(start, end);
+        assert!((p.duration_minutes - 90.0).abs() < 0.01);
+        assert!(p.start.contains("07:00"));
+        assert!(p.end.contains("08:30"));
+    }
+
+    // @lat: [[tests#History evidence helpers#Period duration seconds round-trips with period from times]]
+    #[test]
+    fn period_duration_seconds_roundtrips() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 30);
+        let p = period_from_times(start, end);
+        assert_eq!(period_duration_seconds(&p), 5400); // 90 min = 5400s
+
+        // Invalid period
+        let bad = Period {
+            start: "not-a-date".to_string(),
+            end: "also-bad".to_string(),
+            duration_minutes: 0.0,
+        };
+        assert_eq!(period_duration_seconds(&bad), 0);
+    }
+
+    // @lat: [[tests#History evidence helpers#Summary has min below detects threshold crossings]]
+    #[test]
+    fn summary_has_min_below_threshold() {
+        let series = vec![(dt(2026, 4, 10, 7, 0), 38.0), (dt(2026, 4, 10, 7, 5), 42.0)];
+        let summary = summarize_numeric(&series);
+        assert!(summary_has_min_below(&summary, 40.0));
+        assert!(!summary_has_min_below(&summary, 37.0));
+        assert!(!summary_has_min_below(&None, 40.0));
+    }
 }

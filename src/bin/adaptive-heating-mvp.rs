@@ -2357,6 +2357,7 @@ mod tests {
         default_config()
     }
 
+    // @lat: [[tests#Adaptive heating controller#Overnight target stays at the comfort floor until waking]]
     #[test]
     fn overnight_target_is_flat_comfort_floor() {
         let config = test_config();
@@ -2380,6 +2381,7 @@ mod tests {
         assert!((wake - config.model.target_leather_c).abs() < 0.01);
     }
 
+    // @lat: [[tests#Adaptive heating controller#Overnight coast requires mild weather and headroom above the floor]]
     #[test]
     fn coast_only_when_above_floor_and_not_cold() {
         let config = test_config();
@@ -2412,6 +2414,7 @@ mod tests {
         ));
     }
 
+    // @lat: [[tests#Adaptive heating controller#Warm-end curve fallback uses the baseline seed]]
     #[test]
     fn warm_end_curve_uses_baseline_seed_above_setpoint() {
         let config = test_config();
@@ -2431,6 +2434,7 @@ mod tests {
         assert!(!calc.reason.contains("warm-end fallback"));
     }
 
+    // @lat: [[tests#Adaptive heating controller#Outer loop defers downward resets until flow converges]]
     #[test]
     fn outer_loop_defers_downward_curve_reset_while_flow_still_lags() {
         assert!(should_defer_outer_curve_reset(
@@ -2723,6 +2727,7 @@ mod tests {
         }
     }
 
+    // @lat: [[tests#Adaptive heating controller#Overnight battery DHW waits without adequate headroom]]
     #[test]
     fn dhw_scheduler_waits_until_morning_when_battery_cannot_bridge() {
         let config = test_config();
@@ -2768,6 +2773,7 @@ mod tests {
         assert!(plan.reason.contains("launch now"));
     }
 
+    // @lat: [[tests#Adaptive heating controller#Overnight battery DHW launches when headroom is sufficient]]
     #[test]
     fn dhw_scheduler_launches_overnight_when_battery_can_bridge() {
         let config = test_config();
@@ -2788,6 +2794,109 @@ mod tests {
         assert_eq!(plan.battery_adequate_to_next_cosy, Some(true));
         assert_eq!(plan.slot_key, "2026-04-05:overnight_battery");
         assert!(plan.reason.contains("launch now"));
+    }
+
+    // ----- Phase 1 coverage: pure helpers with zero prior coverage -----
+
+    // @lat: [[tests#Adaptive heating controller#Heat curve inverse returns floor for tiny delta]]
+    #[test]
+    fn curve_for_flow_clamps_to_floor() {
+        // When target_flow < setpoint, raw curve is negative → clamp to floor
+        let c = curve_for_flow(15.0, 19.0, 5.0, 1.25);
+        assert_eq!(c, CURVE_FLOOR, "negative raw curve must clamp to floor");
+        // Verify without clamp it would be negative
+        let delta = (19.0_f64 - 5.0).max(0.01);
+        let raw = (15.0 - 19.0) / delta.powf(1.25);
+        assert!(raw < 0.0, "raw curve should be negative: {raw}");
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Heat curve inverse is positive for moderate conditions]]
+    #[test]
+    fn curve_for_flow_moderate_conditions() {
+        // 30°C flow, 19°C setpoint, 5°C outside, exponent 1.25
+        let c = curve_for_flow(30.0, 19.0, 5.0, 1.25);
+        assert!(c > 0.0 && c < 2.0, "curve {c} should be moderate for typical winter");
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Round2 preserves two decimal places]]
+    #[test]
+    fn round2_preserves_two_decimals() {
+        assert_eq!(round2(1.005), 1.0); // banker's rounding edge
+        assert_eq!(round2(1.456), 1.46);
+        assert_eq!(round2(0.0), 0.0);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Clamp curve stays within floor and ceiling]]
+    #[test]
+    fn clamp_curve_bounds() {
+        assert_eq!(clamp_curve(0.05), CURVE_FLOOR);
+        assert_eq!(clamp_curve(5.0), CURVE_CEILING);
+        assert_eq!(clamp_curve(0.55), 0.55);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Hours until time wraps across midnight]]
+    #[test]
+    fn hours_until_time_wraps_midnight() {
+        let t23 = NaiveTime::from_hms_opt(23, 0, 0).unwrap();
+        let t01 = NaiveTime::from_hms_opt(1, 0, 0).unwrap();
+        let t07 = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+
+        // Same-day: 23→01 should be 2 hours (wraps midnight)
+        let h = hours_until_time(t23, t01);
+        assert!((h - 2.0).abs() < 0.01, "23:00→01:00 should be 2h, got {h}");
+
+        // Same-day forward: 01→07 should be 6 hours
+        let h = hours_until_time(t01, t07);
+        assert!((h - 6.0).abs() < 0.01, "01:00→07:00 should be 6h, got {h}");
+
+        // Identity: same time → 0 hours (not 24)
+        let h = hours_until_time(t07, t07);
+        assert!(h.abs() < 0.01, "same time should be 0h, got {h}");
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Solar irradiance conversion is non-negative]]
+    #[test]
+    fn horizontal_to_sw_vertical_non_negative() {
+        assert_eq!(horizontal_to_sw_vertical(0.0), 0.0);
+        assert_eq!(horizontal_to_sw_vertical(-10.0), 0.0);
+        assert!((horizontal_to_sw_vertical(100.0) - 70.0).abs() < 0.01);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Waking hours detection respects boundaries]]
+    #[test]
+    fn is_waking_hours_boundaries() {
+        let model = test_config().model; // 07:00–23:00
+        let t0659 = NaiveTime::from_hms_opt(6, 59, 0).unwrap();
+        let t0700 = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+        let t2259 = NaiveTime::from_hms_opt(22, 59, 0).unwrap();
+        let t2300 = NaiveTime::from_hms_opt(23, 0, 0).unwrap();
+
+        assert!(!is_waking_hours(&model, t0659));
+        assert!(is_waking_hours(&model, t0700));
+        assert!(is_waking_hours(&model, t2259));
+        assert!(!is_waking_hours(&model, t2300)); // end is exclusive
+    }
+
+    // @lat: [[tests#Adaptive heating controller#DHW energy estimate depends on mode]]
+    #[test]
+    fn estimate_dhw_event_kwh_depends_on_mode() {
+        assert_eq!(estimate_dhw_event_kwh(Some("eco")), DHW_ECO_ELEC_KWH);
+        assert_eq!(estimate_dhw_event_kwh(Some("Eco")), DHW_ECO_ELEC_KWH);
+        assert_eq!(estimate_dhw_event_kwh(Some("normal")), DHW_NORMAL_ELEC_KWH);
+        assert_eq!(estimate_dhw_event_kwh(None), DHW_NORMAL_ELEC_KWH);
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#T1 prediction wraps across midnight]]
+    // Strengthened: also verify the decay rate direction.
+    #[test]
+    fn predict_t1_decay_direction_and_wrap() {
+        let now = NaiveTime::from_hms_opt(23, 0, 0).unwrap();
+        let target = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+        let t1 = predict_t1_at_time(50.0, now, target);
+        // 8 hours of decay
+        let expected = 50.0 - 8.0 * DHW_T1_DECAY_C_PER_H;
+        assert!((t1 - expected).abs() < 0.01, "decay should be {expected}, got {t1}");
+        assert!(t1 < 50.0, "T1 should decrease over time");
     }
 }
 
