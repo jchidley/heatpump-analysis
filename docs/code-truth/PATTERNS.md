@@ -1,4 +1,4 @@
-<!-- code-truth: 0b91843 -->
+<!-- code-truth: 9c24a09 -->
 
 # Patterns
 
@@ -8,7 +8,7 @@ All domain constants live in `config.toml` and are accessed via `config::config(
 
 **Cost to break**: Every analysis module depends on `config()`. Replacing with dependency injection would touch every function.
 
-**Exception**: `fill_gap_interpolate()` in gaps.rs uses hardcoded feed ID strings. `ERA5_BIAS_CORRECTION_C` in octopus.rs is a Rust constant. Octopus unit rates are no longer config constants; `src/octopus_tariff.rs` derives them from the account API at runtime.
+**Exception**: `fill_gap_interpolate()` in gaps.rs uses hardcoded feed ID strings. `ERA5_BIAS_CORRECTION_C` in octopus.rs is a Rust constant. Octopus unit rates are no longer config constants; `src/octopus_tariff.rs` re-exports the shared `octopus-tariff` crate (`~/github/octopus-tariff`) which derives them from the account API at runtime.
 
 ## Configuration: Separate TOML (thermal module)
 

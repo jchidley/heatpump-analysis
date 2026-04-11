@@ -11,23 +11,11 @@ Use these `lat.md` sections for the current operational truth behind this plan:
 - [`lat.md/heating-control.md#Active DHW Scheduling`](../lat.md/heating-control.md#active-dhw-scheduling) — how the live controller currently makes DHW timing decisions
 - [`lat.md/architecture.md#Live Control Path`](../lat.md/architecture.md#live-control-path) — how telemetry and control decisions flow through the system
 
-## Current status (7 Apr 2026, 15:40 BST)
+## Current status
 
-DHW scheduling is **operational** within the adaptive heating controller.
+For live operational status and open items, see [`lat.md/plan.md`](../lat.md/plan.md). For current DHW scheduling behaviour, see [`lat.md/domain.md#DHW Cylinder`](../lat.md/domain.md#dhw-cylinder) and [`lat.md/heating-control.md#Active DHW Scheduling`](../lat.md/heating-control.md#active-dhw-scheduling).
 
-**What's working:**
-- Evening Cosy charge (22:00 window): controller fires unconditionally during Cosy when cylinder needs charging
-- T1 prediction for morning decision: controller predicts cylinder-top temperature at 07:00 using calibrated standby decay (0.23°C/h, P75 of 47 measured segments)
-- `HwcSFMode=load` active trigger: fires when predicted T1 is below comfort floor and slot conditions met
-- `HwcTimer_<Weekday>` fallback rails: maintained by controller as safety net for missed software launches. Timer dedup now retries on eBUS write failure (fixed 6 Apr)
-- DHW session analysis: `dhw-sessions` CLI writes `dhw_inflection` + `dhw_capacity` to InfluxDB
-- `hmu HwcMode` (eco/normal) read for scheduling input
-- `energy-hub` headroom signal confirmed working — publishing every 10s, used for overnight non-Cosy launch gating
-
-**Open items:**
-- **Energy-hub headroom unreliable during Cosy windows**: shows negative values despite active grid charging. No impact on control (controller ignores headroom during Cosy) but misleading for observability.
-- **Seasonal eco→normal switch still manual** (Nov–Mar). `hmu HwcMode` is read-only from eBUS — must be changed physically on the aroTHERM controller. No software fix possible.
-- **No draw prediction in T1 model**: standby decay is well-calibrated, but the model assumes no overnight draws. On nights with late showers (47% of nights), T1 prediction can be 5°C+ optimistic. This remains the main actionable DHW software item. Next step: volume-aware demand budgeting per Cosy-aligned slot.
+**Summary as of 11 Apr 2026:** DHW scheduling is operational within the adaptive heating controller. Evening Cosy charge, T1 prediction for morning decisions, and `HwcSFMode=load` triggering all work. The main open software item remains draw prediction (volume-aware demand budgeting). See `lat.md/plan.md` for the full open items list.
 
 ## What this page is for
 

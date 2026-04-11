@@ -3,10 +3,10 @@
 > Scope: implementation overview derived from source. For current operating truth, start in `../../lat.md/`; use `../heating-plan.md`, `../dhw-plan.md`, `../../deploy/SECRETS.md`, and `../../AGENTS.md` as complements.
 
 ```yaml
-commit: 0b91843
+commit: 9c24a09
 branch: main
-commit_date: 2026-04-05
-working_tree: clean
+commit_date: 2026-04-11
+working_tree: dirty
 ```
 
 ## What This System Does
@@ -41,34 +41,28 @@ Beyond this repo:
 | chrono | Date/time handling | `Cargo.toml` |
 | tracing + tracing-subscriber | Structured logging for adaptive heating MVP | `Cargo.toml` |
 
-## What Changed Since Last Code-Truth (1c2a44a, 2026-04-04)
+## Notable Implementation Details
 
-1 source commit covering:
+### Coast mechanism
 
-### Genuine coast mechanism (2026-04-04)
+Coast turns heating **off** via `Z1OpMode=off` — not a low curve. Curve 0.10 at SP=19 with `Hc1MinFlowTempDesired=20` still produced 20°C+ flow temp (the hidden MinFlow floor prevented genuine coasting).
 
-Coast changed from writing a low curve (0.10) to turning heating **off** via `Z1OpMode=off`. Discovery: curve 0.10 at SP=19 with `Hc1MinFlowTempDesired=20` still produced 20°C+ flow temp — the hidden MinFlow floor prevented genuine coasting.
-
-- `RuntimeState.heating_off` field added to track when `Z1OpMode=off`
+- `RuntimeState.heating_off` tracks when `Z1OpMode=off`
 - Two restore points write `Z1OpMode=night` to re-enable heating: (1) entering waking/preheat hours, (2) during overnight when maintain or preheat ≤15 min away
-- Startup now sets `Hc1MinFlowTempDesired=19` (matches SP=19, removes hidden floor)
-- `restore_baseline()` now restores `Hc1MinFlowTempDesired=20` alongside curve and OpMode
-
-### lat.md knowledge graph added (2026-04-05)
-
-6 structured documentation files in `lat.md/`: domain, constraints, architecture, heating-control, thermal-model, infrastructure. Cross-linked with `[[wiki refs]]` to source code. Validated by `lat check`.
+- Startup sets `Hc1MinFlowTempDesired=19` (matches SP=19, removes hidden floor)
+- `restore_baseline()` restores `Hc1MinFlowTempDesired=20` alongside curve and OpMode
 
 ## Repository Size
 
 | Category | Count |
 |----------|-------|
 | Rust source files (`src/`) | 10 core + 17 thermal submodules (~14,050 lines) |
-| Standalone Rust binaries (`src/bin/`) | 3 (adaptive-heating-mvp, thermal-regression-check, cosy-scheduler [retired]) |
+| Standalone Rust binaries (`src/bin/`) | 2 (adaptive-heating-mvp, thermal-regression-check) |
 | Python utility scripts | 1 (scripts/dhw-auto-trigger.py [legacy, do not deploy]) |
 | Shell scripts (`scripts/`) | 3 |
 | Domain docs (`docs/`) | 16 |
 | Code-truth docs (`docs/code-truth/`) | 5 + README |
-| lat.md/ | 6 structured knowledge-graph files (agent-facing, validated by `lat check`) |
+| lat.md/ | 11 structured knowledge-graph files (agent-facing, validated by `lat check`) |
 | Config files | 4 (config.toml, thermal-config.toml, adaptive-heating-mvp.toml, regression-thresholds.toml) |
 | Deploy files | 1 (adaptive-heating-mvp.service) |
 | Canonical data | 1 (thermal_geometry.json) — control-table.json is legacy, no longer loaded |

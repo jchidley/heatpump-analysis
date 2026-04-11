@@ -512,7 +512,30 @@ pub(crate) fn full_room_energy_balance_components(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::thermal::geometry::RadiatorDef;
     use proptest::prelude::*;
+
+    fn test_room(name: &'static str) -> RoomDef {
+        RoomDef {
+            name,
+            floor: "Gnd",
+            floor_area: 12.0,
+            ceiling_height: 2.4,
+            construction: "brick",
+            radiators: vec![],
+            external_fabric: vec![ExternalElement {
+                description: "wall",
+                area: 8.0,
+                u_value: 0.5,
+                to_ground: false,
+            }],
+            solar: vec![],
+            sensor_topic: "test/topic",
+            ventilation_ach: 0.5,
+            heat_recovery: 0.0,
+            overnight_occupants: 1,
+        }
+    }
 
     // @lat: [[tests#Thermal physics primitives#Doorway exchange scales with opening state]]
     #[test]
@@ -540,6 +563,121 @@ mod tests {
         assert_eq!(closed_q, 0.0);
         assert!(partial_q.abs() > 0.0);
         assert!(open_q.abs() > partial_q.abs());
+    }
+
+    // @lat: [[tests#Thermal physics primitives#Top landing falls back to adjacent sensors]]
+    #[test]
+    fn virtual_top_landing_prefers_direct_then_adjacent_sensors() {
+        let mut temps = HashMap::new();
+        temps.insert("landing".to_string(), 19.0);
+        temps.insert("shower".to_string(), 21.0);
+
+        assert_eq!(virtual_room_temp("top_landing", &temps), Some(20.0));
+
+        temps.remove("shower");
+        assert_eq!(virtual_room_temp("top_landing", &temps), Some(19.0));
+
+        temps.insert("top_landing".to_string(), 23.5);
+        assert_eq!(virtual_room_temp("top_landing", &temps), Some(23.5));
+        assert_eq!(virtual_room_temp("missing", &temps), None);
+    }
+
+    // @lat: [[tests#Thermal physics primitives#Energy balance breakdown matches scalar helper]]
+    #[test]
+    fn energy_balance_components_match_scalar_helper_and_ignore_inactive_radiators() {
+        let mut room = test_room("bathroom");
+        room.radiators = vec![
+            RadiatorDef {
+                t50: 1500.0,
+                active: true,
+                pipe: "flow",
+            },
+            RadiatorDef {
+                t50: 900.0,
+                active: false,
+                pipe: "return",
+            },
+        ];
+        room.solar = vec![SolarGlazingDef {
+            area: 3.0,
+            orientation: "SE",
+            tilt: "vertical",
+            g_value: 0.5,
+            shading: 0.8,
+        }];
+
+        let connections = vec![InternalConnection {
+            room_a: "bathroom",
+            room_b: "bedroom",
+            ua: 12.0,
+            description: "party wall",
+        }];
+        let doorways = vec![Doorway {
+            room_a: "bathroom",
+            room_b: "top_landing",
+            width: 0.9,
+            height: 2.0,
+            state: "open",
+        }];
+        let all_temps = HashMap::from([
+            ("bedroom".to_string(), 18.0),
+            ("landing".to_string(), 17.0),
+            ("shower".to_string(), 19.0),
+        ]);
+
+        let room_temp = 20.0;
+        let outside_temp = 5.0;
+        let mwt = 45.0;
+        let sleeping = false;
+        let sw_vert = 300.0;
+        let ne_vert = 100.0;
+        let ne_horiz = 80.0;
+        let doorway_cd = 0.2;
+        let wind_multiplier = 1.1;
+
+        let scalar = full_room_energy_balance(
+            &room,
+            room_temp,
+            outside_temp,
+            &all_temps,
+            &connections,
+            &doorways,
+            doorway_cd,
+            wind_multiplier,
+            mwt,
+            sleeping,
+            sw_vert,
+            ne_vert,
+            ne_horiz,
+        );
+        let components = full_room_energy_balance_components(
+            &room,
+            room_temp,
+            outside_temp,
+            &all_temps,
+            &connections,
+            &doorways,
+            doorway_cd,
+            wind_multiplier,
+            mwt,
+            sleeping,
+            sw_vert,
+            ne_vert,
+            ne_horiz,
+        );
+
+        let expected_radiator = radiator_output(1500.0, mwt, room_temp);
+        let expected_solar = solar_gain_full(&room.solar, sw_vert, ne_vert, ne_horiz);
+
+        assert!((components.radiator - expected_radiator).abs() < 1e-9);
+        assert!((components.solar - expected_solar).abs() < 1e-9);
+        assert_eq!(components.body, 100.0);
+        assert!(components.external < 0.0);
+        assert!(components.ventilation < 0.0);
+        assert!(components.dhw > 0.0);
+        assert!(components.walls < 0.0);
+        assert!(components.doorways < 0.0);
+        assert!((components.total - scalar).abs() < 1e-9);
     }
 
     proptest! {

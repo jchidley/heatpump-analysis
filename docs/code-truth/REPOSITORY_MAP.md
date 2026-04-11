@@ -1,4 +1,4 @@
-<!-- code-truth: 0b91843 -->
+<!-- code-truth: 9c24a09 -->
 
 # Repository Map
 
@@ -16,11 +16,11 @@
 
 ## Source Modules
 
-### `src/main.rs` — CLI entry point (~704 lines)
+### `src/main.rs` — CLI entry point (~1,417 lines)
 
 Defines 28+ CLI subcommands via clap derive. Loads `config.toml` at startup. Routes to analysis functions, DB operations, thermal commands.
 
-### `src/config.rs` — Configuration (213 lines)
+### `src/config.rs` — Configuration (227 lines)
 
 Deserialises `config.toml` into typed structs. Global singleton via `once_cell::OnceCell`. All modules access via `config::config()`.
 
@@ -28,31 +28,31 @@ Deserialises `config.toml` into typed structs. Global singleton via `once_cell::
 
 Minimal HTTP client for emoncms.org REST API. Used only by `sync` command. Blocking reqwest with 100ms politeness delay.
 
-### `src/db.rs` — SQLite storage (507 lines)
+### `src/db.rs` — SQLite storage (508 lines)
 
 Three tables: `feeds`, `samples` (WITHOUT ROWID), `sync_state`. WAL mode. `load_dataframe()` and `load_dataframe_with_simulated()` are the two DataFrame loading paths.
 
-### `src/analysis.rs` — State machine + Polars queries (986 lines)
+### `src/analysis.rs` — State machine + Polars queries (1,060 lines)
 
 Core HP analysis. `classify_states()` implements the hysteresis state machine. All analysis functions take enriched DataFrames and print to stdout.
 
-### `src/gaps.rs` — Gap detection + synthetic data (648 lines)
+### `src/gaps.rs` — Gap detection + synthetic data (655 lines)
 
 `TempBinModel` builds temperature-bin power profiles. Bypasses `db.rs` — manages own schema.
 
-### `src/octopus.rs` — Octopus Energy consumption + weather integration (814 lines)
+### `src/octopus.rs` — Octopus Energy consumption + weather integration (818 lines)
 
 Reads from `~/github/octopus/data/`. Gas-vs-HP comparison, baseload analysis, consumption/weather summaries.
 
-### `src/octopus_tariff.rs` — Octopus tariff account API bridge
+### `src/octopus_tariff.rs` — Re-export of shared `octopus-tariff` crate (11 lines)
 
-Loads import tariff agreements and half-hourly unit rates from the Octopus account API at runtime. Used to remove hardcoded tariff-price snapshots from analysis.
+Thin re-export of the shared `octopus-tariff` crate (`~/github/octopus-tariff`). The 627-line local implementation was replaced with an 11-line module that re-exports the crate's public API.
 
-### `src/overnight.rs` — Overnight strategy optimizer (1,479 lines)
+### `src/overnight.rs` — Overnight strategy optimizer (1,578 lines)
 
 Backtest model for overnight heating strategies, priced with account-derived historical tariff rates via `src/octopus_tariff.rs`.
 
-### `src/lib.rs` — Library crate entry (2 lines)
+### `src/lib.rs` — Library crate entry (3 lines)
 
 Exposes `pub mod thermal` so standalone binaries (`adaptive-heating-mvp`) can call solver functions via `heatpump_analysis::thermal::bisect_mwt_for_room()`.
 
@@ -108,10 +108,6 @@ On startup: `Z1OpMode=night` (SP=19) + `Hc1MinFlowTempDesired=19` when persisted
 
 Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 
-### `src/bin/cosy-scheduler.rs` (162 lines)
-
-**Retired.** Source kept for reference. Binary removed from pi5data.
-
 ## Configuration
 
 | File | Used by | Concern |
@@ -152,7 +148,11 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | `lat.md/architecture.md` | Data flow, binary structure, library crate |
 | `lat.md/heating-control.md` | V2 controller: two-loop, overnight, modes, pilot history |
 | `lat.md/thermal-model.md` | Calibration, validation, solver, parameters |
+| `lat.md/history-evidence.md` | Review-window defaults, joined evidence workflows, promotion boundaries |
 | `lat.md/infrastructure.md` | Devices, MQTT, eBUS, VRC 700 settings |
+| `lat.md/plan.md` | Live operational plan and newest status snapshot |
+| `lat.md/reviews.md` | Archived dated review snapshots that no longer belong in `plan.md` |
+| `lat.md/tests.md` | Executable specs for safety- and migration-sensitive behaviour |
 
 Validated by `lat check`. Cross-linked with `[[wiki refs]]` to source code.
 

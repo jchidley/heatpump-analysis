@@ -11,32 +11,11 @@ Use these `lat.md` sections for the current operational truth behind this plan:
 - [`lat.md/architecture.md#Live Control Path`](../lat.md/architecture.md#live-control-path) — live control path and data flow
 - [`lat.md/constraints.md#Constraints`](../lat.md/constraints.md#constraints) — operational boundaries and gotchas
 
-## Current status (7 Apr 2026, 15:40 BST)
+## Current status
 
-V2 model-predictive controller is **live on pi5data** (`adaptive-heating-mvp` systemd service).
+For live operational status, open items, and review history, see [`lat.md/plan.md`](../lat.md/plan.md). For current controller behaviour, see [`lat.md/heating-control.md`](../lat.md/heating-control.md).
 
-**What's working:**
-- Coast-then-hold overnight logic: flat comfort-floor target (20.0°C), coast with `Z1OpMode=off` while Leather above floor, thermal solver for equilibrium hold. Replaced the linear ramp which back-loaded temperature rise and missed by 0.3°C. Deployed 7 Apr.
-- Daytime model-predictive control: Open-Meteo forecast → thermal solver → target flow → curve.
-- Inner loop (60s): proportional feedback on `Hc1ActualFlowTempDesired`, standby guard for `fd < 1.0`
-- Powerwall telemetry readable (SoC, power flows) for observability
-- DHW scheduling: T1 prediction, `HwcSFMode=load` trigger, timer fallback rails
-- `energy-hub` headroom signal confirmed working since 5 Apr.
-- Model runs every tick including during DHW — no more blind ticks (deployed 7 Apr).
-- Build workflow: dev on laptop (`cargo check`), release build natively on pi5data (`cargo build --release`), sync via `scripts/sync-to-pi5data.sh`. Cross-compile from WSL2 fails (glibc mismatch).
-
-**Recently fixed and deployed (7 Apr 2026):**
-- **Overnight ramp → coast-then-hold** — flat 20.0°C target replaces linear ramp. Saves ~34% electrical overnight. Motivated by 6–7 Apr night where ramp caused 0.3°C miss.
-- **Forecast nulls during DHW** — model calculation now runs every tick regardless of HP mode; action logged as `dhw_active` with full model fields. Was blind for up to 12 ticks per night.
-- **DHW timer dedup bug** — `sync_morning_dhw_timer` now checks for `ERR:` in eBUS response and clears dedup state on failure; startup also clears dedup state.
-- **τ revised 50→36h** — operational overnight cooling segments (8 independent observations). T1 decay revised 0.25→0.23 °C/h (P75 of 47 segments).
-
-**Open items:**
-- **Energy-hub headroom unreliable during Cosy windows**: doesn't account for active grid charging. No impact on control but misleading for observability.
-- **Overnight evidence improved but still incomplete**: no longer just 3 nights; now 5+ trajectory nights logged. Still need a cold (<5°C) night and ideally a warmer >12°C heating day for broader coverage.
-- **Wind compensation and PV-aware curve**: modelled but not tuned. Low urgency.
-- **DHW charge decision is T1-only, no draw prediction**: volume-aware demand budgeting per Cosy slot remains the main DHW software improvement.
-- **Elvina overnight comfort**: trickle vents are the problem (ACH ≈1.0). Close vents + HEPA purifier is the proposed fix. No controller changes.
+**Summary as of 11 Apr 2026:** V2 model-predictive controller is live on pi5data. Coast-then-hold overnight logic, daytime forecast-driven MPC, inner-loop proportional feedback, and DHW scheduling are all operational. See `lat.md/plan.md` for the current open items list.
 
 ## What this page is for
 

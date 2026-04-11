@@ -310,7 +310,7 @@ echo "read -f -c 700 Z1ActualRoomTempDesired" | nc -w3 pi5data 8888
 
 ## Ongoing rules
 
-1. **Do not use cosy-scheduler.** Binary removed from pi5data 30 Mar 2026. Source in `src/bin/cosy-scheduler.rs` kept for reference only. Do not redeploy.
+1. **Do not use cosy-scheduler.** The binary was removed from pi5data on 30 Mar 2026 and the repo no longer keeps the old source in-tree. Treat it as historical only and do not redeploy it.
 
 2. **Monitor HwcSFMode** after any manual boost — if it gets stuck on `load`, reset with `write -c 700 HwcSFMode auto`.
 

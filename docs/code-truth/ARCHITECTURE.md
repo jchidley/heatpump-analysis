@@ -1,4 +1,4 @@
-<!-- code-truth: 0b91843 -->
+<!-- code-truth: 9c24a09 -->
 
 # Architecture
 
@@ -16,7 +16,7 @@ main.rs (CLI)
   │     └── config.rs
   ├── octopus.rs     (reads config for thresholds, gas_era)
   │     └── config.rs
-  ├── octopus_tariff.rs (Octopus account API: agreements + unit rates)
+  ├── octopus_tariff.rs (re-exports shared octopus-tariff crate)
   ├── overnight.rs   (reads config.tariff; uses analysis::enrich + octopus_tariff)
   │     └── analysis.rs, config.rs, octopus_tariff.rs
   └── thermal.rs     (thin facade — re-exports from 16 submodules)

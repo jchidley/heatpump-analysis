@@ -433,3 +433,144 @@ pub(crate) fn compute_metrics_from_values(values: &[f64]) -> Metrics {
         within_1_0c: within_10,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn residual(room: &str, measured: f64, predicted: f64, mass: f64) -> RoomResidual {
+        RoomResidual {
+            room: room.to_string(),
+            measured,
+            predicted,
+            residual: predicted - measured,
+            abs_residual: (predicted - measured).abs(),
+            thermal_mass_kj_per_k: mass,
+        }
+    }
+
+    // @lat: [[tests#Thermal validation helpers#Residual aggregation skips excluded and missing predictions]]
+    #[test]
+    fn residuals_skip_exclusions_and_rooms_without_predictions() {
+        let measured = HashMap::from([
+            ("kept".to_string(), 1.0),
+            ("excluded".to_string(), 2.0),
+            ("missing_pred".to_string(), 3.0),
+        ]);
+        let predicted = HashMap::from([
+            ("kept".to_string(), 1.5),
+            ("excluded".to_string(), 1.0),
+        ]);
+        let masses = HashMap::from([
+            ("kept".to_string(), 10.0),
+            ("excluded".to_string(), 20.0),
+        ]);
+        let exclude = HashSet::from(["excluded".to_string()]);
+
+        let residuals = residuals_for_rooms(&measured, &predicted, Some(&exclude), &masses);
+
+        assert_eq!(residuals.len(), 1);
+        assert_eq!(residuals[0].room, "kept");
+        assert!((residuals[0].residual - 0.5).abs() < 1e-9);
+        assert!((residuals[0].thermal_mass_kj_per_k - 10.0).abs() < 1e-9);
+    }
+
+    // @lat: [[tests#Thermal validation helpers#Whole-house metrics weight errors by thermal mass]]
+    #[test]
+    fn whole_house_metrics_convert_rates_to_weighted_watts_and_sort_contributors() {
+        let residuals = vec![
+            residual("heavy", 1.0, 2.0, 36.0),
+            residual("light", 1.0, 1.5, 7.2),
+            residual("negative", 2.0, 1.5, 14.4),
+        ];
+
+        let metrics = whole_house_metrics(&residuals, 2);
+
+        assert!((metrics.measured_w - 20.0).abs() < 1e-9);
+        assert!((metrics.predicted_w - 29.0).abs() < 1e-9);
+        assert!((metrics.error_w - 9.0).abs() < 1e-9);
+        assert!((metrics.pred_over_meas - 1.45).abs() < 1e-9);
+        assert_eq!(metrics.top_contributors.len(), 2);
+        assert_eq!(metrics.top_contributors[0].room, "heavy");
+        assert_eq!(metrics.top_contributors[1].room, "negative");
+    }
+
+    // @lat: [[tests#Thermal validation helpers#Metrics summaries handle empty inputs and tolerance buckets]]
+    #[test]
+    fn metrics_summary_handles_empty_inputs_and_bucket_thresholds() {
+        let empty = compute_metrics_from_values(&[]);
+        assert_eq!(empty.rooms_count, 0);
+        assert_eq!(empty.rmse, 999.0);
+        assert_eq!(empty.mae, 999.0);
+        assert_eq!(empty.max_abs_error, 999.0);
+        assert_eq!(empty.within_0_5c, 0.0);
+        assert_eq!(empty.within_1_0c, 0.0);
+
+        let metrics = compute_metrics_from_values(&[-1.0, -0.5, 0.25, 1.0]);
+        assert_eq!(metrics.rooms_count, 4);
+        assert!((metrics.rmse - 0.7603453162872774).abs() < 1e-9);
+        assert!((metrics.mae - 0.6875).abs() < 1e-9);
+        assert!((metrics.bias + 0.0625).abs() < 1e-9);
+        assert!((metrics.max_abs_error - 1.0).abs() < 1e-9);
+        assert!((metrics.within_0_5c - 0.5).abs() < 1e-9);
+        assert!((metrics.within_1_0c - 1.0).abs() < 1e-9);
+    }
+
+    // @lat: [[tests#Thermal validation helpers#Whole-house ratio stays undefined when measured load cancels out]]
+    #[test]
+    fn whole_house_ratio_stays_undefined_when_measured_load_cancels_out() {
+        let residuals = vec![
+            residual("gain", 1.0, 1.5, 36.0),
+            residual("loss", -1.0, -0.5, 36.0),
+        ];
+
+        let metrics = whole_house_metrics(&residuals, 5);
+
+        assert!(metrics.measured_w.abs() < 1e-9);
+        assert!((metrics.predicted_w - 10.0).abs() < 1e-9);
+        assert!((metrics.error_w - 10.0).abs() < 1e-9);
+        assert!(metrics.pred_over_meas.is_nan());
+        assert_eq!(metrics.top_contributors.len(), 2);
+    }
+
+    // @lat: [[tests#Thermal validation helpers#Residuals without thermal mass stay rate-only]]
+    #[test]
+    fn residuals_without_thermal_mass_stay_rate_only() {
+        let measured = HashMap::from([("kept".to_string(), 1.0)]);
+        let predicted = HashMap::from([("kept".to_string(), 1.5)]);
+        let masses = HashMap::new();
+
+        let residuals = residuals_for_rooms(&measured, &predicted, None, &masses);
+        assert_eq!(residuals.len(), 1);
+        assert_eq!(residuals[0].room, "kept");
+        assert_eq!(residuals[0].thermal_mass_kj_per_k, 0.0);
+
+        let whole_house = whole_house_metrics(&residuals, 5);
+        assert_eq!(whole_house.measured_w, 0.0);
+        assert_eq!(whole_house.predicted_w, 0.0);
+        assert_eq!(whole_house.error_w, 0.0);
+        assert!(whole_house.pred_over_meas.is_nan());
+    }
+
+    proptest! {
+        // @lat: [[tests#Thermal validation helpers#Metrics magnitudes are symmetric under sign inversion]]
+        #[test]
+        fn metrics_magnitudes_are_symmetric_under_sign_inversion(
+            values in proptest::collection::vec(-20.0f64..20.0, 1..32)
+        ) {
+            let inverted: Vec<f64> = values.iter().map(|v| -*v).collect();
+
+            let original = compute_metrics_from_values(&values);
+            let mirrored = compute_metrics_from_values(&inverted);
+
+            prop_assert_eq!(original.rooms_count, mirrored.rooms_count);
+            prop_assert!((original.rmse - mirrored.rmse).abs() < 1e-9);
+            prop_assert!((original.mae - mirrored.mae).abs() < 1e-9);
+            prop_assert!((original.max_abs_error - mirrored.max_abs_error).abs() < 1e-9);
+            prop_assert!((original.within_0_5c - mirrored.within_0_5c).abs() < 1e-9);
+            prop_assert!((original.within_1_0c - mirrored.within_1_0c).abs() < 1e-9);
+            prop_assert!((original.bias + mirrored.bias).abs() < 1e-9);
+        }
+    }
+}

@@ -624,3 +624,135 @@ pub(crate) fn avg_room_temps_in_window(
     }
     avg_temps
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Offset, TimeZone, Utc};
+
+    fn dt(y: i32, m: u32, d: u32, hh: u32, mm: u32) -> DateTime<FixedOffset> {
+        Utc.fix().with_ymd_and_hms(y, m, d, hh, mm, 0).unwrap()
+    }
+
+    // @lat: [[tests#Thermal calibration helpers#Calibration ranges include the rounded upper bound]]
+    #[test]
+    fn frange_includes_rounded_upper_bound() {
+        assert_eq!(frange(0.1, 0.3, 0.1), vec![0.1, 0.2, 0.3]);
+        assert_eq!(frange(0.0, 0.3, 0.15), vec![0.0, 0.15, 0.3]);
+    }
+
+    // @lat: [[tests#Thermal calibration helpers#Measured rates skip inadequate room samples and require outside data]]
+    #[test]
+    fn measured_rates_skips_short_or_sparse_rooms_and_requires_outside_series() {
+        let start = dt(2026, 4, 10, 0, 0);
+        let end = dt(2026, 4, 10, 2, 0);
+        let room_series: TempSeries = HashMap::from([
+            (
+                "kept".to_string(),
+                vec![
+                    (dt(2026, 4, 10, 0, 0), 20.0),
+                    (dt(2026, 4, 10, 1, 0), 19.0),
+                    (dt(2026, 4, 10, 2, 0), 18.0),
+                ],
+            ),
+            (
+                "too_short".to_string(),
+                vec![
+                    (dt(2026, 4, 10, 0, 0), 21.0),
+                    (dt(2026, 4, 10, 0, 20), 20.5),
+                ],
+            ),
+            (
+                "sparse".to_string(),
+                vec![(dt(2026, 4, 10, 1, 0), 19.5)],
+            ),
+        ]);
+        let outside = vec![
+            (dt(2026, 4, 10, 0, 0), 5.0),
+            (dt(2026, 4, 10, 1, 0), 7.0),
+            (dt(2026, 4, 10, 2, 0), 6.0),
+        ];
+
+        let (rates, avg_temps, outside_avg) =
+            measured_rates(&room_series, &outside, start, end).unwrap();
+
+        assert_eq!(rates.len(), 1);
+        assert!((rates["kept"] - 1.0).abs() < 1e-9);
+        assert!((avg_temps["kept"] - 19.0).abs() < 1e-9);
+        assert!((outside_avg - 6.0).abs() < 1e-9);
+        assert!(!rates.contains_key("too_short"));
+        assert!(!rates.contains_key("sparse"));
+
+        let err = measured_rates(&room_series, &[], start, end).unwrap_err();
+        assert!(matches!(err, ThermalError::NoOutsideData));
+    }
+
+    // @lat: [[tests#Thermal calibration helpers#Calibration parameter setter updates named rooms and fails on missing geometry]]
+    #[test]
+    fn set_calibration_params_updates_target_rooms_and_requires_expected_geometry() {
+        let mut rooms = build_rooms().unwrap();
+
+        set_calibration_params(&mut rooms, 0.41, 0.52, 0.63, 0.74).unwrap();
+
+        assert!((rooms["leather"].ventilation_ach - 0.41).abs() < 1e-9);
+        assert!((rooms["landing"].ventilation_ach - 0.52).abs() < 1e-9);
+        assert!((rooms["conservatory"].ventilation_ach - 0.63).abs() < 1e-9);
+        assert!((rooms["office"].ventilation_ach - 0.74).abs() < 1e-9);
+
+        rooms.remove("office");
+        let err = set_calibration_params(&mut rooms, 0.1, 0.2, 0.3, 0.4).unwrap_err();
+        assert!(matches!(err, ThermalError::MissingRoom("office")));
+    }
+
+    // @lat: [[tests#Thermal calibration helpers#Window averaging helpers use defaults for missing data]]
+    #[test]
+    fn averaging_helpers_only_use_in_window_samples() {
+        let start = dt(2026, 4, 10, 7, 0);
+        let end = dt(2026, 4, 10, 8, 0);
+        let series = vec![
+            (dt(2026, 4, 10, 6, 30), 10.0),
+            (dt(2026, 4, 10, 7, 15), 12.0),
+            (dt(2026, 4, 10, 7, 45), 18.0),
+            (dt(2026, 4, 10, 8, 30), 20.0),
+        ];
+        let room_series: TempSeries = HashMap::from([
+            ("occupied".to_string(), series.clone()),
+            (
+                "empty".to_string(),
+                vec![(dt(2026, 4, 10, 6, 0), 9.0), (dt(2026, 4, 10, 8, 30), 11.0)],
+            ),
+        ]);
+
+        assert!((avg_series_in_window(&series, start, end, 99.0) - 15.0).abs() < 1e-9);
+        assert!((avg_series_in_window(&series, dt(2026, 4, 10, 9, 0), dt(2026, 4, 10, 10, 0), 99.0) - 99.0).abs() < 1e-9);
+
+        let room_avgs = avg_room_temps_in_window(&room_series, start, end);
+        assert_eq!(room_avgs.len(), 1);
+        assert!((room_avgs["occupied"] - 15.0).abs() < 1e-9);
+        assert!(!room_avgs.contains_key("empty"));
+    }
+
+    // @lat: [[tests#Thermal calibration helpers#Room series map known sensor topics and sort samples]]
+    #[test]
+    fn build_room_series_maps_known_topics_and_sorts_samples() {
+        let rooms = build_rooms().unwrap();
+        let leather_topic = rooms["leather"].sensor_topic.to_string();
+        let office_topic = rooms["office"].sensor_topic.to_string();
+        let leather_name = rooms["leather"].name.to_string();
+        let office_name = rooms["office"].name.to_string();
+        let rows = vec![
+            (dt(2026, 4, 10, 7, 30), leather_topic.clone(), 20.0),
+            (dt(2026, 4, 10, 7, 0), leather_topic, 19.0),
+            (dt(2026, 4, 10, 7, 15), office_topic, 18.5),
+            (dt(2026, 4, 10, 7, 45), "unknown/topic".to_string(), 99.0),
+        ];
+
+        let series = build_room_series(&rows, &rooms).unwrap();
+
+        assert_eq!(series[&leather_name].len(), 2);
+        assert_eq!(series[&leather_name][0].0, dt(2026, 4, 10, 7, 0));
+        assert_eq!(series[&leather_name][1].0, dt(2026, 4, 10, 7, 30));
+        assert_eq!(series[&office_name].len(), 1);
+        assert!(!series.values().flatten().any(|(_, v)| (*v - 99.0).abs() < 1e-9));
+    }
+}

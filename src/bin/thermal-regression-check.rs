@@ -644,6 +644,33 @@ mod tests {
         "[global]\nenforce_command_match = true\nenforce_config_sha256_match = true\n"
     }
 
+    fn fit_diagnostics_json(config_sha: &str, records_count: usize, true_cooling_n: usize) -> String {
+        let records = (0..records_count)
+            .map(|i| format!("{{\"idx\":{i}}}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            r#"{{
+  "command": "thermal-fit-diagnostics",
+  "config_sha256": "{config_sha}",
+  "summary_true_cooling": {{
+    "rmse": 0.4,
+    "mae": 0.3,
+    "med_ratio": null,
+    "n": {true_cooling_n}
+  }},
+  "records": [{records}],
+  "calibrated_params": {{
+    "leather_ach": 0.3,
+    "landing_ach": 1.3,
+    "conservatory_ach": 0.2,
+    "office_ach": 0.4,
+    "doorway_cd": 0.2
+  }}
+}}"#
+        )
+    }
+
     // @lat: [[tests#Thermal regression gates#Global regression gate requires matching command and config]]
     #[test]
     fn run_rejects_command_or_config_mismatches_before_metric_comparison() {
@@ -680,5 +707,53 @@ mod tests {
         })
         .expect_err("config hash mismatch should fail");
         assert!(err.contains("regression gate FAILED"));
+    }
+
+    // @lat: [[tests#Thermal regression gates#Fit diagnostics med_ratio gate skips null values]]
+    #[test]
+    fn fit_diagnostics_allows_null_med_ratio_when_other_gates_pass() {
+        let thresholds =
+            write_temp_file("fit-regression-thresholds", "toml", default_thresholds_toml());
+        let baseline = write_temp_file(
+            "fit-regression-baseline",
+            "json",
+            &fit_diagnostics_json("abc", 3, 2),
+        );
+        let candidate = write_temp_file(
+            "fit-regression-candidate",
+            "json",
+            &fit_diagnostics_json("abc", 3, 2),
+        );
+
+        run(Cli {
+            baseline,
+            candidate,
+            thresholds,
+        })
+        .expect("null med_ratio values should skip that gate when other checks pass");
+    }
+
+    // @lat: [[tests#Thermal regression gates#Drop gates skip zero-sized baselines]]
+    #[test]
+    fn fit_diagnostics_drop_gates_skip_zero_sized_baselines() {
+        let thresholds =
+            write_temp_file("fit-zero-thresholds", "toml", default_thresholds_toml());
+        let baseline = write_temp_file(
+            "fit-zero-baseline",
+            "json",
+            &fit_diagnostics_json("abc", 0, 0),
+        );
+        let candidate = write_temp_file(
+            "fit-zero-candidate",
+            "json",
+            &fit_diagnostics_json("abc", 5, 4),
+        );
+
+        run(Cli {
+            baseline,
+            candidate,
+            thresholds,
+        })
+        .expect("zero-sized baselines should skip drop-fraction gates");
     }
 }

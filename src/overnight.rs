@@ -618,12 +618,19 @@ fn generate_schedules(_dhw_stats: &DhwStats, cosy_start: u32, cosy_end: u32) -> 
         },
     ];
 
-    // Strategy A: Never off (continuous heating), DHW at 05:00
+    // Strategy A: Never off (continuous heating), with a preferred 05:00 DHW
+    // start clamped into the supplied Cosy window.
+    let preferred_dhw_start = offset_for_hour(5);
     for mode in &dhw_modes {
+        if cosy_end.saturating_sub(cosy_start) < mode.duration {
+            continue;
+        }
+        let latest_start = cosy_end - mode.duration;
+        let dhw_start = preferred_dhw_start.clamp(cosy_start, latest_start);
         schedules.push(Schedule {
-            label: format!("continuous, DHW {} 05:00", mode.name),
+            label: format!("continuous, DHW {} {}", mode.name, fmt_offset(dhw_start)),
             off_at: None,
-            dhw_start: Some(540),
+            dhw_start: Some(dhw_start),
             dhw_duration: mode.duration,
             dhw_elec_kwh: mode.elec_kwh,
             heat_on: 0,
@@ -1498,4 +1505,74 @@ pub fn overnight_analysis(df: &DataFrame) -> Result<()> {
     println!("  DHW first, heat after:   {} nights", dhw_first_count);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bin(low: f64, high: f64, heat: f64, elec: f64, cop: f64) -> HeatingBin {
+        HeatingBin {
+            t_out_low: low,
+            t_out_high: high,
+            avg_heat_w: heat,
+            avg_elec_w: elec,
+            avg_cop: cop,
+            avg_mwt: 35.0,
+            n_samples: 10,
+        }
+    }
+
+    // @lat: [[tests#Overnight optimizer helpers#Heating lookup clamps to edge bins outside the calibrated range]]
+    #[test]
+    fn heating_lookup_clamps_to_edge_bins() {
+        let bins = vec![bin(0.0, 5.0, 3200.0, 700.0, 4.6), bin(5.0, 10.0, 2800.0, 650.0, 4.3)];
+
+        assert_eq!(lookup_heating(&bins, -2.0), (3200.0, 700.0, 4.6));
+        assert_eq!(lookup_heating(&bins, 6.0), (2800.0, 650.0, 4.3));
+        assert_eq!(lookup_heating(&bins, 12.0), (2800.0, 650.0, 4.3));
+    }
+
+    // @lat: [[tests#Overnight optimizer helpers#Generated overnight schedules keep DHW inside the Cosy window]]
+    #[test]
+    fn generated_schedules_keep_dhw_inside_cosy_window() {
+        let dhw = DhwStats {
+            avg_duration_min: 60.0,
+            avg_elec_kwh: 2.2,
+            n_cycles: 5,
+        };
+        let cosy_start = offset_for_hour(4);
+        let cosy_end = offset_for_hour(7);
+
+        let schedules = generate_schedules(&dhw, cosy_start, cosy_end);
+
+        assert!(!schedules.is_empty());
+        assert!(schedules.iter().any(|s| s.label.contains("DHW norm")));
+        assert!(schedules.iter().any(|s| s.label.contains("DHW eco")));
+        assert!(schedules.iter().filter_map(|s| s.dhw_start.map(|start| (start, s.dhw_duration))).all(|(start, duration)| {
+            start >= cosy_start && start + duration <= cosy_end
+        }));
+    }
+
+    // @lat: [[tests#Overnight optimizer helpers#Generated schedules omit DHW modes that cannot fit the Cosy window]]
+    #[test]
+    fn generated_schedules_omit_dhw_modes_that_cannot_fit_the_cosy_window() {
+        let dhw = DhwStats {
+            avg_duration_min: 60.0,
+            avg_elec_kwh: 2.2,
+            n_cycles: 5,
+        };
+        let cosy_start = offset_for_hour(4);
+        let cosy_end = offset_for_hour(5);
+
+        let schedules = generate_schedules(&dhw, cosy_start, cosy_end);
+
+        assert!(!schedules.is_empty());
+        assert!(schedules.iter().all(|s| s.dhw_duration <= 60));
+        assert!(schedules.iter().all(|s| !s.label.contains("DHW eco")));
+        assert!(schedules
+            .iter()
+            .filter_map(|s| s.dhw_start.map(|start| (start, s.dhw_duration)))
+            .all(|(start, duration)| start >= cosy_start && start + duration <= cosy_end));
+    }
 }

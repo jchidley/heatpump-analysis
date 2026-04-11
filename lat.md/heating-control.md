@@ -138,24 +138,20 @@ The headroom signal went live on 5 Apr 2026 (deployed to emonpi ~22:20 BST, veri
 
 ## Pilot History
 
-Key findings from V1 and V2 deployment that shaped the current design.
+Durable design lessons from V1 and V2 deployment. Dated operational detail lives in [[reviews]]; the full event log can be recovered from git history of this section.
 
-- **V1 bang-bang rejected** (31 Mar 2026): ±0.10 curve every 15 min ping-ponged 0.55→0.10→1.00. Leather τ=36h means 15-min adjustments are noise.
-- **EMA learning rejected**: `room_offset` EMA ran away to +2.18°C overnight (learned cooling trend as "model error", suppressed preheat by ~8°C). Static calibration only.
-- **Curve 0.10 ≠ off** (4 Apr 2026): first coast night was confounded — HP still cycling at curve 0.10 due to MinFlowTemp=20 floor. Led to Z1OpMode=off for genuine coast.
-- **τ correction** (4 Apr 2026): `LEATHER_TAU_H` changed from 15→50, later revised to 36 (operational overnight τ from 8 cooling segments). Missing `break` in planner meant coast=0 always won.
+- **V1 bang-bang rejected**: ±0.10 curve every 15 min ping-ponged 0.55→0.10→1.00. Leather τ=36h means 15-min adjustments are noise.
+- **EMA learning rejected**: `room_offset` EMA ran away overnight (learned cooling as model error, suppressed preheat). Static calibration only.
+- **Curve 0.10 ≠ off**: HP still cycled at curve 0.10 due to MinFlowTemp=20 floor. Led to Z1OpMode=off for genuine coast.
+- **τ settled at 36h**: initial 15h was too fast, 50h too slow. Operational overnight τ from 8 cooling segments.
 - **Sawtooth flag false alarm**: `daytime_model` ↔ `hold` alternations during DHW charges, not real curve oscillation.
-- **Inner loop standby runaway** (5 Apr 2026): `Hc1ActualFlowTempDesired=0.0` during HP standby caused `error≈29°C`, ramping curve to 3.3+ before the next outer tick. Fixed with `fd < 1.0` guard. Also discovered: reqwest needs `rustls-tls` for aarch64 cross-compilation.
-- **First trajectory overnight success** (5 Apr 2026): Leather 21.9→20.4°C coast (5h compressor off), preheat from 05:00 Cosy, Leather 20.5°C at 07:00 — model predicted correctly. Outside 9–12°C.
-- **Headroom signal deployed** (5 Apr 2026): `derive_discretionary_headroom()` committed but not deployed to emonpi — controller saw `null` for 22 ticks (16:51–22:14 BST) until manual deploy + restart of energy-hub-tesla.service. First non-null value −9.3 kWh at 22:30 BST. Signal confirmed continuous (every 10s) from 22:25 BST onward — no further gaps. Lesson: verify MQTT topic is actually arriving after any energy-hub change.
-- **Headroom unreliable during Cosy** (5 Apr 2026): headroom showed −9.3 kWh inside the 22:00 Cosy window because derivation projects drain from current SoC without accounting for active grid charging. Doesn't affect control (controller ignores headroom during Cosy slots) but the signal is misleading for observability. Energy-hub fix needed: either return null or project forward through remaining Cosy charging.
-- **Forecast nulls during DHW** (5 Apr 2026): when HP is in DHW mode (`Warm_Water_Compressor_active`), `forecast_outside_c` and all `model_required_*` fields were null, action was "no rule fired". Observed for 4 consecutive outer ticks (21:14–22:02 BST). Fixed 6 Apr — see below.
-- **Second trajectory overnight — slight undershoot** (6 Apr 2026): Leather 21.3→20.2°C coast (23:05→03:12 BST, 4h compressor off), preheat from 03:12, outside 7–9°C. Leather only 20.1°C at 07:00 vs 20.5°C target. Coast and model performed well, but DHW charge at 04:16–04:35 BST interrupted preheat with forecast nulls for ~1h, likely causing the 0.4°C miss.
-- **DHW timer dedup bug caused preheat contention** (6 Apr 2026): `sync_morning_dhw_timer` correctly decided to skip the 04:00 morning window (T1 41.5°C predicted) but the eBUS write failed. Dedup state was set anyway, suppressing retries. `restore_baseline` then re-enabled all windows without clearing dedup state. VRC 700 fired DHW at 04:00 (HwcStorageTemp 37.5°C < 45°C threshold), interrupting preheat. Fixed: dedup state now cleared on write failure and on startup.
-- **Forecast nulls during DHW fixed** (6 Apr 2026): root cause was `!is_dhw` guard skipping the entire model calculation block, not just eBUS writes. Fix: model (forecast + thermal solver) now runs every tick regardless of HP mode. During DHW, writes suppressed but `target_flow_c` populated and action logged as `dhw_active` with full model fields. Inner loop can resume immediately when DHW finishes.
-- **T1 standby decay recalibrated** (6 Apr 2026): 47 flow-filtered standby segments (≥2h each, 10-min resolution, 18 days) measured: mean 0.21, median 0.22, P75 0.23, P90 0.24 °C/h. Constant set to P75 (0.23°C/h). Previous value 0.25 was at P90, directionally correct. Initial naive analysis from hourly averages had wrongly suggested 0.12 — the hourly windows spanned charge events and were unreliable.
-- **Three fixes deployed** (7 Apr 2026, 10:34 BST): coast-then-hold (flat 20.0°C overnight target replacing linear ramp), forecast nulls during DHW fix (model runs every tick), DHW timer dedup fix (clear state on failure + startup). Also τ 50→36h, T1 decay 0.25→0.23. Built natively on pi5data after discovering cross-compile glibc mismatch (host 2.39 vs bookworm 2.36). Established `scripts/sync-to-pi5data.sh` workflow: dev on laptop, release build on pi5data.
-- **Outer loop fought inner-loop convergence** (9 Apr 2026): during active morning heating, the 15-minute outer loop kept resetting `Hc1HeatCurve` to the model seed (~1.1–1.3) even while `Hc1ActualFlowTempDesired` still lagged the target by >0.5°C, so the 60-second inner loop had to relearn the same correction and repeatedly climbed to ~2.0. Fixed in repo: defer downward outer-loop resets while the VRC still wants materially less flow than target. A unit replay of the captured 9 Apr samples now guards against regression.
+- **Inner loop standby guard**: `Hc1ActualFlowTempDesired=0.0` during HP standby causes runaway error. `fd < 1.0` guard skips inner loop.
+- **Model must run during DHW**: `!is_dhw` guard had skipped the entire model calculation, not just eBUS writes. Fix: model runs every tick; writes suppressed during DHW.
+- **DHW timer dedup must clear on failure**: eBUS write failures left dedup state set, suppressing retries. Dedup now cleared on write failure and on startup.
+- **Coast-then-hold beats ramp**: linear ramp back-loaded the hardest rise into final hours. Flat comfort-floor hold uses −34% electrical at 9.5°C outside.
+- **Outer loop must not fight inner loop**: outer resets during active convergence forced the inner loop to relearn. Fix: defer downward outer-loop resets while flow still lags target.
+- **Headroom unreliable during Cosy**: derivation projects drain without accounting for active grid charging. Controller ignores headroom during Cosy. Lesson: verify MQTT topics arrive after energy-hub changes.
+- **T1 standby decay**: 47 segments → P75 = 0.23°C/h. Naive hourly averages gave 0.12 (spanned charge events, unreliable).
 
 ## Writable eBUS Registers
 

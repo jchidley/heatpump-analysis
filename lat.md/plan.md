@@ -143,3 +143,33 @@ The next implementation step is still PIO RX + TX at 2400/8N1 on the Pico W, val
 Prerequisites remain: Pico W board, xyzroe eBus-TTL adapter, and Embassy + PIO setup.
 
 **11 Apr data review (08:39 BST)**: No change in this controller/data review window.
+
+## Open Questions
+
+Empirical or hardware unknowns that need real-world evidence before they can inform control decisions. Migrated from `docs/code-truth/DECISIONS.md` — these are live unknowns, not static architecture.
+
+### OQ1: Aldora Proxy Comfort Band
+
+Need to query historical data for Aldora temperature when Leather is in the 20–21°C band. Until derived, Aldora must not drive control.
+
+### OQ2: Minimum Acceptable T1 for Morning Showers
+
+45°C is definitely fine. 43°C might be. Needs household experiment. Determines whether a 22:00 charge to 45°C (→ ~42.9°C by morning after 0.23°C/h standby decay) is acceptable, or whether to charge to 47–48°C.
+
+### OQ3: Overnight Coast Empirical K
+
+Code uses K=7500, empirical K≈20,600 from 27 segments. Code is conservative (overpredicts reheat time → preheats too early). Each genuine coast night validates.
+
+### OQ4: HwcMode (eco/normal) Writable via eBUS?
+
+Currently read-only via `hmu HwcMode`. VWZ AI (0x76) has undecoded B512/B513 register traffic.
+
+A grab session while toggling eco↔normal on the aroTHERM would reveal which bytes change. There may be a writable register on the VWZ AI control panel.
+
+### OQ5: Eco/Normal Crossover Temperature
+
+At what outside temp does total system cost (DHW COP saving from eco vs heating recovery cost from longer steal) favour normal mode? Below ~8°C the 22:00 window avoids the trade-off. More academic than practical.
+
+### OQ6: CurrentCompressorUtil Meaning
+
+Signed encoding wraps negative (`-57`). Not meaningful as utilisation %. For compressor state, `RunDataStatuscode` transitions are more reliable.
