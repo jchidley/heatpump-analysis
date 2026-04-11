@@ -1348,4 +1348,48 @@ mod tests {
         assert!(sorted[0].0 < sorted[1].0);
         assert!(sorted[1].0 < sorted[2].0);
     }
+
+    // @lat: [[tests#DHW session analysis#parse_ts_val handles RFC3339 and naive timestamp formats]]
+    #[test]
+    fn parse_ts_val_handles_rfc3339_and_naive() {
+        let rows = vec![
+            // standard RFC3339
+            [("_time", "2026-04-10T07:00:00+00:00"), ("_value", "42.5")]
+                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+            // Z suffix (needs replace fallback)
+            [("_time", "2026-04-10T08:00:00Z"), ("_value", "43.0")]
+                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+            // alternative column names
+            [("time", "2026-04-10T09:00:00+00:00"), ("value", "44.0")]
+                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+            // bad value → skipped
+            [("_time", "2026-04-10T10:00:00+00:00"), ("_value", "nope")]
+                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+        ];
+        let result = parse_ts_val(&rows);
+        assert_eq!(result.len(), 3);
+        assert!((result[0].1 - 42.5).abs() < 0.01);
+        assert!((result[1].1 - 43.0).abs() < 0.01);
+        assert!((result[2].1 - 44.0).abs() < 0.01);
+    }
+
+    // @lat: [[tests#DHW session analysis#best_volume prefers definitive then hint then cumulative]]
+    #[test]
+    fn best_volume_prefers_definitive_then_hint_then_cumulative() {
+        let mut r = sample_result(14.0, 100.0);
+        assert!((r.best_volume() - 100.0).abs() < 0.01, "definitive first");
+
+        r.definitive_cumulative = None;
+        assert!((r.best_volume() - 95.0).abs() < 0.01, "hint second");
+
+        r.hint_cumulative = None;
+        assert!((r.best_volume() - 60.0).abs() < 0.01, "cumulative fallback");
+    }
+
+    // @lat: [[tests#DHW session analysis#epoch_to_dt converts Unix epoch to DateTime]]
+    #[test]
+    fn epoch_to_dt_converts_unix_epoch() {
+        let dt = epoch_to_dt(1712739600); // 2024-04-10 09:00:00 UTC
+        assert_eq!(dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "2024-04-10T09:00:00");
+    }
 }

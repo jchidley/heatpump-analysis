@@ -86,6 +86,42 @@ This spec verifies the waking-hours check includes the start time, excludes the 
 
 This spec verifies that eco mode returns the lower energy budget and normal mode returns the higher budget, with None defaulting to normal.
 
+### parse_f64 handles success error and non-numeric
+
+This spec verifies the eBUS sensor read helper parses valid floats, trims whitespace, and returns None for both error results and non-numeric strings.
+
+### parse_time accepts valid rejects invalid
+
+This spec verifies the time parser accepts valid HH:MM strings, rejects out-of-range hours (24:00), and returns None for empty or garbage input.
+
+### within_window classifies in-window out-of-window and bad input
+
+This spec verifies the tariff window check includes both boundaries (start and end inclusive), rejects times outside the window, and returns false when window strings are unparseable.
+
+### weekday_name covers all seven days
+
+This spec verifies the weekday-to-string mapping returns the correct English day name for all seven weekdays, preventing silent eBUS register misaddressing.
+
+### sorted_cosy_windows returns windows in time order
+
+This spec verifies that Cosy windows are sorted by start time regardless of config file ordering, so tariff classification iterates windows in the expected sequence.
+
+### morning_dhw_windows_enabled excludes waking-end window
+
+This spec verifies that the morning DHW filter drops the Cosy window whose end time matches waking_start and keeps all others, controlling which timer slots are written to the VRC 700.
+
+### influx_field formats Some and returns None for None
+
+This spec verifies the InfluxDB line-protocol field formatter produces a name=value string for Some values and None for missing values.
+
+### hours_until_time is always in 0 to 24 range
+
+This property test verifies across random time pairs that hours_until_time is always non-negative and strictly less than 24, and returns zero when now equals target.
+
+### predict_t1 always decays from initial value
+
+This property test verifies across random initial temperatures and time gaps that the predicted cylinder-top temperature never exceeds the starting value, matching the constant-rate decay model.
+
 ## Controller tariff and timer helpers
 
 These tests pin the tariff-window and DHW timer helper rules that keep fallback rails aligned with the live scheduling logic.
@@ -234,6 +270,18 @@ This spec verifies that binary-search last-known-value lookup returns the most r
 
 This spec verifies that time-series conversion sorts by epoch timestamp and deduplicates entries with the same timestamp, producing a deterministic ordered sequence.
 
+### parse_ts_val handles RFC3339 and naive timestamp formats
+
+This spec verifies that the timestamp-value parser accepts standard RFC3339, Z-suffixed, and naive ISO formats, uses alternative column names (_time/time, _value/value), and skips rows with unparseable values.
+
+### best_volume prefers definitive then hint then cumulative
+
+This spec verifies the volume priority chain: definitive_cumulative is preferred, then hint_cumulative, then cumulative_since_charge as fallback, ensuring the most reliable measurement is always used.
+
+### epoch_to_dt converts Unix epoch to DateTime
+
+This spec verifies that Unix epoch seconds are correctly converted to a UTC-offset DateTime for consistent timestamp formatting in DHW session output.
+
 ## Overnight optimizer helpers
 
 These tests pin pure helper rules used by the historical overnight optimiser, especially where tariff-window scheduling and temperature-bin lookup must remain stable.
@@ -249,6 +297,22 @@ This spec verifies that generated overnight strategies only place DHW starts who
 ### Generated schedules omit DHW modes that cannot fit the Cosy window
 
 This spec verifies that schedule generation drops DHW options whose full duration cannot fit inside the supplied Cosy tariff window, rather than emitting impossible starts.
+
+### offset_for_hour and fmt_offset round-trip correctly
+
+This spec verifies the hour-to-minute-offset conversion handles both post-20:00 and pre-20:00 branches correctly, and that fmt_offset reverses the mapping back to HH:MM strings.
+
+### Empty heating bins return hardcoded fallback
+
+This spec verifies that lookup_heating with an empty bin slice returns the hardcoded safe default (3500 W heat, 700 W elec, COP 5.0) rather than panicking or returning zero.
+
+### calibrate_dhw with no nights returns safe defaults
+
+This spec verifies that calibrate_dhw with no overnight data returns the conservative fallback (60 min duration, 0 cycles) rather than dividing by zero.
+
+### Narrow Cosy window omits all DHW options
+
+This spec verifies that when the Cosy window is too short for any DHW mode duration, all generated schedules have no DHW start rather than emitting impossible schedules.
 
 ## History evidence helpers
 
@@ -297,6 +361,26 @@ This spec verifies that `period_duration_seconds` correctly parses the RFC3339 t
 ### Summary has min below detects threshold crossings
 
 This spec verifies that the minimum-below-threshold helper correctly detects when a numeric summary's minimum point falls below a given threshold, and returns false for missing summaries.
+
+### summaries_from_batch_rows pivots metrics into NumericSummary
+
+This spec verifies that batched Flux CSV rows are correctly pivoted by series and metric into NumericSummary structs, including single-sample series retention.
+
+### summaries_from_batch_rows drops zero-sample series
+
+This spec verifies that series with no count metric row (implying zero samples) are dropped from the output, preventing empty summaries from polluting history output.
+
+### numeric_values_from_batch_rows parses keyed values
+
+This spec verifies that batched numeric selector rows are parsed into (series, metric) keyed values, skipping header sentinels and empty values.
+
+### string_values_from_batch_rows skips empty and sentinel values
+
+This spec verifies that string value extraction skips empty strings and the CSV header sentinel "_value", retaining only meaningful values.
+
+### controller_rows_target_series filters None targets
+
+This spec verifies that target-flow series extraction drops rows where target_flow_c is None, producing only rows with actual flow targets.
 
 ## Thermal calibration helpers
 

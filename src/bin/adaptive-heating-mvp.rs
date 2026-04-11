@@ -2725,6 +2725,38 @@ mod tests {
                 high_assessment.discretionary_headroom_kwh >= low_assessment.discretionary_headroom_kwh
             );
         }
+
+        // @lat: [[tests#Adaptive heating controller#hours_until_time is always in 0 to 24 range]]
+        #[test]
+        fn hours_until_time_range(
+            now_h in 0u32..24,
+            now_m in 0u32..60,
+            target_h in 0u32..24,
+            target_m in 0u32..60,
+        ) {
+            let now = NaiveTime::from_hms_opt(now_h, now_m, 0).unwrap();
+            let target = NaiveTime::from_hms_opt(target_h, target_m, 0).unwrap();
+            let h = hours_until_time(now, target);
+            prop_assert!(h >= 0.0, "hours_until_time must be non-negative: {h}");
+            prop_assert!(h < 24.0, "hours_until_time must be < 24: {h}");
+            if now == target {
+                prop_assert!(h.abs() < 1e-9, "same time should be 0: {h}");
+            }
+        }
+
+        // @lat: [[tests#Adaptive heating controller#predict_t1 always decays from initial value]]
+        #[test]
+        fn predict_t1_always_decays(
+            t1 in 30.0f64..55.0,
+            now_h in 0u32..24,
+            gap_h in 1u32..23,
+        ) {
+            let now = NaiveTime::from_hms_opt(now_h, 0, 0).unwrap();
+            let target_h = (now_h + gap_h) % 24;
+            let target = NaiveTime::from_hms_opt(target_h, 0, 0).unwrap();
+            let predicted = predict_t1_at_time(t1, now, target);
+            prop_assert!(predicted <= t1, "T1 should never increase: t1={t1}, predicted={predicted}");
+        }
     }
 
     // @lat: [[tests#Adaptive heating controller#Overnight battery DHW waits without adequate headroom]]
@@ -2897,6 +2929,114 @@ mod tests {
         let expected = 50.0 - 8.0 * DHW_T1_DECAY_C_PER_H;
         assert!((t1 - expected).abs() < 0.01, "decay should be {expected}, got {t1}");
         assert!(t1 < 50.0, "T1 should decrease over time");
+    }
+
+    // @lat: [[tests#Adaptive heating controller#parse_f64 handles success error and non-numeric]]
+    #[test]
+    fn parse_f64_handles_success_error_and_non_numeric() {
+        assert_eq!(parse_f64(Ok("3.14".to_string())), Some(3.14));
+        assert_eq!(parse_f64(Ok(" 42 ".to_string())), Some(42.0));
+        assert_eq!(parse_f64(Ok("not_a_number".to_string())), None);
+        assert_eq!(
+            parse_f64(Err(anyhow::anyhow!("read error"))),
+            None
+        );
+    }
+
+    // @lat: [[tests#Adaptive heating controller#parse_time accepts valid rejects invalid]]
+    #[test]
+    fn parse_time_accepts_valid_rejects_invalid() {
+        assert_eq!(
+            parse_time("07:00"),
+            Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap())
+        );
+        assert_eq!(
+            parse_time("23:59"),
+            Some(NaiveTime::from_hms_opt(23, 59, 0).unwrap())
+        );
+        assert_eq!(parse_time("24:00"), None);
+        assert_eq!(parse_time("garbage"), None);
+        assert_eq!(parse_time(""), None);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#within_window classifies in-window out-of-window and bad input]]
+    #[test]
+    fn within_window_classifies_correctly() {
+        let noon = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        let w = TimeWindow {
+            start: "10:00".to_string(),
+            end: "14:00".to_string(),
+        };
+        assert!(within_window(noon, &w));
+
+        let early = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+        assert!(!within_window(early, &w));
+
+        // Exact boundaries: start inclusive, end inclusive
+        let at_start = NaiveTime::from_hms_opt(10, 0, 0).unwrap();
+        let at_end = NaiveTime::from_hms_opt(14, 0, 0).unwrap();
+        assert!(within_window(at_start, &w));
+        assert!(within_window(at_end, &w));
+
+        // Bad window strings → false
+        let bad = TimeWindow {
+            start: "bad".to_string(),
+            end: "14:00".to_string(),
+        };
+        assert!(!within_window(noon, &bad));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#weekday_name covers all seven days]]
+    #[test]
+    fn weekday_name_covers_all_days() {
+        assert_eq!(weekday_name(Weekday::Mon), "Monday");
+        assert_eq!(weekday_name(Weekday::Tue), "Tuesday");
+        assert_eq!(weekday_name(Weekday::Wed), "Wednesday");
+        assert_eq!(weekday_name(Weekday::Thu), "Thursday");
+        assert_eq!(weekday_name(Weekday::Fri), "Friday");
+        assert_eq!(weekday_name(Weekday::Sat), "Saturday");
+        assert_eq!(weekday_name(Weekday::Sun), "Sunday");
+    }
+
+    // @lat: [[tests#Adaptive heating controller#sorted_cosy_windows returns windows in time order]]
+    #[test]
+    fn sorted_cosy_windows_returns_time_order() {
+        let mut config = test_config();
+        config.dhw.cosy_windows = vec![
+            TimeWindow { start: "13:00".to_string(), end: "16:00".to_string() },
+            TimeWindow { start: "04:00".to_string(), end: "07:00".to_string() },
+        ];
+        let sorted = sorted_cosy_windows(&config);
+        assert_eq!(sorted[0].start, "04:00");
+        assert_eq!(sorted[1].start, "13:00");
+    }
+
+    // @lat: [[tests#Adaptive heating controller#morning_dhw_windows_enabled excludes waking-end window]]
+    #[test]
+    fn morning_dhw_windows_excludes_waking_end() {
+        let mut config = test_config();
+        // waking_start defaults to 07:00 — window ending at 07:00 should be excluded
+        config.dhw.cosy_windows = vec![
+            TimeWindow { start: "04:00".to_string(), end: "07:00".to_string() },
+            TimeWindow { start: "13:00".to_string(), end: "16:00".to_string() },
+        ];
+        let enabled = morning_dhw_windows_enabled(&config);
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].start, "13:00");
+
+        // Window not ending at waking → kept
+        config.dhw.cosy_windows = vec![
+            TimeWindow { start: "04:00".to_string(), end: "08:00".to_string() },
+        ];
+        let enabled = morning_dhw_windows_enabled(&config);
+        assert_eq!(enabled.len(), 1);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#influx_field formats Some and returns None for None]]
+    #[test]
+    fn influx_field_formats_some_returns_none_for_none() {
+        assert_eq!(influx_field("temp", Some(21.5)), Some("temp=21.5".to_string()));
+        assert_eq!(influx_field("temp", None), None);
     }
 }
 

@@ -1575,4 +1575,59 @@ mod tests {
             .filter_map(|s| s.dhw_start.map(|start| (start, s.dhw_duration)))
             .all(|(start, duration)| start >= cosy_start && start + duration <= cosy_end));
     }
+
+    // @lat: [[tests#Overnight optimizer helpers#offset_for_hour and fmt_offset round-trip correctly]]
+    #[test]
+    fn offset_for_hour_and_fmt_offset_round_trip() {
+        // After NIGHT_START_HOUR (20:00)
+        assert_eq!(offset_for_hour(20), 0);
+        assert_eq!(offset_for_hour(22), 120);
+        // Before NIGHT_START_HOUR
+        assert_eq!(offset_for_hour(0), 240);
+        assert_eq!(offset_for_hour(4), 480);
+        assert_eq!(offset_for_hour(7), 660);
+
+        // Round-trip through fmt_offset
+        assert_eq!(fmt_offset(0), "20:00");
+        assert_eq!(fmt_offset(120), "22:00");
+        assert_eq!(fmt_offset(240), "00:00");
+        assert_eq!(fmt_offset(480), "04:00");
+        assert_eq!(fmt_offset(660), "07:00");
+        assert_eq!(fmt_offset(90), "21:30");
+    }
+
+    // @lat: [[tests#Overnight optimizer helpers#Empty heating bins return hardcoded fallback]]
+    #[test]
+    fn lookup_heating_empty_bins_returns_fallback() {
+        let (heat, elec, cop) = lookup_heating(&[], 5.0);
+        assert_eq!(heat, 3500.0);
+        assert_eq!(elec, 700.0);
+        assert_eq!(cop, 5.0);
+    }
+
+    // @lat: [[tests#Overnight optimizer helpers#calibrate_dhw with no nights returns safe defaults]]
+    #[test]
+    fn calibrate_dhw_empty_nights_returns_defaults() {
+        let stats = calibrate_dhw(&[]);
+        assert_eq!(stats.avg_duration_min, 60.0);
+        assert_eq!(stats.n_cycles, 0);
+    }
+
+    // @lat: [[tests#Overnight optimizer helpers#Narrow Cosy window omits all DHW options]]
+    #[test]
+    fn generate_schedules_narrow_window_omits_all_dhw() {
+        let dhw = DhwStats {
+            avg_duration_min: 60.0,
+            avg_elec_kwh: 2.2,
+            n_cycles: 5,
+        };
+        // 10-minute window — neither DHW mode (60 or 115 min) fits
+        let cosy_start = offset_for_hour(4);
+        let cosy_end = cosy_start + 10;
+
+        let schedules = generate_schedules(&dhw, cosy_start, cosy_end);
+        // All schedules should have no DHW start
+        assert!(schedules.iter().all(|s| s.dhw_start.is_none()),
+            "no DHW should fit in a 10-minute Cosy window");
+    }
 }

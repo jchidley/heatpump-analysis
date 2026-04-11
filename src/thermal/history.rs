@@ -2579,4 +2579,102 @@ mod tests {
         assert!(!summary_has_min_below(&summary, 37.0));
         assert!(!summary_has_min_below(&None, 40.0));
     }
+
+    fn row(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    // @lat: [[tests#History evidence helpers#summaries_from_batch_rows pivots metrics into NumericSummary]]
+    #[test]
+    fn summaries_from_batch_rows_pivots_metrics() {
+        let ts = "2026-04-10T07:00:00+00:00";
+        let rows = vec![
+            row(&[("series", "leather"), ("metric", "count"), ("_value", "42")]),
+            row(&[("series", "leather"), ("metric", "min"), ("_time", ts), ("_value", "18.5")]),
+            row(&[("series", "leather"), ("metric", "max"), ("_time", ts), ("_value", "21.0")]),
+            // Single-sample series must also be retained (count > 0, not > 1)
+            row(&[("series", "outside"), ("metric", "count"), ("_value", "1")]),
+            row(&[("series", "outside"), ("metric", "min"), ("_time", ts), ("_value", "5.0")]),
+        ];
+        let out = summaries_from_batch_rows(rows).unwrap();
+        let s = out.get("leather").unwrap().as_ref().unwrap();
+        assert_eq!(s.samples, 42);
+        assert!((s.min.as_ref().unwrap().value - 18.5).abs() < 0.01);
+        assert!((s.max.as_ref().unwrap().value - 21.0).abs() < 0.01);
+
+        // Single-sample series retained
+        let o = out.get("outside").unwrap().as_ref().unwrap();
+        assert_eq!(o.samples, 1);
+    }
+
+    // @lat: [[tests#History evidence helpers#summaries_from_batch_rows drops zero-sample series]]
+    #[test]
+    fn summaries_from_batch_rows_drops_zero_sample_series() {
+        // Series with no count row → samples stays 0 → dropped by retain
+        let ts = "2026-04-10T07:00:00+00:00";
+        let rows = vec![
+            row(&[("series", "empty"), ("metric", "min"), ("_time", ts), ("_value", "20.0")]),
+        ];
+        let out = summaries_from_batch_rows(rows).unwrap();
+        assert!(out.is_empty(), "zero-sample series should be dropped");
+    }
+
+    // @lat: [[tests#History evidence helpers#numeric_values_from_batch_rows parses keyed values]]
+    #[test]
+    fn numeric_values_from_batch_rows_parses_keyed_values() {
+        let rows = vec![
+            row(&[("series", "flow"), ("metric", "max"), ("_value", "42.5")]),
+            row(&[("series", "flow"), ("metric", "min"), ("_value", "38.0")]),
+            // skip header sentinel
+            row(&[("series", "flow"), ("metric", "avg"), ("_value", "_value")]),
+            // skip empty
+            row(&[("series", "flow"), ("metric", "count"), ("_value", "")]),
+        ];
+        let out = numeric_values_from_batch_rows(rows).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!((out[&("flow".to_string(), "max".to_string())] - 42.5).abs() < 0.01);
+        assert!((out[&("flow".to_string(), "min".to_string())] - 38.0).abs() < 0.01);
+    }
+
+    // @lat: [[tests#History evidence helpers#string_values_from_batch_rows skips empty and sentinel values]]
+    #[test]
+    fn string_values_from_batch_rows_skips_empties() {
+        let rows = vec![
+            row(&[("series", "mode"), ("metric", "last"), ("_value", "heating")]),
+            row(&[("series", "mode"), ("metric", "first"), ("_value", "")]),
+            row(&[("series", "mode"), ("metric", "header"), ("_value", "_value")]),
+        ];
+        let out = string_values_from_batch_rows(rows);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[&("mode".to_string(), "last".to_string())], "heating");
+    }
+
+    // @lat: [[tests#History evidence helpers#controller_rows_target_series filters None targets]]
+    #[test]
+    fn controller_rows_target_series_filters_none() {
+        let ts = dt(2026, 4, 10, 7, 0);
+        let rows = vec![
+            ControllerRow {
+                ts,
+                mode: "heating".into(),
+                action: "set".into(),
+                tariff: "cosy".into(),
+                target_flow_c: Some(35.0),
+                curve_after: Some(0.55),
+                flow_desired_c: Some(30.0),
+            },
+            ControllerRow {
+                ts,
+                mode: "heating".into(),
+                action: "skip".into(),
+                tariff: "cosy".into(),
+                target_flow_c: None,
+                curve_after: None,
+                flow_desired_c: None,
+            },
+        ];
+        let series = controller_rows_target_series(&rows);
+        assert_eq!(series.len(), 1);
+        assert!((series[0].1 - 35.0).abs() < 0.01);
+    }
 }
