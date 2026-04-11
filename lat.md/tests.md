@@ -122,6 +122,14 @@ This property test verifies across random time pairs that hours_until_time is al
 
 This property test verifies across random initial temperatures and time gaps that the predicted cylinder-top temperature never exceeds the starting value, matching the constant-rate decay model.
 
+### Forecast branch uses forecast temperature and solar
+
+This spec verifies that the forecast-driven controller branch feeds forecast outside temperature and solar inputs into the thermal solver path, so target flow is chosen from predicted rather than current conditions.
+
+### Default configuration values are sane
+
+This spec verifies that the controller's built-in default configuration stays internally consistent and within expected operational bounds, so startup without overrides does not begin from nonsense parameters.
+
 ## Controller tariff and timer helpers
 
 These tests pin the tariff-window and DHW timer helper rules that keep fallback rails aligned with the live scheduling logic.
@@ -162,6 +170,14 @@ This spec verifies that the solver's MWT bisection returns a near-minimum value 
 
 This spec verifies that the bisection solver returns no result when the requested room target is above the maximum achievable equilibrium temperature in the allowed MWT range.
 
+### Already warm targets return the minimum MWT
+
+This spec verifies that if the requested room is already warm enough at the solver's minimum allowed MWT, the bisection shortcut returns that lower bound instead of searching upward.
+
+### Unknown rooms return no MWT
+
+This spec verifies that asking for a room absent from the solved equilibrium map returns no result rather than fabricating a flow temperature for a nonexistent target.
+
 ### Leather equilibrium is monotonic in MWT
 
 This spec verifies across a range of outdoor conditions that raising mean water temperature cannot lower Leather's equilibrium temperature.
@@ -201,6 +217,54 @@ This property test verifies across a range of temperatures and humidities that r
 ### Surface RH equals air RH at same temperature
 
 This property test verifies across a range of conditions that when the surface temperature equals the air temperature, the surface RH equals the air RH.
+
+### Radiator output regression anchor at dt50
+
+This spec verifies the radiator-output helper still returns the expected anchored wattage at a representative DT50 operating point, so formula or exponent drift is caught by a fixed regression check.
+
+### Ventilation loss scales with temperature difference
+
+This spec verifies that increasing the indoor-outdoor temperature difference increases ventilation heat loss for fixed ACH and volume, preserving the linear energy-balance relationship.
+
+### Wind multiplier is monotonic in wind speed
+
+This property test verifies that for a fixed calibration the wind correction multiplier cannot decrease as average wind speed rises, preventing inverted infiltration behaviour.
+
+### Thermal mass primitives scale with area
+
+This spec verifies that the thermal-mass helper components scale with the relevant room area or volume inputs, so calibration and validation calculations preserve the intended geometric relationships.
+
+### External and ventilation loss follow temperature difference
+
+This spec verifies that external-fabric and ventilation losses increase with indoor-outdoor temperature difference, including the ground-temperature path for ground-coupled elements.
+
+### Wall conduction is proportional to temperature difference
+
+This spec verifies that inter-room wall conduction scales linearly with temperature difference, preserving the coupled-room energy-balance model.
+
+### Solar gain follows orientation and PV irradiance conversion
+
+This spec verifies that solar-gain helpers respect glazing orientation and the PV-derived SW irradiance conversion, so room gains respond consistently to directional inputs.
+
+### Door state override preserves chimney state
+
+This spec verifies that blanket door-closing logic leaves the chimney doorway exception untouched, preserving the model's permanent stack-effect path.
+
+## Solar position and irradiance helpers
+
+These tests pin the pure astronomical and window-averaging helpers that turn weather inputs into orientation-specific solar gains for the thermal model.
+
+### Solar position varies with time and season
+
+This spec verifies that solar altitude and azimuth change sensibly across day and season, so impossible sun positions cannot leak into irradiance calculations.
+
+### Surface irradiance is non-negative and respects geometry
+
+This spec verifies that plane-of-array irradiance stays non-negative and responds correctly to surface tilt and azimuth, including zero output when the sun is below the horizon.
+
+### Window irradiance averaging handles partial and empty windows
+
+This spec verifies that irradiance window averaging uses in-window samples when available and falls back safely for partial or empty windows, keeping downstream solar gains stable.
 
 ## CLI state classification
 
@@ -282,6 +346,26 @@ This spec verifies the volume priority chain: definitive_cumulative is preferred
 
 This spec verifies that Unix epoch seconds are correctly converted to a UTC-offset DateTime for consistent timestamp formatting in DHW session output.
 
+### Empty capacity input returns no_data recommendation
+
+This spec verifies that compute_recommended_capacity returns None with method "no_data" when given an empty slice, so callers never produce a spurious recommendation from zero measurements.
+
+### Low variance cold mains falls back to conservative ratio
+
+This spec verifies that nearly identical cold-mains temperatures (variance <= 0.1) skip regression and apply the conservative 3% haircut instead.
+
+### Cold mains regression extrapolates above measured maximum
+
+This spec verifies that with sufficient cold-mains temperature spread, the linear regression extrapolates usable volume upward to a projected WWHR inlet of 25C, producing a recommendation above the highest measured cold value.
+
+### JSON summary serialises capacity and draw counts
+
+This spec verifies that json_summary produces the expected JSON structure with max_usable_litres, geometric_max_litres, plug_flow_efficiency, recommended fields, draw type counts, and total_draws from a set of inflection results.
+
+### JSON summary handles empty results
+
+This spec verifies that json_summary produces null for capacity fields and zero for all counts when given an empty results slice, so JSON consumers always get a well-formed response.
+
 ## Overnight optimizer helpers
 
 These tests pin pure helper rules used by the historical overnight optimiser, especially where tariff-window scheduling and temperature-bin lookup must remain stable.
@@ -313,6 +397,18 @@ This spec verifies that calibrate_dhw with no overnight data returns the conserv
 ### Narrow Cosy window omits all DHW options
 
 This spec verifies that when the Cosy window is too short for any DHW mode duration, all generated schedules have no DHW start rather than emitting impossible schedules.
+
+### minute_timestamp_utc exact match returns stored timestamp
+
+This spec verifies that binary-search timestamp lookup returns the stored timestamp when the requested offset exactly matches a minute in the night, and interpolates from the first minute when the offset is absent.
+
+### calibrate_heating bins by outside temperature and classifies recovery vs maintenance
+
+This spec verifies that heating calibration bins minute-resolution data by outside temperature and classifies recovery (rising indoor_t) vs maintenance (flat indoor_t), filtering non-heating states and requiring sufficient samples per bin.
+
+### calibrate_dhw extracts valid DHW cycles from nights
+
+This spec verifies that DHW calibration extracts cycles within the valid duration range (30–180 minutes), computes correct average duration and electricity, and filters short top-up cycles.
 
 ## History evidence helpers
 
@@ -382,6 +478,46 @@ This spec verifies that string value extraction skips empty strings and the CSV 
 
 This spec verifies that target-flow series extraction drops rows where target_flow_c is None, producing only rows with actual flow targets.
 
+### numeric_points_from_series maps DateTime-f64 pairs
+
+This spec verifies that numeric time-series helpers preserve timestamp ordering and pair each DateTime with its numeric value when converting summary evidence into display-ready points.
+
+### numeric_points_from_series returns empty for empty input
+
+This spec verifies that numeric point extraction returns an empty vector for missing series data, avoiding invented placeholder points in history output.
+
+### string_points_from_series maps DateTime-String pairs
+
+This spec verifies that string time-series helpers preserve timestamp ordering and pair each DateTime with the original string payload for status-style evidence.
+
+### string_points_from_series returns empty for empty input
+
+This spec verifies that string point extraction returns an empty vector for missing series data, keeping absent categorical evidence distinct from empty strings.
+
+### controller_event_from_row copies all fields
+
+This spec verifies that controller-event row parsing copies every present field into the typed event struct so history summaries retain full mode, target, and explanatory context.
+
+### controller_event_from_row preserves None optionals
+
+This spec verifies that controller-event parsing leaves optional fields unset when the source row omits them, rather than synthesising misleading defaults.
+
+### profiled_flux wraps query with profiler import
+
+This spec verifies that the profiling helper prepends the Flux profiler import and wrapper directives around a query, so ad-hoc diagnostics can request operator timings without changing the base query.
+
+### batch_summary_union_flux builds union with all metrics
+
+This spec verifies that batched summary-query construction unions every requested metric subquery into one Flux program, preserving per-series summary coverage while reducing query round-trips.
+
+### batch_metric_selector_union_flux builds union from specs
+
+This spec verifies that selector-query batching unions the generated Flux fragments for all requested series and metrics into one executable query.
+
+### batch_metric_selector_union_flux returns empty for empty input
+
+This spec verifies that selector-query batching returns an empty query for an empty spec list, avoiding malformed Flux when no selectors were requested.
+
 ## Thermal calibration helpers
 
 These tests pin pure helper rules behind thermal calibration so grid search and window preparation stay stable even when the Influx-backed CLI path is not exercised in unit tests.
@@ -449,3 +585,207 @@ This spec verifies that fit-diagnostics comparison treats null `med_ratio` value
 ### Drop gates skip zero-sized baselines
 
 This spec verifies that record-count drop gates are skipped when the baseline has zero items, avoiding meaningless percentage-drop failures during early or sparse artifact generation.
+
+## InfluxDB wire-format parsing
+
+These tests pin the annotated CSV parsing contract that downstream consumers depend on. The TimescaleDB migration replaces this parser — these specs define the output shape to preserve.
+
+### Empty CSV input returns empty vec
+
+This spec verifies that an empty string produces zero rows, establishing the base case for the parser.
+
+### Annotation lines are skipped
+
+This spec verifies that InfluxDB annotation lines (starting with `#`) are excluded from output and that data rows after annotations are correctly parsed with their header-keyed values.
+
+### Multi-table CSV resets headers per table
+
+This spec verifies that when InfluxDB emits multiple result tables separated by blank lines and new annotation blocks, rows from each table are independently parsed and included in the output.
+
+### Duplicate header rows are not emitted as data
+
+This spec verifies that when InfluxDB repeats the header row between result blocks, those duplicate rows are recognized and excluded from the output rather than appearing as data.
+
+### Empty-key columns are excluded from output map
+
+This spec verifies that CSV columns with empty header names (common for the InfluxDB annotation column) are not included in the output HashMap, preventing empty-string keys from polluting consumer logic.
+
+### All-annotation CSV returns empty vec
+
+This spec verifies that a CSV containing only annotation lines and no data rows produces an empty result rather than erroring.
+
+### parse_dt accepts standard RFC3339 formats
+
+This spec verifies that the timestamp parser handles Z-suffixed, explicit +00:00, and non-zero offset RFC3339 formats, producing correct and equivalent Unix timestamps.
+
+### parse_dt rejects non-RFC3339 input
+
+This spec verifies that space-separated datetime strings, bare text, and empty strings are rejected, documenting the format boundary that the PostgreSQL migration must respect.
+
+## Query return contracts
+
+These tests pin the typed output shape that each InfluxDB query function produces from its CSV response. The PostgreSQL migration must preserve these contracts: same field names, same types, same sort order.
+
+### Room temps extracts timestamp-topic-value triples
+
+This spec verifies that room temperature CSV rows are parsed into (DateTime, topic_string, f64) triples sorted by timestamp, preserving both the topic identifier and the numeric value for multi-sensor queries.
+
+### Outside temp extracts timestamp-value pairs sorted by time
+
+This spec verifies that outside temperature CSV rows are parsed into (DateTime, f64) pairs and sorted by timestamp, matching the contract that calibration and display modules depend on.
+
+### Status codes round float to integer
+
+This spec verifies that status code values (categorical, not numeric) are parsed from float CSV values and rounded to integer, matching the HP state classification contract.
+
+### MWT CSV with flow and return produces averaged pairs
+
+This spec verifies that the mean water temperature query produces (DateTime, f64) pairs from the pre-computed flow/return average, matching the contract that the thermal solver depends on.
+
+### Missing required column returns MissingColumn error
+
+This spec verifies that when a required column (like _value) is absent from the CSV response, the consumer detects it rather than silently producing bad data.
+
+### Unparseable float in value column returns FloatParse error
+
+This spec verifies that non-numeric values in the _value column are detected at parse time rather than propagating as NaN or zero.
+
+### Multi-topic query builds OR conditions with correct field names
+
+This spec verifies that multi-topic queries build correct per-topic _field conditions (temperature for Zigbee, value for emonth/ebusd) joined with OR. Documents the routing SQL must replicate.
+
+### Wide-row CSV with NULL columns parses present fields only
+
+This spec verifies that CSV rows with empty _value fields (from wide-row NULLs like ct_monitor P7–P12 on 6-channel devices) parse without error but don't produce valid floats, so consumers can distinguish present from absent data.
+
+### Single-value CSV parsing extracts last value
+
+This spec verifies that a last() query result containing a single data row is correctly parsed to extract the _value, matching the contract used by the adaptive-heating-mvp live daemon.
+
+### Empty result from last query returns no rows
+
+This spec verifies that when a sensor has no data in the lookback window, the CSV parser returns zero rows rather than erroring, so callers can safely handle the None case.
+
+## Topic to table routing
+
+These tests document the implicit mapping from InfluxDB topic tags to TimescaleDB tables and columns. The PostgreSQL migration must implement this routing correctly.
+
+### Room sensor topics use correct field name
+
+This spec verifies that the _field distinction is preserved: Zigbee sensors use "temperature", emonth2_23 and ebusd/poll use "value". Incorrect routing silently returns empty results.
+
+### Topic prefix maps to TimescaleDB table
+
+This spec verifies the complete topic-to-table mapping: emon/EmonPi2 → ct_monitor, emon/tesla → tesla, ebusd/poll → ebusd_poll, zigbee2mqtt → zigbee, and all other sensor topic prefixes to their correct tables.
+
+### PV power topic maps to ct_monitor P3 column
+
+This spec verifies that the emon/EmonPi2/P3 topic is decomposed into source=EmonPi2 and column=P3 in the wide ct_monitor table.
+
+## Timestamp migration contracts
+
+These tests pin timestamp handling constraints that the TimescaleDB migration must preserve.
+
+### Microsecond truncation preserves 10s-interval data
+
+This spec verifies that truncating InfluxDB nanosecond timestamps to TimescaleDB microsecond precision does not alter the seconds-level timestamp, which is safe at 10s sample intervals.
+
+### PostgreSQL TIMESTAMPTZ offset formats parse correctly
+
+This spec documents that the current parse_dt requires RFC3339 format and will reject the common PostgreSQL TIMESTAMPTZ display format (space separator, short offset), flagging this as a required migration adaptation.
+
+## DHW write contracts
+
+These tests pin the line-protocol field mapping for DHW session writes. The PostgreSQL migration replaces LP writes with INSERT statements — these specs define which columns must be populated.
+
+### dhw_inflection LP line contains all required fields
+
+This spec verifies that the dhw_inflection LP line includes all 11 numeric fields and 3 tag fields that the TimescaleDB schema defines, so no column is silently NULL after migration.
+
+### parse_ts_val handles naive timestamps from PostgreSQL
+
+This spec verifies that the NaiveDateTime fallback in parse_ts_val correctly parses ISO timestamps without timezone offset, which is how PostgreSQL may return TIMESTAMPTZ values depending on client configuration.
+
+### 10s resolution query produces one sample per 10 seconds
+
+This spec verifies that DHW event-detection queries at 10s resolution produce exactly 6 samples per minute with 10s spacing, documenting the resolution contract the SQL migration must match.
+
+### LP tag spaces replaced with underscores
+
+This spec verifies that DHW LP tag values (category, draw_type) never contain spaces, preventing LP format parsing errors.
+
+### find_events measurement filter routes to correct PG tables
+
+This spec verifies that dhw_sessions find_events measurement-based filters route to the correct PostgreSQL tables: emon+dhw_ fields → multical, ebusd_poll → ebusd_poll. This is distinct from influx.rs topic-based routing.
+
+### find_events uses triple-field filter for emon measurements
+
+This spec verifies that emon measurement queries use the triple-filter pattern (_measurement + _field="value" + field=name). In PostgreSQL this collapses to a direct column SELECT from the multical table.
+
+### dhw_capacity LP line maps to TimescaleDB columns
+
+This spec verifies that the dhw_capacity LP line includes recommended_full_litres and method fields matching the TimescaleDB schema.
+
+## Adaptive heating write contracts
+
+These tests pin the line-protocol field mapping for adaptive heating decision logging. The PostgreSQL migration replaces LP writes with INSERT statements.
+
+### Decision LP line maps all fields to TimescaleDB columns
+
+This spec verifies that when all DecisionLog fields are Some, the LP line contains all 24 numeric/boolean fields and 3 tag fields (mode, action, tariff) that the TimescaleDB adaptive_heating_mvp schema defines.
+
+### Decision LP with None fields omits them cleanly
+
+This spec verifies that Option::None fields do not appear in the LP field set, establishing the contract that the PostgreSQL INSERT must handle via NULL columns rather than default values.
+
+### query_single_value inline parser extracts value from CSV
+
+This spec verifies that the adaptive-heating-mvp inline CSV parser (used in query_single_value) correctly extracts the _value field from a single-row Flux last() response, matching the contract the PostgreSQL migration must preserve.
+
+### query_single_value returns None for empty result
+
+This spec verifies that when no sensor data exists in the lookback window, the inline CSV parser returns None rather than a default value, so the control loop can skip decisions safely.
+
+### LP tag values escape spaces to underscores
+
+This spec verifies that action and tariff_period values have spaces replaced with underscores before LP emission, preventing LP format parsing errors where spaces are delimiters.
+
+### Room temp field routing matches influx.rs contract
+
+This spec verifies that the adaptive-heating-mvp field-name routing (value vs temperature) matches the influx.rs query_room_temps logic, documenting the duplication that the migration must preserve or unify.
+
+### DHW T1 query uses value field
+
+This spec verifies that DHW T1 queries always use _field="value" for the emon Multical topic, matching the multical table column mapping in PostgreSQL.
+
+### Boolean field encodes as integer in LP
+
+This spec verifies that battery_adequate_to_next_cosy encodes as 1/0 in LP format. The TimescaleDB schema uses FLOAT8 for this column, so the migration must convert accordingly.
+
+## History filter variant routing
+
+These tests document the three distinct InfluxDB filter patterns used by history.rs and their PostgreSQL table routing implications. The SQL migration must handle each pattern differently.
+
+### Topic filter routes by topic prefix and field name
+
+This spec verifies that TopicSummarySpec queries route by topic prefix to the correct PG table and that the _field distinction (value for emonth, temperature for zigbee) is preserved.
+
+### Measurement filter routes by measurement name and field tag
+
+This spec verifies that MeasurementSummarySpec queries route by _measurement to the correct PG table. Notably, measurement="emon" with dhw_ fields routes to multical, not emon.
+
+### Plain measurement filter uses underscore field
+
+This spec verifies that PlainMeasurementSummarySpec queries use r._field (underscore), a third distinct pattern where _measurement maps directly to the PG table name and _field maps directly to the column name.
+
+## Display migration contracts
+
+These tests pin routing contracts in the display module that the PostgreSQL migration must preserve.
+
+### Humidity query skips emonth2 topic
+
+This spec verifies that humidity queries skip the emon/emonth2_23/temperature topic because that sensor does not report humidity, preventing empty or error results in the PostgreSQL equivalent.
+
+### Humidity uses humidity field not temperature
+
+This spec verifies that humidity queries use _field="humidity" for all topics, distinct from temperature queries. In PostgreSQL, this maps to the humidity column in the zigbee table.

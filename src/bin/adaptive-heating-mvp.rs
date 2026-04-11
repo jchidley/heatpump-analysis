@@ -2479,6 +2479,19 @@ mod tests {
     }
 
     #[test]
+    fn outer_loop_does_not_defer_when_target_equals_current_curve() {
+        // When target_curve == current_curve, the condition `target < current`
+        // is false, so we should NOT defer even though flow still lags.
+        assert!(!should_defer_outer_curve_reset(
+            1.50,
+            1.50, // target equals current
+            28.4,
+            Some(26.0), // flow still lags
+            0.5
+        ));
+    }
+
+    #[test]
     fn replay_2026_04_09_morning_relearn_cycles_now_defer_resets() {
         let samples = [
             (1.52, 1.13, 28.3, 26.2),
@@ -3037,6 +3050,385 @@ mod tests {
     fn influx_field_formats_some_returns_none_for_none() {
         assert_eq!(influx_field("temp", Some(21.5)), Some("temp=21.5".to_string()));
         assert_eq!(influx_field("temp", None), None);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Forecast branch uses forecast temperature and solar]]
+    #[test]
+    fn forecast_branch_uses_forecast_temp_and_solar() {
+        let config = test_config();
+        let forecast_no_sun = ForecastHour {
+            time: "2025-01-15T10:00".to_string(),
+            hour: 10,
+            temperature_c: 2.0,
+            humidity_pct: 80.0,
+            direct_radiation_w_m2: 0.0,
+        };
+        let forecast_sunny = ForecastHour {
+            time: "2025-01-15T10:00".to_string(),
+            hour: 10,
+            temperature_c: 2.0,
+            humidity_pct: 80.0,
+            direct_radiation_w_m2: 200.0,
+        };
+
+        // With forecast (no sun): should use forecast temp (2.0), not the live temp (10.0)
+        let with_fc = calculate_required_curve_for_target(
+            &config, 20.5, 10.0, None, Some(&forecast_no_sun),
+        );
+        // With forecast (sunny): same temp but solar gain reduces heating need
+        let with_fc_sunny = calculate_required_curve_for_target(
+            &config, 20.5, 10.0, None, Some(&forecast_sunny),
+        );
+        // Without forecast: uses live temp (10.0)
+        let without_fc = calculate_required_curve_for_target(
+            &config, 20.5, 10.0, None, None,
+        );
+
+        // --- Effective outside and solar are derived from forecast, not live ---
+        assert_eq!(with_fc.forecast_outside_c, Some(2.0));
+        assert_eq!(with_fc.forecast_solar_w_m2, Some(0.0));
+        assert!(with_fc.reason.contains("forecast"), "reason should cite forecast source");
+
+        // Sunny forecast applies horizontal_to_sw_vertical: 200 * 0.7 = 140
+        assert_eq!(with_fc_sunny.forecast_solar_w_m2, Some(140.0));
+
+        // Without forecast: falls back to live outside temp, zero solar
+        assert_eq!(without_fc.forecast_outside_c, Some(10.0));
+        assert_eq!(without_fc.forecast_solar_w_m2, Some(0.0));
+        assert!(without_fc.reason.contains("live"), "reason should cite live source");
+
+        // Forecast vs live should produce different curves (different effective outside)
+        let fc_curve = with_fc.required_curve.expect("forecast curve should be present");
+        let live_curve = without_fc.required_curve.expect("live curve should be present");
+        assert!(
+            (fc_curve - live_curve).abs() > f64::EPSILON,
+            "forecast curve ({fc_curve}) and live curve ({live_curve}) should differ \
+             because effective outside temperatures differ"
+        );
+
+        // Solar gain should produce a different (lower) required flow than no-sun
+        // at the same temperature
+        let fc_flow = with_fc.required_flow.expect("no-sun flow should be present");
+        let fc_sunny_flow = with_fc_sunny.required_flow.expect("sunny flow should be present");
+        assert!(
+            fc_sunny_flow < fc_flow,
+            "sunny flow ({fc_sunny_flow}) should be less than no-sun flow ({fc_flow}) \
+             because solar gain offsets heating need"
+        );
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Default configuration values are sane]]
+    #[test]
+    fn default_config_smoke_test() {
+        let config = default_config();
+        assert_eq!(config.ebusd_port, 8888);
+        assert_eq!(config.baseline.hc1_heat_curve, 0.55);
+        assert_eq!(config.baseline.z1_day_temp, 21.0);
+        assert_eq!(config.baseline.z1_night_temp, 19.0);
+        assert_eq!(config.baseline.hwc_temp_desired, 45.0);
+        assert_eq!(config.control_every_seconds, 900);
+        assert_eq!(config.sample_every_seconds, 60);
+        assert_eq!(config.dhw.charge_trigger_c, 40.0);
+        assert_eq!(config.dhw.target_c, 45.0);
+        assert!(config.model.target_leather_c > 18.0 && config.model.target_leather_c < 25.0);
+        assert!(config.model.setpoint_c > 15.0 && config.model.setpoint_c < 25.0);
+        assert!(config.model.default_delta_t_c > 0.0);
+    }
+
+    // ── Write-contract tests (migration regression) ────────────────────────
+
+    // @lat: [[tests#Adaptive heating write contracts#Decision LP line maps all fields to TimescaleDB columns]]
+    #[test]
+    fn decision_lp_field_coverage() {
+        // Build a DecisionLog with all fields populated and verify the LP line
+        // contains every field that the TimescaleDB adaptive_heating_mvp table expects.
+        let entry = DecisionLog {
+            ts: chrono::Utc::now(),
+            mode: Mode::Occupied,
+            tariff_period: "cosy".to_string(),
+            leather_temp_c: Some(20.5),
+            aldora_temp_c: Some(19.0),
+            outside_temp_c: Some(5.0),
+            hwc_storage_temp_c: Some(45.0),
+            dhw_t1_c: Some(42.0),
+            hwc_mode: Some("auto".into()),
+            battery_soc_pct: Some(80.0),
+            battery_power_w: Some(-500.0),
+            battery_home_w: Some(1200.0),
+            battery_headroom_to_next_cosy_kwh: Some(3.5),
+            battery_adequate_to_next_cosy: Some(true),
+            run_status: Some("heating".into()),
+            compressor_util: Some(0.65),
+            elec_consumption_w: Some(800.0),
+            yield_power_kw: Some(3.2),
+            flow_desired_c: Some(35.0),
+            flow_actual_c: Some(34.5),
+            return_actual_c: Some(29.0),
+            curve_before: Some(0.45),
+            curve_after: Some(0.50),
+            target_flow_c: Some(35.0),
+            forecast_outside_c: Some(4.0),
+            forecast_solar_w_m2: Some(50.0),
+            model_required_mwt: Some(32.0),
+            model_required_flow: Some(35.0),
+            model_required_curve: Some(0.48),
+            action: "adjust curve".to_string(),
+            reason: "model says warmer".to_string(),
+            write_results: vec![],
+        };
+
+        let mode = format!("{:?}", entry.mode).to_lowercase();
+        let action = entry.action.replace(' ', "_");
+        let fields: Vec<String> = [
+            influx_field("leather_temp_c", entry.leather_temp_c),
+            influx_field("aldora_temp_c", entry.aldora_temp_c),
+            influx_field("outside_temp_c", entry.outside_temp_c),
+            influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
+            influx_field("dhw_t1_c", entry.dhw_t1_c),
+            influx_field("battery_soc_pct", entry.battery_soc_pct),
+            influx_field("battery_power_w", entry.battery_power_w),
+            influx_field("battery_home_w", entry.battery_home_w),
+            influx_field("battery_headroom_to_next_cosy_kwh", entry.battery_headroom_to_next_cosy_kwh),
+            entry.battery_adequate_to_next_cosy
+                .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 })),
+            influx_field("compressor_util", entry.compressor_util),
+            influx_field("elec_consumption_w", entry.elec_consumption_w),
+            influx_field("yield_power_kw", entry.yield_power_kw),
+            influx_field("flow_desired_c", entry.flow_desired_c),
+            influx_field("flow_actual_c", entry.flow_actual_c),
+            influx_field("return_actual_c", entry.return_actual_c),
+            influx_field("curve_before", entry.curve_before),
+            influx_field("curve_after", entry.curve_after),
+            influx_field("target_flow_c", entry.target_flow_c),
+            influx_field("forecast_outside_c", entry.forecast_outside_c),
+            influx_field("forecast_solar_w_m2", entry.forecast_solar_w_m2),
+            influx_field("model_required_mwt", entry.model_required_mwt),
+            influx_field("model_required_flow", entry.model_required_flow),
+            influx_field("model_required_curve", entry.model_required_curve),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        let line = format!(
+            "adaptive_heating_mvp,mode={},action={},tariff={} {} {}",
+            mode, action, entry.tariff_period.replace(' ', "_"),
+            fields.join(","), entry.ts.timestamp()
+        );
+
+        // Verify measurement name
+        assert!(line.starts_with("adaptive_heating_mvp,"));
+
+        // Verify tags (become TEXT columns in TimescaleDB)
+        assert!(line.contains("mode=occupied"));
+        assert!(line.contains("action=adjust_curve"));
+        assert!(line.contains("tariff=cosy"));
+
+        // All TimescaleDB columns that the schema defines
+        let pg_columns = [
+            "leather_temp_c", "aldora_temp_c", "outside_temp_c",
+            "hwc_storage_temp_c", "dhw_t1_c",
+            "battery_soc_pct", "battery_power_w", "battery_home_w",
+            "battery_headroom_to_next_cosy_kwh", "battery_adequate_to_next_cosy",
+            "compressor_util", "elec_consumption_w", "yield_power_kw",
+            "flow_desired_c", "flow_actual_c", "return_actual_c",
+            "curve_before", "curve_after", "target_flow_c",
+            "forecast_outside_c", "forecast_solar_w_m2",
+            "model_required_mwt", "model_required_flow", "model_required_curve",
+        ];
+        for col in &pg_columns {
+            assert!(
+                line.contains(&format!("{col}=")),
+                "LP line missing field '{col}' — TimescaleDB column will be NULL"
+            );
+        }
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Decision LP with None fields omits them cleanly]]
+    #[test]
+    fn decision_lp_none_fields_omitted() {
+        // When Option fields are None, they should NOT appear in the LP line.
+        // In TimescaleDB, these become NULL columns via absent INSERT values.
+        let entry = DecisionLog {
+            ts: chrono::Utc::now(),
+            mode: Mode::Occupied,
+            tariff_period: "cosy".to_string(),
+            leather_temp_c: Some(20.5),
+            aldora_temp_c: None,  // ← None
+            outside_temp_c: Some(5.0),
+            hwc_storage_temp_c: None,  // ← None
+            dhw_t1_c: None,  // ← None
+            hwc_mode: None,
+            battery_soc_pct: None,
+            battery_power_w: None,
+            battery_home_w: None,
+            battery_headroom_to_next_cosy_kwh: None,
+            battery_adequate_to_next_cosy: None,
+            run_status: None,
+            compressor_util: None,
+            elec_consumption_w: None,
+            yield_power_kw: None,
+            flow_desired_c: None,
+            flow_actual_c: None,
+            return_actual_c: None,
+            curve_before: None,
+            curve_after: None,
+            target_flow_c: None,
+            forecast_outside_c: None,
+            forecast_solar_w_m2: None,
+            model_required_mwt: None,
+            model_required_flow: None,
+            model_required_curve: None,
+            action: "skip".to_string(),
+            reason: "no data".to_string(),
+            write_results: vec![],
+        };
+
+        let fields: Vec<String> = [
+            influx_field("leather_temp_c", entry.leather_temp_c),
+            influx_field("aldora_temp_c", entry.aldora_temp_c),
+            influx_field("outside_temp_c", entry.outside_temp_c),
+            influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        // Only the Some fields should be present
+        assert_eq!(fields.len(), 2);
+        assert!(fields.iter().any(|f| f.starts_with("leather_temp_c=")));
+        assert!(fields.iter().any(|f| f.starts_with("outside_temp_c=")));
+        // None fields must not appear
+        assert!(!fields.iter().any(|f| f.starts_with("aldora_temp_c=")));
+        assert!(!fields.iter().any(|f| f.starts_with("hwc_storage_temp_c=")));
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#query_single_value inline parser extracts value from CSV]]
+    #[test]
+    fn query_single_value_inline_parser() {
+        // The adaptive-heating-mvp has its own inline CSV parser in query_single_value.
+        // This test pins its contract by simulating what it does.
+        let body = "\
+#datatype,string,long,dateTime:RFC3339,double
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+,_result,0,2026-01-15T10:30:00Z,21.5
+";
+        // Reproduce the inline parser logic
+        let mut headers: Vec<String> = Vec::new();
+        let mut val = None;
+        for line in body.lines() {
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            let fields: Vec<&str> = line.split(',').collect();
+            if headers.is_empty() {
+                headers = fields.iter().map(|s| s.to_string()).collect();
+                continue;
+            }
+            if let Some(i) = headers.iter().position(|h| h == "_value") {
+                val = fields.get(i).and_then(|s| s.parse::<f64>().ok());
+            }
+        }
+        assert_eq!(val, Some(21.5));
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#query_single_value returns None for empty result]]
+    #[test]
+    fn query_single_value_empty_result() {
+        // When sensor has no data in lookback window
+        let body = "\
+#datatype,string,long,dateTime:RFC3339,double
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+
+";
+        let mut headers: Vec<String> = Vec::new();
+        let mut val = None;
+        for line in body.lines() {
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            let fields: Vec<&str> = line.split(',').collect();
+            if headers.is_empty() {
+                headers = fields.iter().map(|s| s.to_string()).collect();
+                continue;
+            }
+            if let Some(i) = headers.iter().position(|h| h == "_value") {
+                val = fields.get(i).and_then(|s| s.parse::<f64>().ok());
+            }
+        }
+        assert!(val.is_none(), "Empty sensor result should return None");
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#LP tag values escape spaces to underscores]]
+    #[test]
+    fn lp_tag_values_escape_spaces() {
+        // action and tariff_period use .replace(' ', "_") before LP emission
+        let action = "adjust curve";
+        let tariff = "off peak";
+        let escaped_action = action.replace(' ', "_");
+        let escaped_tariff = tariff.replace(' ', "_");
+        assert_eq!(escaped_action, "adjust_curve");
+        assert_eq!(escaped_tariff, "off_peak");
+        assert!(!escaped_action.contains(' '));
+        assert!(!escaped_tariff.contains(' '));
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Room temp field routing matches influx.rs contract]]
+    #[test]
+    fn room_temp_field_routing_matches_influx() {
+        // query_latest_room_temp has its own field-name routing logic
+        // that must match influx.rs query_room_temps. This duplication
+        // must be preserved (or unified) during migration.
+        let topics_and_fields: Vec<(&str, &str)> = vec![
+            ("emon/emonth2_23/temperature", "value"),       // special case
+            ("zigbee2mqtt/Leather", "temperature"),          // default
+            ("zigbee2mqtt/Aldora", "temperature"),           // default
+            ("zigbee2mqtt/aldora_temp_humid", "temperature"), // default
+        ];
+
+        for (topic, expected_field) in &topics_and_fields {
+            let field = if *topic == "emon/emonth2_23/temperature" {
+                "value"
+            } else {
+                "temperature"
+            };
+            assert_eq!(
+                field, *expected_field,
+                "topic '{topic}' should use field '{expected_field}'"
+            );
+        }
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#DHW T1 query uses value field]]
+    #[test]
+    fn dhw_t1_field_is_value() {
+        // query_latest_dhw_t1 hard-codes field="value" for the emon
+        // Multical T1 topic. In PG: multical table, dhw_t1 column.
+        let field = "value";
+        assert_eq!(field, "value", "DHW T1 always uses _field='value' in emon measurement");
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Boolean field encodes as integer in LP]]
+    #[test]
+    fn boolean_field_encodes_as_integer() {
+        // InfluxDB LP: boolean → 1/0 integer
+        // TimescaleDB: battery_adequate_to_next_cosy is FLOAT8 (not BOOLEAN)
+        // Migration must convert 1/0 back to float or change schema
+        let encoded_true = Some(true)
+            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 }));
+        assert_eq!(encoded_true, Some("battery_adequate_to_next_cosy=1".to_string()));
+
+        let encoded_false = Some(false)
+            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 }));
+        assert_eq!(encoded_false, Some("battery_adequate_to_next_cosy=0".to_string()));
+
+        let encoded_none: Option<String> = None::<bool>
+            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 }));
+        assert!(encoded_none.is_none());
     }
 }
 

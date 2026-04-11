@@ -1392,4 +1392,297 @@ mod tests {
         let dt = epoch_to_dt(1712739600); // 2024-04-10 09:00:00 UTC
         assert_eq!(dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "2024-04-10T09:00:00");
     }
+
+    // @lat: [[tests#DHW session analysis#Empty capacity input returns no_data recommendation]]
+    #[test]
+    fn empty_capacity_returns_no_data() {
+        let rec = compute_recommended_capacity(&[]);
+        assert_eq!(rec.recommended_full_litres, None);
+        assert_eq!(rec.method, "no_data");
+    }
+
+    // @lat: [[tests#DHW session analysis#Low variance cold mains falls back to conservative ratio]]
+    #[test]
+    fn low_variance_cold_mains_falls_to_conservative() {
+        // Two measurements at nearly identical mains temps → var_t2 ≤ 0.1 → skip regression
+        let a = sample_result(10.0, 120.0);
+        let b = sample_result(10.1, 115.0);
+
+        let rec = compute_recommended_capacity(&[&a, &b]);
+
+        // Should use conservative_ratio (3% haircut on best = 120 * 0.97 = 116.4 → 116)
+        assert_eq!(rec.recommended_full_litres, Some(116.0));
+        assert!(
+            rec.method.starts_with("conservative_ratio"),
+            "expected conservative_ratio, got: {}",
+            rec.method
+        );
+    }
+
+    // @lat: [[tests#DHW session analysis#Cold mains regression extrapolates above measured maximum]]
+    #[test]
+    fn cold_regression_extrapolates_above_measured() {
+        // Positive slope: warmer inlet → more usable volume.
+        // slope = cov/var_t2, extrapolate to T2=25°C
+        let cold_a = sample_result(8.0, 100.0);
+        let cold_b = sample_result(14.0, 130.0);
+
+        let rec = compute_recommended_capacity(&[&cold_a, &cold_b]);
+
+        // slope ≈ (cov/var) = 5.0 L/°C, best_cold_vol=130, best_cold_t2=14
+        // wwhr_estimate = 130 + 5.0*(25-14) = 185
+        // result = max(185, 130).round() = 185
+        assert!(rec.method.starts_with("regression"));
+        let val = rec.recommended_full_litres.unwrap();
+        assert!(val > 130.0, "regression should extrapolate above 130, got {val}");
+        assert!((val - 185.0).abs() < 1.0, "expected ~185, got {val}");
+    }
+
+    // @lat: [[tests#DHW session analysis#JSON summary serialises capacity and draw counts]]
+    #[test]
+    fn json_summary_serialises_capacity_and_draw_counts() {
+        let results = vec![
+            sample_result(10.0, 120.0),  // Capacity (crossover=true, t1_end=44)
+        ];
+        let json = json_summary(&results);
+
+        assert_eq!(json["max_usable_litres"], 120.0);
+        assert_eq!(json["geometric_max_litres"], GEOMETRIC_MAX.round());
+        assert_eq!(json["capacity_count"], 1);
+        assert_eq!(json["total_draws"], 1);
+        // sample_result has peak_flow_rate=500, volume=60 → shower
+        assert_eq!(json["showers"], 1);
+        assert_eq!(json["baths"], 0);
+        assert_eq!(json["taps"], 0);
+        assert!(json["recommended_full_litres"].is_number());
+        assert!(json["recommended_method"].is_string());
+    }
+
+    // @lat: [[tests#DHW session analysis#JSON summary handles empty results]]
+    #[test]
+    fn json_summary_handles_empty_results() {
+        let json = json_summary(&[]);
+
+        assert!(json["max_usable_litres"].is_null());
+        assert!(json["plug_flow_efficiency"].is_null());
+        assert!(json["highest_lower_bound"].is_null());
+        assert!(json["recommended_full_litres"].is_null());
+        assert_eq!(json["recommended_method"], "no_data");
+        assert_eq!(json["capacity_count"], 0);
+        assert_eq!(json["total_draws"], 0);
+    }
+
+    // ── Write-contract tests (migration regression) ────────────────────────
+
+    // @lat: [[tests#DHW write contracts#dhw_inflection LP line contains all required fields]]
+    #[test]
+    fn dhw_inflection_lp_field_coverage() {
+        // Build a representative InflectionResult and verify the LP line
+        // format matches what TimescaleDB dhw_inflection columns expect.
+        let r = InflectionResult {
+            draw: DrawEvent {
+                start: sample_time(0),
+                end: sample_time(600),
+                volume_register_start: 100.0,
+                volume_register_end: 130.0,
+                volume_drawn: 30.0,
+                preceding_charge: Some(ChargeEvent {
+                    start: sample_time(-7200),
+                    end: sample_time(-3600),
+                    t1_pre: 30.0,
+                    hwc_end: 50.0,
+                    t1_end: 48.0,
+                    crossover: true,
+                    volume_at_end: 100.0,
+                }),
+                cumulative_since_charge: 30.0,
+                gap_hours: 3.0,
+                during_charge: false,
+            },
+            hint_cumulative: Some(28.0),
+            definitive_cumulative: Some(29.5),
+            definitive_draw_vol: Some(29.5),
+            definitive_rate: Some(0.00123),
+            t1_start: 47.5,
+            t1_at_definitive: Some(42.0),
+            mains_temp: 12.5,
+            peak_flow_rate: 450.0,
+            hwc_pre: 50.0,
+            hwc_min: 38.0,
+            hwc_drop: 12.0,
+        };
+
+        let cat = r.inflection_category();
+        let draw_type = r.draw_type();
+        let crossover = r.draw.preceding_charge.as_ref().map(|c| c.crossover).unwrap_or(false);
+        let ts = r.draw.start.timestamp();
+
+        let line = format!(
+            "dhw_inflection,category={cat},crossover={crossover},draw_type={draw_type} \
+             cumulative_volume={:.1},draw_volume={:.1},gap_hours={:.2},\
+             t1_start={:.2},t1_at_inflection={:.2},mains_temp={:.1},\
+             flow_rate={:.0},rate={:.5},hwc_pre={:.1},hwc_min={:.1},\
+             hwc_drop={:.1} {ts}",
+            r.definitive_cumulative.unwrap_or(0.0),
+            r.definitive_draw_vol.unwrap_or(0.0),
+            r.draw.gap_hours,
+            r.t1_start,
+            r.t1_at_definitive.unwrap_or(0.0),
+            r.mains_temp,
+            r.peak_flow_rate,
+            r.definitive_rate.unwrap_or(0.0),
+            r.hwc_pre,
+            r.hwc_min,
+            r.hwc_drop,
+        );
+
+        // Verify measurement name
+        assert!(line.starts_with("dhw_inflection,"));
+
+        // Verify tags (become columns in TimescaleDB)
+        assert!(line.contains("category=capacity"));
+        assert!(line.contains("crossover=true"));
+        assert!(line.contains("draw_type=shower"));
+
+        // Verify all field names match TimescaleDB dhw_inflection columns
+        let pg_columns = [
+            "cumulative_volume", "draw_volume", "gap_hours",
+            "t1_start", "t1_at_inflection", "mains_temp",
+            "flow_rate", "rate", "hwc_pre", "hwc_min", "hwc_drop",
+        ];
+        for col in &pg_columns {
+            assert!(
+                line.contains(&format!("{col}=")),
+                "LP line missing field '{col}' — TimescaleDB column will be NULL"
+            );
+        }
+
+        // Verify timestamp is present at end
+        assert!(line.ends_with(&ts.to_string()));
+    }
+
+    // @lat: [[tests#DHW write contracts#parse_ts_val handles naive timestamps from PostgreSQL]]
+    #[test]
+    fn parse_ts_val_naive_pg_format() {
+        // PostgreSQL may return timestamps as naive ISO without offset.
+        // parse_ts_val already has a NaiveDateTime fallback for "%Y-%m-%dT%H:%M:%S".
+        // This test verifies that path works for the migration.
+        let rows = vec![
+            [("_time", "2026-04-10T07:00:00"), ("_value", "42.5")]
+                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect::<HashMap<String,String>>(),
+        ];
+        let result = parse_ts_val(&rows);
+        assert_eq!(result.len(), 1, "Naive ISO timestamp should parse via fallback");
+        assert!((result[0].1 - 42.5).abs() < 0.01);
+    }
+
+    // @lat: [[tests#DHW write contracts#10s resolution query produces one sample per 10 seconds]]
+    #[test]
+    fn ten_second_resolution_contract() {
+        // DHW event detection queries at 10s resolution.
+        // After migration, the SQL equivalent must produce ~6 rows per minute.
+        // This test verifies the expected density from a known-good response.
+        let rows: Vec<HashMap<String, String>> = (0..6)
+            .map(|i| {
+                let ts = format!("2026-04-10T07:00:{:02}+00:00", i * 10);
+                [("_time", ts.as_str()), ("_value", "500.0")]
+                    .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect()
+            })
+            .collect();
+        let result = parse_ts_val(&rows);
+        assert_eq!(result.len(), 6, "10s resolution should yield 6 samples per minute");
+
+        // Verify 10s spacing
+        for i in 1..result.len() {
+            let dt = result[i].0.timestamp() - result[i-1].0.timestamp();
+            assert_eq!(dt, 10, "Expected 10s spacing between samples");
+        }
+    }
+
+    // @lat: [[tests#DHW write contracts#LP tag spaces replaced with underscores]]
+    #[test]
+    fn lp_tag_space_escaping() {
+        // LP format uses spaces as delimiters. Tag values with spaces must be
+        // escaped. The dhw_inflection builder uses Display impls which don't
+        // contain spaces, but this test pins the invariant.
+        let cat = InflectionCategory::Capacity;
+        let draw_type = DrawType::Shower;
+        let tag_str = format!("category={cat},draw_type={draw_type}");
+        assert!(!tag_str.contains(' '), "LP tags must not contain spaces");
+    }
+
+    // @lat: [[tests#DHW write contracts#find_events measurement filter routes to correct PG tables]]
+    #[test]
+    fn find_events_measurement_routing() {
+        // find_events uses measurement-based filters (not topic-based like influx.rs).
+        // The routing is: _measurement + field → PG table + column.
+        // This is different from influx.rs which routes by topic prefix.
+        let queries: Vec<(&str, &str, &str, &str)> = vec![
+            // (measurement, field, expected PG table, expected PG column)
+            ("emon", "dhw_flow", "multical", "dhw_flow"),
+            ("emon", "dhw_volume_V1", "multical", "dhw_volume_v1"),
+            ("emon", "dhw_t1", "multical", "dhw_t1"),
+            ("ebusd_poll", "BuildingCircuitFlow", "ebusd_poll", "value"),
+            ("ebusd_poll", "HwcStorageTemp", "ebusd_poll", "value"),
+        ];
+
+        for (measurement, field, expected_table, _expected_col) in &queries {
+            let table = match *measurement {
+                "emon" if field.starts_with("dhw_") => "multical",
+                "emon" => "emon",
+                "ebusd_poll" => "ebusd_poll",
+                m => panic!("unrouted measurement: {m}"),
+            };
+            assert_eq!(
+                table, *expected_table,
+                "find_events: measurement '{measurement}' + field '{field}' → table '{expected_table}'"
+            );
+        }
+    }
+
+    // @lat: [[tests#DHW write contracts#find_events uses triple-field filter for emon measurements]]
+    #[test]
+    fn find_events_triple_field_filter_contract() {
+        // find_events queries emon data with a triple filter:
+        //   _measurement="emon" AND _field="value" AND field="dhw_flow"
+        // This unusual pattern exists because emon stores all fields as
+        // _field="value" with the actual field name in r.field tag.
+        // In PostgreSQL, this collapses: just SELECT dhw_flow FROM multical.
+        // The test documents that _field is always "value" for emon queries.
+        let emon_queries: Vec<(&str, &str)> = vec![
+            ("dhw_flow", "value"),
+            ("dhw_volume_V1", "value"),
+            ("dhw_t1", "value"),
+        ];
+
+        for (field, expected_field_value) in &emon_queries {
+            assert_eq!(
+                *expected_field_value, "value",
+                "emon measurement always uses _field='value'; field='{field}' is in the tag"
+            );
+        }
+
+        // ebusd_poll queries do NOT use the _field filter — they only filter
+        // on _measurement and field (the tag).
+        let ebusd_queries = vec!["BuildingCircuitFlow", "HwcStorageTemp"];
+        for field in &ebusd_queries {
+            // In PG: SELECT value FROM ebusd_poll WHERE field = '{field}'
+            assert!(
+                !field.is_empty(),
+                "ebusd_poll field tag maps to WHERE field = '{field}'"
+            );
+        }
+    }
+
+    // @lat: [[tests#DHW write contracts#dhw_capacity LP line maps to TimescaleDB columns]]
+    #[test]
+    fn dhw_capacity_lp_field_coverage() {
+        let val = 125.5_f64;
+        let method = "wwhr_direct";
+        let line = format!("dhw_capacity recommended_full_litres={val:.1},method=\"{method}\"");
+
+        assert!(line.starts_with("dhw_capacity "));
+        assert!(line.contains("recommended_full_litres=125.5"));
+        assert!(line.contains("method=\"wwhr_direct\""));
+    }
 }

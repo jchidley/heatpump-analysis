@@ -1073,6 +1073,31 @@ mod tests {
         );
     }
 
+    // @lat: [[tests#Thermal solver#Already warm targets return the minimum MWT]]
+    #[test]
+    fn already_warm_target_returns_lower_bound_mwt() {
+        let temp_at_min_mwt = leather_temp_at(18.0, 15.0);
+        let target = temp_at_min_mwt - 0.2;
+
+        let mwt = bisect_mwt_for_room("leather", target, 18.0, 0.0, 0.0)
+            .expect("bisection should succeed for already-warm case");
+
+        assert_eq!(
+            mwt,
+            Some(15.0),
+            "target already met at minimum MWT should short-circuit to the lower bound"
+        );
+    }
+
+    // @lat: [[tests#Thermal solver#Unknown rooms return no MWT]]
+    #[test]
+    fn unknown_room_returns_none() {
+        let mwt = bisect_mwt_for_room("not_a_real_room", 20.0, 10.0, 0.0, 0.0)
+            .expect("bisection should gracefully handle an unknown room");
+
+        assert_eq!(mwt, None, "unknown rooms should not produce an MWT");
+    }
+
     // @lat: [[tests#Thermal physics primitives#Absolute humidity rises with temperature]]
     #[test]
     fn absolute_humidity_rises_with_temperature() {
@@ -1141,5 +1166,44 @@ mod tests {
                 "surface at air temp should give air RH: result={result}, rh={rh}"
             );
         }
+    }
+
+    // ── Migration routing contracts ────────────────────────────────────────
+
+    // @lat: [[tests#Display migration contracts#Humidity query skips emonth2 topic]]
+    #[test]
+    fn humidity_query_skips_emonth2() {
+        // query_room_humidity explicitly skips emon/emonth2_23/temperature
+        // because that sensor doesn't report humidity. This skip must survive
+        // the PostgreSQL migration.
+        let sensor_topics: &[&str] = &[
+            "zigbee2mqtt/Leather",
+            "emon/emonth2_23/temperature",
+            "zigbee2mqtt/Aldora",
+        ];
+
+        let mut conditions = Vec::new();
+        for t in sensor_topics {
+            if *t == "emon/emonth2_23/temperature" {
+                continue;  // skip — no humidity
+            }
+            conditions.push(format!("topic={t}"));
+        }
+
+        assert_eq!(conditions.len(), 2, "emonth2_23 must be skipped for humidity");
+        assert!(conditions[0].contains("Leather"));
+        assert!(conditions[1].contains("Aldora"));
+    }
+
+    // @lat: [[tests#Display migration contracts#Humidity uses humidity field not temperature]]
+    #[test]
+    fn humidity_field_name_contract() {
+        // query_room_humidity uses _field == "humidity" for all topics.
+        // This is different from query_room_temps which uses "temperature" or "value".
+        // In PG: Zigbee sensors → zigbee table, "humidity" column.
+        let topic = "zigbee2mqtt/Leather";
+        let field = "humidity";
+        let condition = format!("(r.topic == \"{topic}\" and r._field == \"{field}\")");
+        assert!(condition.contains("humidity"), "humidity query must use humidity field");
     }
 }

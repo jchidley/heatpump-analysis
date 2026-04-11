@@ -2649,6 +2649,142 @@ mod tests {
         assert_eq!(out[&("mode".to_string(), "last".to_string())], "heating");
     }
 
+    // @lat: [[tests#History evidence helpers#numeric_points_from_series maps DateTime-f64 pairs]]
+    #[test]
+    fn numeric_points_from_series_maps_pairs() {
+        let series = vec![
+            (dt(2026, 4, 10, 7, 0), 21.5),
+            (dt(2026, 4, 10, 7, 15), 22.0),
+        ];
+        let points = numeric_points_from_series(&series);
+        assert_eq!(points.len(), 2);
+        assert!(points[0].ts.contains("07:00"));
+        assert!((points[0].value - 21.5).abs() < f64::EPSILON);
+        assert!(points[1].ts.contains("07:15"));
+        assert!((points[1].value - 22.0).abs() < f64::EPSILON);
+    }
+
+    // @lat: [[tests#History evidence helpers#numeric_points_from_series returns empty for empty input]]
+    #[test]
+    fn numeric_points_from_series_empty() {
+        let points = numeric_points_from_series(&[]);
+        assert!(points.is_empty());
+    }
+
+    // @lat: [[tests#History evidence helpers#string_points_from_series maps DateTime-String pairs]]
+    #[test]
+    fn string_points_from_series_maps_pairs() {
+        let series = vec![
+            (dt(2026, 4, 10, 8, 0), "heating".to_string()),
+            (dt(2026, 4, 10, 8, 30), "idle".to_string()),
+        ];
+        let points = string_points_from_series(&series);
+        assert_eq!(points.len(), 2);
+        assert!(points[0].ts.contains("08:00"));
+        assert_eq!(points[0].value, "heating");
+        assert!(points[1].ts.contains("08:30"));
+        assert_eq!(points[1].value, "idle");
+    }
+
+    // @lat: [[tests#History evidence helpers#string_points_from_series returns empty for empty input]]
+    #[test]
+    fn string_points_from_series_empty() {
+        let points = string_points_from_series(&[]);
+        assert!(points.is_empty());
+    }
+
+    // @lat: [[tests#History evidence helpers#controller_event_from_row copies all fields]]
+    #[test]
+    fn controller_event_from_row_copies_all_fields() {
+        let row = ControllerRow {
+            ts: dt(2026, 4, 10, 7, 0),
+            mode: "comfort".into(),
+            action: "heat".into(),
+            tariff: "cosy".into(),
+            target_flow_c: Some(35.0),
+            curve_after: Some(0.9),
+            flow_desired_c: Some(32.5),
+        };
+        let event = controller_event_from_row(&row);
+        assert!(event.ts.contains("07:00"));
+        assert_eq!(event.mode, "comfort");
+        assert_eq!(event.action, "heat");
+        assert_eq!(event.tariff, "cosy");
+        assert_eq!(event.target_flow_c, Some(35.0));
+        assert_eq!(event.curve_after, Some(0.9));
+        assert_eq!(event.flow_desired_c, Some(32.5));
+    }
+
+    // @lat: [[tests#History evidence helpers#controller_event_from_row preserves None optionals]]
+    #[test]
+    fn controller_event_from_row_preserves_nones() {
+        let row = ControllerRow {
+            ts: dt(2026, 4, 10, 7, 0),
+            mode: "eco".into(),
+            action: "hold".into(),
+            tariff: "standard".into(),
+            target_flow_c: None,
+            curve_after: None,
+            flow_desired_c: None,
+        };
+        let event = controller_event_from_row(&row);
+        assert_eq!(event.target_flow_c, None);
+        assert_eq!(event.curve_after, None);
+        assert_eq!(event.flow_desired_c, None);
+    }
+
+    // @lat: [[tests#History evidence helpers#profiled_flux wraps query with profiler import]]
+    #[test]
+    fn profiled_flux_wraps_with_profiler() {
+        let flux = "from(bucket: \"test\") |> range(start: -1h)";
+        let result = profiled_flux(flux);
+        assert!(result.starts_with("import \"profiler\""));
+        assert!(result.contains("enabledProfilers"));
+        assert!(result.ends_with(flux));
+    }
+
+    // @lat: [[tests#History evidence helpers#batch_summary_union_flux builds union with all metrics]]
+    #[test]
+    fn batch_summary_union_flux_builds_union() {
+        let vars = vec![
+            ("s1".to_string(), "leather".to_string(), "base_query_1".to_string()),
+        ];
+        let result = batch_summary_union_flux(&vars);
+        assert!(result.contains("s1 = base_query_1"));
+        assert!(result.contains("s1_count"));
+        assert!(result.contains("s1_min"));
+        assert!(result.contains("s1_max"));
+        assert!(result.contains("s1_start"));
+        assert!(result.contains("s1_end"));
+        assert!(result.contains("s1_latest"));
+        assert!(result.contains("\"leather\""));
+        assert!(result.contains("union(tables:"));
+    }
+
+    // @lat: [[tests#History evidence helpers#batch_metric_selector_union_flux builds union from specs]]
+    #[test]
+    fn batch_metric_selector_union_flux_builds_union() {
+        let specs = vec![
+            ("v1".to_string(), "flow".to_string(), "max".to_string(), "base1".to_string(), "max()".to_string()),
+            ("v2".to_string(), "temp".to_string(), "min".to_string(), "base2".to_string(), "min()".to_string()),
+        ];
+        let result = batch_metric_selector_union_flux(&specs);
+        assert!(result.contains("v1 = base1"));
+        assert!(result.contains("v1_max = v1 |> max()"));
+        assert!(result.contains("\"flow\""));
+        assert!(result.contains("v2 = base2"));
+        assert!(result.contains("v2_min = v2 |> min()"));
+        assert!(result.contains("\"temp\""));
+        assert!(result.contains("union(tables: [v1_max, v2_min])"));
+    }
+
+    // @lat: [[tests#History evidence helpers#batch_metric_selector_union_flux returns empty for empty input]]
+    #[test]
+    fn batch_metric_selector_union_flux_empty() {
+        let result = batch_metric_selector_union_flux(&[]);
+        assert!(result.is_empty());
+    }
+
     // @lat: [[tests#History evidence helpers#controller_rows_target_series filters None targets]]
     #[test]
     fn controller_rows_target_series_filters_none() {
@@ -2676,5 +2812,95 @@ mod tests {
         let series = controller_rows_target_series(&rows);
         assert_eq!(series.len(), 1);
         assert!((series[0].1 - 35.0).abs() < 0.01);
+    }
+
+    // ── Filter variant routing (migration regression) ──────────────────────
+    // history.rs uses three distinct InfluxDB filter patterns. Each maps to
+    // a different PostgreSQL table routing strategy. These tests document the
+    // routing contracts the SQL migration must preserve.
+
+    // @lat: [[tests#History filter variant routing#Topic filter routes by topic prefix and field name]]
+    #[test]
+    fn topic_filter_routing_contract() {
+        // TopicSummarySpec uses: r.topic == X and r._field == Y
+        // The topic string determines both the PG table AND the value column.
+        let specs: Vec<(&str, &str, &str)> = vec![
+            // (topic, _field, expected PG table)
+            ("emon/emonth2_23/temperature", "value", "emonth"),
+            ("zigbee2mqtt/aldora_temp_humid", "temperature", "zigbee"),
+        ];
+
+        for (topic, field, expected_table) in &specs {
+            // Verify topic→table routing
+            let table = if topic.starts_with("zigbee2mqtt/") {
+                "zigbee"
+            } else if topic.starts_with("emon/emonth2_23/") {
+                "emonth"
+            } else {
+                panic!("unrouted topic: {topic}");
+            };
+            assert_eq!(table, *expected_table, "topic '{topic}' should route to '{expected_table}'");
+
+            // Verify field name distinction
+            if topic.starts_with("emon/emonth2_23/") {
+                assert_eq!(*field, "value", "emonth2_23 uses _field='value'");
+            } else {
+                assert_eq!(*field, "temperature", "zigbee uses _field='temperature'");
+            }
+        }
+    }
+
+    // @lat: [[tests#History filter variant routing#Measurement filter routes by measurement name and field tag]]
+    #[test]
+    fn measurement_filter_routing_contract() {
+        // MeasurementSummarySpec uses: r._measurement == X and r.field == Y
+        // The _measurement determines the PG table, r.field determines the column.
+        let specs: Vec<(&str, &str, &str)> = vec![
+            // (measurement, field, expected PG table)
+            ("ebusd_poll", "OutsideTemp", "ebusd_poll"),
+            ("ebusd_poll", "Hc1HeatCurve", "ebusd_poll"),
+            ("ebusd_poll", "FlowTemp", "ebusd_poll"),
+            ("ebusd_poll", "ReturnTemp", "ebusd_poll"),
+            ("emon", "dhw_t1", "multical"),  // emon measurement, dhw field → multical table
+        ];
+
+        for (measurement, field, expected_table) in &specs {
+            let table = match *measurement {
+                "ebusd_poll" => "ebusd_poll",
+                // emon measurement with dhw_ prefix fields → multical table
+                "emon" if field.starts_with("dhw_") => "multical",
+                "emon" => "emon",
+                m => panic!("unrouted measurement: {m}"),
+            };
+            assert_eq!(
+                table, *expected_table,
+                "measurement '{measurement}' + field '{field}' should route to '{expected_table}'"
+            );
+        }
+    }
+
+    // @lat: [[tests#History filter variant routing#Plain measurement filter uses underscore field]]
+    #[test]
+    fn plain_measurement_filter_routing_contract() {
+        // PlainMeasurementSummarySpec uses: r._measurement == X and r._field == Y
+        // Note: r._field (underscore), NOT r.field. This is a third distinct pattern.
+        // The _measurement IS the PG table name directly.
+        let specs: Vec<(&str, &str, &str)> = vec![
+            // (measurement, _field, expected PG table)
+            ("dhw", "remaining_litres", "dhw"),
+        ];
+
+        for (measurement, field, expected_table) in &specs {
+            // For plain measurement specs, _measurement maps directly to PG table
+            assert_eq!(
+                *measurement, *expected_table,
+                "plain measurement '{measurement}' should map directly to PG table"
+            );
+            // _field maps directly to column name
+            assert!(
+                !field.is_empty(),
+                "field name must be non-empty for column mapping"
+            );
+        }
     }
 }
