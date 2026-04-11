@@ -1,74 +1,108 @@
 # Plan
 
-Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-09 08:55 BST**.
+Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-11 08:39 BST**. The previous review snapshot lives in [[reviews]].
 
 ## Heating Controller
 
-V2 model-predictive controller is live. See [[heating-control]] for current behaviour and [[heating-control#Pilot History]] for operational findings.
+V2 model-predictive controller is live, and this section tracks only the remaining controller questions plus their fixed baseline context.
+
+Status taxonomy here is: **Open** (known gap), **Progressing** (change in flight / awaiting validation), **Actionable** (ready for a real-world intervention), and **Fixed** (done, but still important context). See [[heating-control]] for current behaviour and [[heating-control#Pilot History]] for operational findings.
 
 Detailed plan: [`docs/heating-plan.md`](../docs/heating-plan.md)
 
-### Fixed: Forecast Nulls During DHW
+### Active Work
 
-Was: controller went blind during DHW charges - forecast and model fields all null. Fixed by separating model calculation from actuation. **Deployed 7 Apr 10:34.**
+These controller items still need evidence, tuning, or a real-world intervention.
 
-Root cause: the `!is_dhw` guard on the heating control block skipped the entire model calculation, not just the eBUS writes. Fix: removed `!is_dhw` from the guard; the model (forecast + thermal solver) now runs every tick regardless of HP mode. During DHW, writes are suppressed but `target_flow_c` stays populated and action is logged as `dhw_active` with full model fields. Confirmed on both 5 and 6 Apr nights (up to 12 blind ticks per night). The 6 Apr overnight occurrence contributed to a 0.4°C comfort miss.
+#### Open: Headroom Unreliable During Cosy
 
-### Open: Headroom Unreliable During Cosy
+Energy-hub headroom does not account for active grid charging during Cosy windows.
 
-Energy-hub headroom doesn't account for active grid charging during Cosy windows.
+Observed behaviour now spans both morning and afternoon cases: when the battery starts Cosy already very full the signal can stay misleadingly positive, while active charging from lower effective headroom produces impossible negative swings even around ~92% SoC. There is no control impact because the controller ignores headroom during Cosy, but observability is misleading. Fix: return null or project through remaining Cosy charging.
 
-Shows large negatives early in Cosy, swings positive as battery fills. No impact on control (controller ignores headroom during Cosy) but misleading for observability. Fix: return null or project through remaining Cosy charging.
+**11 Apr data review (08:39 BST)**: The impossible negative did not recur, but the signal is still not trustworthy during Cosy. In `cosy_morning` the controller logged positive headroom while the battery was already effectively full — e.g. **05:13 BST** showed **100% SoC** with `battery_headroom_to_next_cosy_kwh=9.1`, and **05:29 BST** repeated **100% SoC** with **9.1 kWh**. Because Cosy charging was still active, the metric remains observability-only and still needs a proper null/projection fix. Item stays open.
 
-**8 Apr data review (08:33 BST)**: the upstream Tesla headroom feed itself looked sane during Cosy morning (SoC ~91→100%, headroom +6.5→+9.1 kWh), but the controller could not read it because the production INFLUX_TOKEN outage left `battery_headroom_to_next_cosy_kwh` null on every outer tick. Item remains open, but controller-side validation is blocked by the outage.
+#### Progressing: Overnight Data Growth
 
-**9 Apr data review (08:55 BST)**: The morning Cosy window (04:00–07:00 BST) showed positive headroom (+8.5 to +9.1 kWh) rather than negative, but this was because the battery started the window at 95% SoC and filled quickly. The underlying logic issue during active charging from lower SoCs remains unpatched. Item remains open.
+Evidence collection is no longer blocked, but we still need both a clean cold overnight window and a warmer daytime/heating window after the recent controller changes.
 
-### Fixed: Overnight Ramp Replaced with Coast-Then-Hold
+Current evidence ladder: 4 Apr was confounded by MinFlow=20, 5 Apr gave the first successful trajectory night at 9–12°C, 6–7 Apr was the strongest final ramp night and proved the ramp was back-loading the hard work, 7–8 Apr was lost to the Influx credential outage, 8–9 Apr was the first clean post-recovery coast-then-hold night, 9–10 Apr added a cooler-but-still-mild overnight with the new outer/inner fix validated, and 10–11 Apr added another mild overnight but exposed a new restart/hang confounder.
 
-Linear ramp back-loaded the hardest temperature rise into the final hours; the controller could never catch up (0.3°C below target at 07:00 on 7 Apr). Replaced with flat comfort-floor target (20.0°C). **Deployed 7 Apr 10:34.**
+**11 Apr data review (08:39 BST)**: The **10–11 Apr overnight** window still supports coast-then-hold on a mild night: after the late-evening restart, Leather sat around **21.0→20.8°C** while outside stayed roughly **10.4–11.2°C**, and the morning heating recovery woke at **20.8°C** with no new waking-hours comfort miss. However, this is not a clean regression anchor because `history-review` for the exact review window logged **79 controller events**, **3 DHW overlaps**, and a new **22:45–02:31 BST** blind period with repeated null rows / long outer-cycle hangs. Treat that blind spell as a likely **pi5data migration / host-performance confounder** until proven otherwise, not a confirmed controller-logic regression. Status stays progressing.
 
-Physics: total electrical cost = ∫ Q_hp/COP(T_flow) dt. COP degrades with flow temp, so the minimum-electrical strategy is to coast for free then hold the comfort-band floor at the lowest possible flow. Simulation at outside 9.5°C: ramp used 2.82 kWh; coast-then-hold uses 1.86 kWh (-34%). See [[heating-control#Overnight Strategy#Trajectory Logic]] for the full rationale.
+#### Open: Host-Side I/O Hang During pi5data Migration
 
-### Progressing: Overnight Data Growth
+A late-evening service restart was followed by multi-minute outer-cycle hangs and null telemetry/model rows for hours, so controller evidence went partially blind again even though the service stayed up.
 
-Evidence collection is no longer blocked, but the first post-deploy coast-then-hold night (7–8 Apr) was lost because the controller was blind for the whole window.
+The exact review window shows the restart at **22:52 BST**, `startup: reinitialize_ebus failed: Connection refused` at **22:52:48 BST**, then repeated `outer cycle took ... possible I/O hang` warnings from **23:45 BST** through **02:31 BST**. During that span the controller kept emitting `action:"hold"` rows with `leather_temp_c`, `forecast_outside_c`, `model_required_*`, and other fields all null. Normal telemetry only resumed at **02:36 BST** when forecast refreshes and populated overnight-coast rows returned. Given the known pi5data migration effort since yesterday afternoon, treat this first as a **host / migration-performance confounder** affecting the controller process, eBUS access, or local I/O path — not yet as evidence of a controller algorithm bug.
 
-Still open because we need a clean controller-evidence night, ideally one cold (<5°C) night and one warmer >12°C heating day. Earlier nights used the old ramp.
+**11 Apr data review (08:39 BST)**: New item opened from the review window. Immediate next step: correlate the migration work with ebus/influx/socket state, system load, and service restarts on pi5data to see whether infrastructure churn rather than controller logic stretched outer-loop work into **148–962s** hangs.
 
-4 Apr confounded (MinFlow=20), 5 Apr success at 9–12°C, 6 Apr success at 7–9°C (slight undershoot due to DHW contention during preheat). **6–7 Apr was the last ramp night and the strongest trajectory night**: model drove curve 0.76→0.51 over 5 hours (01:07–06:00), maintaining Leather at 20.1–20.2°C with outside 8.5–10°C. Flow temps held at 28.4–29.9°C throughout. Average overnight COP = 5.81 across 16 active ticks. A 2.6-hour coast phase (22:30–01:07) showed Leather dropping 20.7→20.1°C with heating off, implying τ≈44h (consistent with operational τ=36h within single-observation variance). Battery reached 100% by 03:57. This night's data confirmed the ramp problem and motivated the coast-then-hold fix. **7–8 Apr will be the first coast-then-hold night.**
+#### Actionable: Elvina Overnight Comfort
 
-**7 Apr data review (11:14 BST)**: 6–7 Apr overnight confirmed: coast 00:33–01:07 (20.5→20.1°C), model held 20.1–20.2°C for 8h, 07:00 miss of −0.3°C vs 20.5°C target. Forecast API degraded from ~05:00 (Open-Meteo errors). Aldora sensor offline all night. Post-deploy at 10:34: DHW fix confirmed (model fields populated during dhw_active). See `docs/data-review-log.md` for full details.
+Elvina still runs too cool overnight on mild nights, and the evidence points to excessive ventilation rather than insufficient heat input.
 
-**7 Apr data review (19:07 BST)**: ⚠️ **7–8 Apr coast-then-hold night is BLOCKED** — see critical issue below. Outer loop has been blind since 16:44 BST (INFLUX_TOKEN stripped from production env during tech-debt restarts). No decision log written since 16:38 BST tick. Tonight's overnight data will be lost unless the token is restored before ~22:00 BST.
+Child's bedroom hits 16.4–17.5°C at 07:00 on mild nights. Full proxy-network moisture analysis (13 sensors, 6 nights) says Elvina ventilates **6.8× faster** than Aldora (ACH ≈ 1.0 vs model 0.51), while the fabric residual is only 11 W/K versus model 14.5.
 
-**8 Apr data review (08:33 BST)**: 7–8 Apr did **not** add usable controller evidence. Journal shows 50 outer ticks from 19:22 BST to 08:18 BST with Leather/Aldora/T1/battery/forecast/model fields all null, action always `hold`, and every decision-log write failing. Even so, the plant and weather compensation kept Leather at 20.5°C by 08:00 (min 20.5°C), Aldora at 20.6–20.8°C, and outside at 10.0–12.3°C. Treat this as a comfort-preserved outage night, not a coast-then-hold validation night.
+**Proposed fix: close trickle vents, rely on HEPA purifier for allergen control.** The LEVOIT Core 300 (CADR 187 m3/h = 3.1 filtered ACH in 60 m3 room, 20W) already runs and should provide better allergen control with vents closed because it avoids outdoor pollen ingress and filters recirculated air. Closing vents cuts UA from ~32 to ~17 W/K, raising overnight temperature by ~3°C. Part F fresh air shortfall with vents closed: need ~14 L/s, infiltration provides ~2.5 L/s. Mitigate with door ajar or morning purge vent. Validate with a £15 CO2 monitor (≤1000 ppm target). No controller changes are needed; the room should simply retain more heat at the same flow temperature.
 
-**8 Apr data review (16:50 BST)**: production evidence collection has recovered (31 controller events recorded since the credential fix, with decision logs and forecast refreshes back), but this review window only covers daytime operation. Leather stayed 20.6→21.6°C with zero comfort misses, yet we still do **not** have a clean post-recovery overnight coast-then-hold window. Status stays progressing; the next useful checkpoint is the 8–9 Apr night.
+**Measurement plan**: (1) ~~deploy SNZB-02P to shaded SE wall as `outside_temp_humid`~~ **done 7 Apr** (paired, LQ=6 at install, so monitor stability); (2) record baseline Elvina overnight AH and temperature for 1 week; (3) close trickle vents; (4) record post-change for 1 week; (5) compare ΔAH rise (confirms ACH reduction), temperature gain, and CO2 (if monitor fitted).
 
-**9 Apr data review (08:55 BST)**: The 8–9 Apr night provided a clean post-recovery evidence window. The controller correctly initiated an `overnight_coast` at 23:04 BST (Leather 21.9°C, outside 18.3°C) and held it for 6.5 hours until 05:34 BST (Leather 20.7°C, outside 15.1°C), validating the new strategy logic. However, this was an exceptionally warm night with zero frost risk. Keep this item progressing until a cold (<5°C) night is captured.
+**11 Apr data review (08:39 BST)**: Baseline collection still looks healthy. Since the last review, `elvina_temp_humid` reported **102** temperature samples with a window range of **18.4→24.4°C** and an overnight floor of **19.6°C** at **08:24 BST**; `outside_temp_humid` reported **181** samples with a window range of **9.3→17.5°C** and an overnight floor of **10.8°C** at **02:31 BST**. Both sensors stayed online through the night, and there is still no vent intervention yet; keep collecting the baseline week.
 
-### Fixed: DHW Timer Dedup Bug
+#### Open: Forecast API Reliability
 
-VRC 700 fired DHW at 04:00 during preheat because morning timer window was left enabled. **Deployed 7 Apr 10:34.**
+Forecast data still has an unresolved reliability question even though the 7 Apr upstream outage itself has not obviously repeated.
 
-Root cause on 6 Apr: `sync_morning_dhw_timer` correctly decided to skip the morning window (T1 41.5°C predicted, above 40°C trigger) but the eBUS write failed ("ERR: element not found"). Dedup state was updated anyway, suppressing retries. Then `restore_baseline` on restart re-enabled all timer windows without clearing the dedup state, so the skip was never retried. VRC 700 saw HwcStorageTemp 37.5°C < 45°C target and fired its own charge at 04:00. Two fixes: (1) `sync_morning_dhw_timer` now checks for `ERR:` in the response and clears dedup state on failure, (2) `control_loop` startup clears dedup state so the first tick always re-evaluates.
+Controller behaviour degrades gracefully: it uses cached forecast data and can fall back toward live outside conditions, but prolonged outages leave `forecast_outside_c` stale. The original 7 Apr issue looked like an upstream Open-Meteo reliability problem; the latest review window suggests there is also a host-side confounder because null forecast/model fields can still appear even when refreshes are succeeding. Consider: local caching with longer TTL, a second weather API, or alerting when forecast age exceeds threshold.
 
-### Actionable: Elvina Overnight Comfort
+**11 Apr data review (08:39 BST)**: The upstream API still refreshed successfully, but null `forecast_outside_c` / `model_required_*` rows reappeared. The journal showed forecast refreshes at **22:05, 22:55, 02:36, 03:39, 04:41, 05:47, and 06:51 BST**, yet the controller still emitted null forecast/model fields during the **22:45–02:31 BST** hang period and again at **06:00 BST** (`action:"hold"`, `reason:"no rule fired"`). Given the known pi5data migration work, treat this first as part of the broader **host-side migration / I/O hang confounder**, not as fresh evidence of another upstream forecast outage.
 
-Child's bedroom hits 16.4-17.5°C at 07:00 on mild nights. Trickle vents are the entire problem - roof insulation is fine.
+#### Open: Wind and PV Tuning
 
-Full proxy-network moisture analysis (13 sensors, 6 nights): Elvina ventilates 6.8× faster than Aldora (ACH ≈ 1.0 vs model 0.51). Fabric residual 11 W/K is below model 14.5.
+Wind compensation and PV-aware curve adjustment exist in the model but still lack real-world tuning cases.
 
-**Proposed fix: close trickle vents, rely on HEPA purifier for allergen control.** The LEVOIT Core 300 (CADR 187 m3/h = 3.1 filtered ACH in 60 m3 room, 20W) already runs and provides better allergen control with vents closed (no outdoor pollen ingress, 99.97% HEPA per pass). Closing vents cuts UA from ~32 to ~17 W/K, raising overnight temp by ~3°C. Part F fresh air shortfall with vents closed: need ~14 L/s, infiltration provides ~2.5 L/s. Mitigate with door ajar or morning purge vent. Validate with £15 CO2 monitor (≤ 1000 ppm target). No controller changes needed - room simply retains more heat at the same flow temperature.
+This is low urgency until weather provides a useful test day such as a windy cold spell or a sustained high-PV day with real space-heating demand.
 
-**Measurement plan**: (1) ~~deploy SNZB-02P to shaded SE wall as `outside_temp_humid`~~ **done 7 Apr** (paired, LQ=6 — monitor); (2) record baseline Elvina overnight AH and temperature for 1 week; (3) close trickle vents; (4) record post-change for 1 week; (5) compare ΔAH rise (confirms ACH reduction), temperature gain, and CO2 (if monitor fitted).
+**11 Apr data review (08:39 BST)**: Still no useful tuning case. The review window topped out at only **16.0°C** outside, overnight controller rows carried **0 W/m²** forecast solar, and the morning recovery was a standard mild-heating case rather than a windy-cold or high-PV test day. Item remains open.
 
-**8 Apr data review (08:33 BST)**: `outside_temp_humid` stayed online through the first full night after pairing, so the baseline week has started. Elvina averaged ~21.6°C around midnight and ~20.9°C at 08:00 while `outside_temp_humid` fell from ~12.6°C to ~11.0°C. No vent intervention yet — keep collecting the baseline week before changing anything.
+#### Progressing: Warm-End Outer-Loop Curve Saturation
 
-**9 Apr data review (08:55 BST)**: The baseline week continues. The warm spell persists, and there are no signs of sensor dropout. No intervention yet — keep collecting baseline data.
+Very warm low-load daytime conditions exposed a bad outer-loop seed, not a general need for extreme curves in mild weather.
 
-### Fixed: Production Influx Secret Migration
+The inverse curve formula became unstable near the warm end. When forecast outside approached the 19°C VRC setpoint, modest target-flow requests (~24–27°C) could still explode into clamped curve requests near **4.00**. Before the fix, this was already reproduced in warm daytime standby conditions with modest target flows producing absurd outer-loop seeds of 3.5–4.0. A warm-end fallback was deployed during the **10:51 BST** restart on 9 Apr: when forecast outside is at or above setpoint, the outer loop now seeds the known-safe baseline curve **0.55** instead of using the unstable inversion.
+
+**11 Apr data review (08:39 BST)**: No new validation case arrived in this window. Once populated, `forecast_outside_c` stayed around **9.3–11.0°C** in the overnight/morning heating rows, so the controller never re-entered the near-setpoint warm-end regime that triggered the bug. Status stays progressing pending the next genuinely warm heating day.
+
+### Recent Fixed Baseline
+
+These fixes are complete but still belong in the plan because active items depend on the history and constraints they introduced.
+
+#### Fixed: Active-Heating Outer/Inner Loop Conflict
+
+The outer loop used to reset the curve seed while the inner loop was still correcting a real flow deficit during morning active heating. This is now fixed. **Deployed 9 Apr 10:51 BST.**
+
+The fix defers downward outer-loop resets while the VRC still wants materially less flow than `target_flow_c`. The key validation finally arrived on **10 Apr**: at **05:56 BST** and **06:12 BST** the outer loop explicitly logged deferred resets (`0.60→0.57` and `0.78→0.59`) while `flow_desired_c` still sat below target (**29.6<32.5** and **32.3<32.9**). Later downward writes at **06:28** and **06:44 BST** happened only once `flow_desired_c` was above target again, which is the intended over-target correction path.
+
+#### Fixed: Forecast Nulls During DHW
+
+The controller used to go blind during DHW charges, leaving forecast and model fields null. This was fixed by separating model calculation from actuation. **Deployed 7 Apr 10:34.**
+
+The `!is_dhw` guard on the heating control block had skipped the entire model calculation, not just the eBUS writes. Removing that guard means the model (forecast + thermal solver) now runs every tick regardless of HP mode. During DHW, writes are suppressed but `target_flow_c` stays populated and action is logged as `dhw_active` with full model fields. Confirmed on both 5 and 6 Apr nights (up to 12 blind ticks per night). The 6 Apr overnight occurrence contributed to a 0.4°C comfort miss.
+
+#### Fixed: Overnight Ramp Replaced with Coast-Then-Hold
+
+The old linear overnight ramp back-loaded the hardest temperature rise into the final hours, so the controller could never catch up. It was replaced with a flat comfort-floor target (20.0°C). **Deployed 7 Apr 10:34.**
+
+At 07:00 on 7 Apr the old strategy still missed by 0.3°C. Physics argument: total electrical cost = ∫ Q_hp/COP(T_flow) dt, and COP degrades with flow temp, so the minimum-electrical strategy is to coast for free then hold the comfort-band floor at the lowest possible flow. Simulation at outside 9.5°C: ramp used 2.82 kWh; coast-then-hold uses 1.86 kWh (-34%). See [[heating-control#Overnight Strategy#Trajectory Logic]] for the full rationale.
+
+#### Fixed: DHW Timer Dedup Bug
+
+A VRC 700 morning DHW timer could survive a failed disable attempt and then fire during preheat. This is fixed. **Deployed 7 Apr 10:34.**
+
+On 6 Apr `sync_morning_dhw_timer` correctly decided to skip the morning window (T1 41.5°C predicted, above the 40°C trigger) but the eBUS write failed with `ERR: element not found`. Dedup state was updated anyway, suppressing retries. Then `restore_baseline` on restart re-enabled all timer windows without clearing the dedup state, so the skip was never retried. VRC 700 saw `HwcStorageTemp=37.5°C < 45°C` and fired its own charge at 04:00. Fixes: (1) `sync_morning_dhw_timer` now checks for `ERR:` in the response and clears dedup state on failure, (2) `control_loop` startup clears dedup state so the first tick always re-evaluates.
+
+#### Fixed: Production Influx Secret Migration
 
 The blind-controller outage was first fixed by restoring `INFLUX_TOKEN` in `/etc/adaptive-heating-mvp.env`, then hardened properly by migrating the controller to a dedicated systemd credential. **Restored 8 Apr 08:39 BST; hardened 8 Apr 08:57 BST.**
 
@@ -76,82 +110,38 @@ Root cause: systemd had been depending on `/etc/adaptive-heating-mvp.env`, and t
 
 Verification: the running service restarts with the credential present, without relying on `INFLUX_TOKEN` in its environment. **7–8 Apr controller evidence is still lost**, but future outer ticks and decision-log writes now depend on the dedicated local credential rather than a copied env var.
 
-### Open: Forecast API Reliability
-
-Open-Meteo API failed intermittently from ~05:00 on 7 Apr (connection and decoding errors).
-
-Controller degrades gracefully (uses cached forecast, falls back to live outside_temp) but prolonged outages leave forecast_outside_c stale. Consider: local caching with longer TTL, fallback to a second weather API, or alerting when forecast age exceeds threshold.
-
-**8 Apr data review (08:33 BST)**: no fresh Open-Meteo errors appeared in controller logs after the previous review. Current `forecast_outside_c:null` entries in the journal are dominated by the wider blind-controller condition, so this item remains open but did not materially advance in this window.
-
-**8 Apr data review (16:50 BST)**: still quiet. Journal shows successful forecast refreshes at 10:02, 11:03, 12:09, 13:12, and 14:48 BST with no new connection or decode errors, and `forecast_outside_c` remained populated on all post-recovery outer ticks. Keep this open as a known intermittent upstream risk, but it did not regress in this review window.
-
-**9 Apr data review (08:55 BST)**: Still quiet. No Open-Meteo connection or decoding errors were logged overnight or into the morning.
-
-### Open: Wind and PV Tuning
-
-Wind compensation and PV-aware curve adjustment are modelled but not tuned against real data. Low urgency until weather provides test cases (windy cold day, sustained high PV day with heating demand).
-
-**8 Apr data review (16:50 BST)**: this window gave a sunny warm spell, but not a useful tuning case. Leather stayed above target (mostly 21.2–21.6°C), the compressor spent much of the afternoon in standby or DHW, and there was no meaningful space-heating demand to separate wind/PV effects from simple no-load conditions. Item remains open.
-
-**9 Apr data review (08:55 BST)**: The warm weather continues (overnight outside temp ~15-18°C), providing no opportunity to tune cold-weather/windy curve dynamics. Item remains open.
-
-### Progressing: Active-Heating Outer/Inner Loop Conflict
-
-Morning active-heating traces showed a separate issue from the warm-end saturation bug: the outer loop kept reapplying a lower model seed even while the inner loop was still correcting a real positive flow error.
-
-Root cause: every 15 minutes the outer loop wrote the model seed (~1.1–1.3) back to `Hc1HeatCurve` even when `Hc1ActualFlowTempDesired` remained >0.5°C below `target_flow_c`. The 60-second inner loop then had to climb back through the same range, generating repetitive warnings and stretching convergence. Repo fix (9 Apr, not yet validated live): defer downward outer-loop resets while the VRC still wants materially less flow than target. A regression test now replays the captured 9 Apr relearn-cycle samples to lock this behaviour in.
-
-**9 Apr data review (08:55 BST)**: this was visible repeatedly during the morning heating phase. Example: at 06:36 BST the outer loop wrote `Hc1HeatCurve=1.09` for `target_flow_c=28.3°C`, but `flow_desired_c` was only 25.9°C; the inner loop then climbed 1.21→1.62 before the next outer tick reset it again. Similar relearn cycles occurred at 06:51, 07:06, 07:22, and 07:37 BST, eventually reaching 2.04. Status stays progressing until the repo fix is deployed and a morning heating window shows the curve being held instead of repeatedly reset downward.
-
-### Progressing: Warm-End Outer-Loop Curve Saturation
-
-Very warm low-load daytime conditions exposed a bad outer-loop seed, not a general proof that the controller needs extreme curves in mild weather.
-
-Root cause: the inverse curve formula divided by `(setpoint - outside)^1.25` with only a tiny lower bound. When forecast outside approached or exceeded the 19°C VRC setpoint, the denominator collapsed toward zero, so modest target-flow requests (~24–26°C) produced absurd raw curve values that were then clamped to the 4.00 ceiling. This is a warm-end inversion artefact, not evidence that mild-weather heating genuinely needs curve 4.00.
-
-Repo fix (9 Apr, not yet validated live): when forecast outside is at or above setpoint, the outer loop now bypasses the inverse formula and seeds the known-safe baseline curve (0.55). The inner loop remains unchanged and still closes on `Hc1ActualFlowTempDesired` during real heating demand.
-
-Observed evidence before the fix: on 8 Apr after the late-morning DHW cycle, outer ticks wrote `Hc1HeatCurve=3.47` at 12:37 BST and then `Hc1HeatCurve=4.00` at 14:12 BST while `target_flow_c` had fallen to only ~24.8–26.7°C and the compressor was mostly in standby. A service restart at 14:45 briefly reset the baseline curve to 0.55, then the next outer tick immediately wrote 4.00 again.
-
-**9 Apr data review (08:55 BST)**: The issue repeated during the 8 Apr evening. Between 17:00 and 20:00 BST, the controller continued to log `model_required_curve: 4.0` while `target_flow_c` was only 23.7–25.2°C. Separately, the 9 Apr morning heating phase produced inner-loop warnings as the curve climbed to 2.04 while chasing a real ~28°C target flow. Treat those active-heating warnings as a distinct calibration/black-box question, not the same warm-end saturation bug. Status stays progressing until the repo fix is deployed and the next warm spell confirms sane outer-loop seeds.
-
 ## DHW Scheduling
 
-DHW scheduling operational within the adaptive controller. See [[heating-control#Overnight Strategy#Active DHW Scheduling]] for current logic and [[domain#DHW Cylinder]] for cylinder facts.
+DHW scheduling is operational within the adaptive controller. This section uses the same status taxonomy as the controller section, plus **Manual** for items that cannot be automated in software. See [[heating-control#Overnight Strategy#Active DHW Scheduling]] for current logic and [[domain#DHW Cylinder]] for cylinder facts.
 
 Detailed plan: [`docs/dhw-plan.md`](../docs/dhw-plan.md)
 
 ### Open: Volume-Aware DHW Demand Prediction
 
-This remains the main actionable DHW software item. T1 standby decay is calibrated but the model still assumes no draws occur.
+This remains the main actionable DHW software item. T1 standby decay is calibrated, but the model still assumes no draws occur.
 
-On 47% of nights there's an overnight shower (avg 62L, max 120L). The 27 Mar night showed the risk: a 120L shower at 23:23 dropped T1 from 43.5→~37°C, below the 40°C comfort floor, and the model would have predicted 41.8°C. Demand slots aligned to Cosy charge windows: morning 07:00-13:00 (71% of days, avg 89L), afternoon 16:00-22:00 (24%, avg 72L), overnight 22:00-04:00 (47%, avg 62L). Next step: budget expected demand per slot using `dhw_capacity` from InfluxDB alongside T1.
+On 47% of nights there's an overnight shower (avg 62L, max 120L). The 27 Mar night showed the risk: a 120L shower at 23:23 dropped T1 from 43.5→~37°C, below the 40°C comfort floor, and the model would have predicted 41.8°C. Recent charge reviews have shown both partial/no-crossover and full-crossover sessions, so the missing piece is still the draw-aware demand budget rather than basic charge execution. Demand slots aligned to Cosy charge windows: morning 07:00–13:00 (71% of days, avg 89L), afternoon 16:00–22:00 (24%, avg 72L), overnight 22:00–04:00 (47%, avg 62L). Next step: budget expected demand per slot using `dhw_capacity` from InfluxDB alongside T1.
 
-**8 Apr data review (08:33 BST)**: one evening charge ran 22:23–00:02 BST without T1/Hwc crossover; T1 bottomed at ~40.5°C and remaining litres recovered to 177L by 07:30 BST. No overnight draw event appeared in this window, so it did not test the volume-budgeting gap.
+**11 Apr data review (08:39 BST)**: This exact review window did not add a cleaner demand-budget anchor, but it also did not reduce the uncertainty. `dhw-history` saw **3 full-crossover charges** in the daytime part of the window, and the controller later enabled the Sunday morning timer at **07:03 BST** because predicted **07:00 T1 = 35.2°C**. By the review end, `T1` was still only **40.4°C** and `remaining_litres` had fallen back to **0L**, so the software still lacks a draw-aware demand budget for deciding when a recharge is really needed. Item stays open.
 
-**8 Apr data review (16:50 BST)**: the daytime window showed two more charges in the joined history review, with one full and one partial outcome, and a large T1/HwcStorageTemp divergence peak of 15.9°C. Hot water still ended the window practical (`T1` ~45.1°C), but there was still no overnight draw event to test whether slot budgeting against expected demand would have changed the plan. Status remains open.
+### Manual: Seasonal Eco→Normal Switch
 
-**9 Apr data review (08:55 BST)**: A DHW cycle triggered at 22:00 BST (HwcStorageTemp 29.5°C), completing by 00:04 BST (43.0°C). No overnight draws occurred — `dhw_t1_c` fell only from 43.9°C to 43.5°C via expected standby decay. Status remains open as there's still no overnight shower event to test the volume gap.
+The seasonal Eco→Normal mode change remains manual and calendar-driven.
 
-### Open: Seasonal Eco→Normal Switch
+`hmu HwcMode` is read-only from eBUS, so the switch must still be done physically on the aroTHERM controller. The normal mode threshold remains around November because it changes charges from ~0.8–1.2 kWh eco top-ups to ~2.4 kWh normal charges. No software fix is possible.
 
-Still manual / calendar-driven. `hmu HwcMode` is read-only from eBUS - must be changed physically on the aroTHERM controller. Switch to normal (2.4 kWh charges) around November. No software fix possible.
-
-**8 Apr data review (16:50 BST)**: no change. The system remained in `hwc_mode:"eco"` throughout this review window, which is still the correct seasonal setting.
-
-**9 Apr data review (08:55 BST)**: No change.
+**11 Apr data review (08:39 BST)**: No seasonal change. The usable controller rows still showed `hwc_mode:"eco"`; the only deviations were transient read failures (`ERR: no signal`, `ERR: read timeout`) during the broader telemetry-hang issue, not a real mode switch.
 
 ## Pico eBUS Adapter
 
-Replacing the closed-source ESP32 firmware with Rust/Embassy on a Pi Pico W. Phase 1 (`ebus-core/` crate, 22 tests) complete. See [[infrastructure#eBUS Stack]] for the current live stack.
+This workstream replaces the closed-source ESP32 firmware with Rust/Embassy on a Pi Pico W. Phase 1 (`ebus-core/` crate, 22 tests) is complete; Phase 2 is still waiting on hardware/test-bench time. See [[infrastructure#eBUS Stack]] for the live stack.
 
 Detailed plan: [`docs/pico-ebus-plan.md`](../docs/pico-ebus-plan.md)
 
 ### Next: Phase 2 - PIO UART
 
-Still waiting on hardware/test-bench time. Next step is PIO RX + TX at 2400/8N1 on the Pico W, validated by loopback and Saleae timing checks. Prerequisites: Pico W board, xyzroe eBus-TTL adapter, and Embassy + PIO setup.
+The next implementation step is still PIO RX + TX at 2400/8N1 on the Pico W, validated by loopback and Saleae timing checks.
 
-**8 Apr data review (16:50 BST)**: no change in this software/data review window. The controller/log evidence does not affect Pico adapter status.
+Prerequisites remain: Pico W board, xyzroe eBus-TTL adapter, and Embassy + PIO setup.
 
-**9 Apr data review (08:55 BST)**: No change.
+**11 Apr data review (08:39 BST)**: No change in this controller/data review window.

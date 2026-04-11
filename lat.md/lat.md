@@ -10,3 +10,4 @@ This index maps the project's structured knowledge graph so agents can find the 
 - [[history-evidence]] — Historical heating/DHW reconstruction, history-review, evidence boundaries
 - [[infrastructure]] — Monitoring devices, MQTT topology, eBUS stack, sensors, VRC 700 baseline
 - [[plan]] — Open items, next steps, and links to detailed plan docs in `docs/`
+- [[reviews]] — Archived dated plan-item reviews so `plan.md` only carries the latest status note per active item

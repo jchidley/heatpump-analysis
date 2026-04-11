@@ -156,8 +156,10 @@ ak get influxdb
 Production controller token lives in:
 
 ```text
-/etc/adaptive-heating-mvp.env
+/etc/adaptive-heating-mvp/influx.token
 ```
+
+It is injected into the service via systemd `LoadCredential=`. `/etc/adaptive-heating-mvp.env` remains for non-Influx env vars only.
 
 See [`../deploy/SECRETS.md`](../deploy/SECRETS.md).
 

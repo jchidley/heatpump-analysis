@@ -119,7 +119,7 @@ Fitted from 5–8 independent cooling segments per room (2 calibration nights, D
 
 C-weighted mean operational τ: 35h. This means the coast-then-hold strategy (minimise electrical input by holding the comfort floor at equilibrium flow) applies to the whole house, not just Leather.
 
-Elvina is the key outlier: the model predicts τ=44h but empirical is 34h. Full overnight moisture analysis (13 sensors, 6 nights) shows the entire 7.4 W/K excess is ventilation (ACH ≈ 1.0 vs model 0.51). Fabric residual (11 W/K) is actually below model (14.5) — roof insulation appears fine. Closing trickle vents (with HEPA purifier running) would cut UA from 32 to ~17 W/K, gaining ~3°C overnight. See [[plan#Plan#Heating Controller#Actionable: Elvina Overnight Comfort]].
+Elvina is the key outlier: the model predicts τ=44h but empirical is 34h. Full overnight moisture analysis (13 sensors, 6 nights) shows the entire 7.4 W/K excess is ventilation (ACH ≈ 1.0 vs model 0.51). Fabric residual (11 W/K) is actually below model (14.5) — roof insulation appears fine. Closing trickle vents (with HEPA purifier running) would cut UA from 32 to ~17 W/K, gaining ~3°C overnight. See [[plan#Plan#Heating Controller#Active Work#Actionable: Elvina Overnight Comfort]].
 
 ## Solver Functions
 

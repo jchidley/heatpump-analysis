@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chrono::{DateTime, FixedOffset, NaiveTime, Timelike};
+use chrono::{DateTime, FixedOffset};
 use serde::Serialize;
 
 use super::config::{load_thermal_config, resolve_influx_token};
@@ -1882,13 +1882,6 @@ fn clip_period_to_waking_hours(period: &Period) -> Vec<Period> {
         day_start += chrono::Duration::days(1);
     }
     result
-}
-
-fn is_waking_time(time: NaiveTime) -> bool {
-    let minutes = time.hour() * 60 + time.minute();
-    let start = WAKING_START_HOUR * 60;
-    let end = WAKING_END_HOUR * 60;
-    minutes >= start && minutes < end
 }
 
 fn controller_event_from_row(row: &ControllerRow) -> ControllerEvent {

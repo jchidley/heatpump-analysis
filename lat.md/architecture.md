@@ -7,7 +7,7 @@ Three Rust binaries sharing a thermal solver library. Data flows from emoncms/In
 The project produces three binaries from a single Cargo workspace with a library crate.
 
 - **`heatpump-analysis`** (default binary): CLI for data sync, state classification, COP analysis, thermal modelling, DHW session analysis, and history review. ~1,411 lines in `main.rs` + modules.
-- **`adaptive-heating-mvp`**: long-lived service on pi5data. Model-predictive heating controller with HTTP API. ~2,053 lines. Depends on the thermal solver via `heatpump_analysis::thermal::bisect_mwt_for_room()`.
+- **`adaptive-heating-mvp`**: long-lived service on pi5data. Model-predictive heating controller with HTTP API. ~2,574 lines. Depends on the thermal solver via `heatpump_analysis::thermal::bisect_mwt_for_room()`.
 - **`thermal-regression-check`**: CI tool comparing thermal artifacts against baselines. 607 lines.
 
 `src/lib.rs` exposes `pub mod thermal` so the adaptive controller can call solver functions as a library dependency. `thermal_geometry.json` must be deployed alongside the binary.

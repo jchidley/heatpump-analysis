@@ -72,13 +72,15 @@ Temperature and humidity from separate sources.
 
 - **Temperature** (real-time): `ebusd/poll/OutsideTemp` — VRC 700 OAT sensor on shaded SE wall (well-sited, no compressor or solar influence), 30s interval
 - **Temperature** (cross-check): emoncms feed 503093 — Met Office hourly
-- **Humidity** (live): `outside_temp_humid` SNZB-02P on shaded SE wall near OAT sensor. Paired 7 Apr 2026. Provides: (a) direct AH_out for absolute ACH in all occupied bedrooms, (b) OAT temperature cross-check from a nearby but independent position, (c) before/after evidence for Elvina trickle vent closure. **Note**: link quality low (6) at initial pairing — monitor for dropouts.
+- **Humidity** (live): `outside_temp_humid` SNZB-02P on shaded SE wall near OAT sensor. Paired 7 Apr 2026. Provides: (a) direct AH_out for absolute ACH in all occupied bedrooms, (b) before/after evidence for Elvina trickle vent closure. **Note**: link quality low (6) at initial pairing — monitor for dropouts. **Microclimate**: runs ~5–9°C warmer than ebusd OAT during afternoon (different wall position, less exposed to airflow) — these are two distinct microclimates. **AH analysis rule**: always use SNZB-02P's own (T, RH) pair together to compute AH_out — never combine ebusd OAT temperature with SNZB-02P humidity, as they measure different points.
 - **Conservatory temperature**: `ebusd/poll/Z2RoomTemp` — VRC 700 Zone 2 room sensor, mounted in conservatory. Reads ~1°C below the former SNZB-02P position. Updated in `thermal_geometry.json`.
 - **Leather humidity**: `emon/emonth2_23/humidity` — emonth2 in Leather. Provides 4th occupied-room data point for overnight moisture network (Parson Russell Terrier, ~10 g/h).
 
 ## Secrets
 
-InfluxDB token on pi5data: `/etc/adaptive-heating-mvp.env` (root:root 0600, systemd EnvironmentFile). Same token as Telegraf. Dev machine: `ak get influxdb`. See `deploy/SECRETS.md`.
+pi5data keeps the controller InfluxDB token in a root-only credential file, not in the service environment.
+
+The token lives at `/etc/adaptive-heating-mvp/influx.token` (root:root 0600) and systemd injects it with `LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token`. It is a dedicated controller token, separate from Telegraf. Dev machine ad-hoc queries still use `ak get influxdb`. See `deploy/SECRETS.md`.
 
 ### Octopus API Credentials
 
@@ -88,7 +90,7 @@ Credentials for the `octopus-tariff` crate resolve in order: env vars → `~/.oc
 - `~/.octopus-api-key` plain-text file (API key only, chmod 600) — used on emonpi where no `.envrc` is present
 - `~/github/octopus/.envrc` sourced via bash — canonical store on dev machines, shared across `octopus`, `octopus-tariff`, and `heatpump-analysis`
 
-On pi5data the env vars are injected by the systemd `EnvironmentFile` at `/etc/adaptive-heating-mvp.env`.
+On pi5data the Octopus env vars are still injected by the systemd `EnvironmentFile` at `/etc/adaptive-heating-mvp.env`, but the InfluxDB token is no longer passed via environment.
 
 ### Ad-hoc InfluxDB Queries from Dev Machine
 
