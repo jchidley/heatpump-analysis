@@ -2,6 +2,8 @@
 
 This index maps the project's structured knowledge graph so agents can find the current architecture, domain rules, constraints, and operationally important subsystems.
 
+It also links to file-level source index pages when individual source files need their own dedicated `lat.md` entries.
+
 - [[domain]] — Core domain model: operating states, house, DHW cylinder, tariff, feeds
 - [[constraints]] — Hard rules, known pitfalls, sensor gotchas, eBUS behaviour
 - [[architecture]] — Binaries, module dependencies, data flow, configuration, implicit contracts
@@ -12,4 +14,5 @@ This index maps the project's structured knowledge graph so agents can find the 
 - [[plan]] — Open items, next steps, and links to detailed plan docs in `docs/`
 - [[reviews]] — Archived dated plan-item reviews so `plan.md` only carries the latest status note per active item
 - [[tests]] — Targeted executable specs for controller invariants and other migration-sensitive behaviour that need explicit code coverage
-- [[postgres-migration]] — Repo-local PostgreSQL/TimescaleDB migration plan aligned with the shared energy-hub cutover
+- [[tsdb-migration]] — Sole repo-local outstanding-work tracker for the final PostgreSQL/TimescaleDB cutover in this repo
+- [[src]] — File-level source index for source files that have dedicated `lat.md` documentation

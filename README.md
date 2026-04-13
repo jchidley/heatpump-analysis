@@ -56,16 +56,16 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `all` | Run summary + cop-by-temp + hourly + daily + degree-days |
 | `thermal-rooms` | Room summary table (geometry, thermal mass, radiators, pipes) |
 | `thermal-connections` | Inter-room connections and doorway exchanges |
-| `thermal-analyse` | Live energy balance from InfluxDB (per-room heat flows) |
+| `thermal-analyse` | Live TSDB-backed energy balance (per-room heat flows; PostgreSQL-first, legacy Influx compatibility remains in migration tail) |
 | `thermal-equilibrium` | Solve for equilibrium room temperatures at given conditions |
 | `thermal-moisture` | Condensation risk + overnight humidity balance |
-| `thermal-calibrate` | Calibrate thermal model from InfluxDB cooldown data |
+| `thermal-calibrate` | Calibrate thermal model from house telemetry cooldown data via the shared TSDB seam |
 | `thermal-validate` | Validate thermal model on holdout windows |
 | `thermal-fit-diagnostics` | Period-by-period cooldown fit diagnostics |
 | `thermal-operational` | Operational validation (heating/DHW/off with solar) |
 | `thermal-snapshot` | Export/import reproducibility snapshots (human-gated) |
 | `thermal-control-table` | Generate MWT control table for adaptive heating |
-| `dhw-sessions` | Analyse DHW draw/charge sessions from InfluxDB |
+| `dhw-sessions` | Analyse DHW draw/charge sessions from house telemetry via the shared TSDB seam |
 | `heating-history` | Reconstruct fused high-resolution heating-history evidence; defaults to last 7 days ending now |
 | `dhw-history` | Reconstruct fused high-resolution DHW-history evidence; defaults to last 7 days ending now |
 | `history-review` | Comprehensive high-resolution 7-day-to-now review for `heating`, `dhw`, or `both` |
@@ -137,9 +137,12 @@ Start with **[docs/README.md](docs/README.md)** for the human docs map.
 - **[docs/history-evidence-workflows.md](docs/history-evidence-workflows.md)** — step-by-step retrospective analysis workflows
 
 ### Operations and implementation maps
+- **[lat.md/tsdb-migration.md](lat.md/tsdb-migration.md)** — sole repo-local TSDB migration tracker for heatpump-analysis cutover work
+- **`~/github/energy-hub/lat.md/tsdb-migration.md`** — shared platform TSDB migration tracker for schema, ingest, gap-fill, and final decommission
 - **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — operational setup/runbook detail beyond the lat summary
 - **[docs/emon-installation-runbook.md](docs/emon-installation-runbook.md)** — rebuild/provisioning procedures for emon devices
-- **[docs/code-truth/](docs/code-truth/)** — derived-from-code implementation maps
+- **[docs/implementation-maps/](docs/implementation-maps/)** — preserved implementation snapshots for onboarding and file discovery
+- **[lat.md/src/](lat.md/src/)** — file-level source pages for implementation discovery
 - **[docs/octopus-data-inventory.md](docs/octopus-data-inventory.md)** — Octopus data audit
 - **[docs/pico-ebus-plan.md](docs/pico-ebus-plan.md)** — Pico W eBUS adapter build plan
 

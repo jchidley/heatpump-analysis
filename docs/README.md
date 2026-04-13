@@ -11,7 +11,8 @@ Choose the question you are trying to answer.
 | What does the system currently do? | [`../lat.md/`](../lat.md/) |
 | Why was a control or DHW decision made? | [Heating plan](heating-plan.md), [DHW plan](dhw-plan.md) |
 | How do I perform an operational task? | [History evidence workflows](history-evidence-workflows.md), [emon installation runbook](emon-installation-runbook.md), [`../deploy/SECRETS.md`](../deploy/SECRETS.md) |
-| Where is this implemented in code? | [`code-truth/`](code-truth/) |
+| Where is TSDB migration tracked? | [`../lat.md/tsdb-migration.md`](../lat.md/tsdb-migration.md) for repo-local cutover, `~/github/energy-hub/lat.md/tsdb-migration.md` for shared platform phases |
+| Where is this implemented in code? | [`implementation-maps/`](implementation-maps/), [`../lat.md/src/`](../lat.md/src/), and the source tree |
 | What should an agent remember while working? | [`../AGENTS.md`](../AGENTS.md) |
 
 ## Human-facing docs by type
@@ -59,24 +60,26 @@ Use [`lat.md/`](../lat.md/) when asking what is true **now**.
 - [`../lat.md/thermal-model.md`](../lat.md/thermal-model.md)
 - [`../lat.md/history-evidence.md`](../lat.md/history-evidence.md)
 - [`../lat.md/infrastructure.md`](../lat.md/infrastructure.md)
+- [`../lat.md/tsdb-migration.md`](../lat.md/tsdb-migration.md)
 
 Use this for:
 - architecture and implicit contracts
 - current domain facts and operating assumptions
 - constraints and gotchas
 - infrastructure inventory and baseline settings
+- the repo-local TSDB migration tracker, alongside the shared `energy-hub` migration file for platform-wide phases
 
-## Implementation maps (`code-truth/`)
+## Implementation maps (`implementation-maps/` + `lat.md/src/` + source tree)
 
-Use `code-truth/` when the question is: **where in the repo do I change this?**
+Use these when the question is: **where in the repo do I change this?**
 
-- `code-truth/REPO_OVERVIEW.md`
-- `code-truth/ARCHITECTURE.md`
-- `code-truth/REPOSITORY_MAP.md`
-- `code-truth/PATTERNS.md`
-- `code-truth/DECISIONS.md`
+- `implementation-maps/` — preserved implementation snapshots migrated from the retired `code-truth/` folder
+- `../lat.md/src/` — file-level source pages that have dedicated `lat.md` entries
+- `../src/` — primary Rust implementation
+- `../model/` — controller and thermal config inputs
+- `../scripts/` — deployment and verification helpers
 
-These documents are derived from source and are best for onboarding, file discovery, and architecture drift checks.
+Thematic current truth still lives in `../lat.md/`; these paths are for code location and implementation discovery.
 
 ## Practical rule of thumb
 
@@ -84,5 +87,5 @@ These documents are derived from source and are best for onboarding, file discov
 - **What is true right now?** → [`../lat.md/`](../lat.md/)
 - **How do I perform an operational task?** → runbooks and how-to docs
 - **How do I review a past window?** → `history-evidence-workflows.md`
-- **Where do I change the code?** → `docs/code-truth/`
+- **Where do I change the code?** → `implementation-maps/`, `../lat.md/src/`, and the source tree
 - **What should an agent keep in mind?** → `../AGENTS.md`

@@ -16,3 +16,5 @@ cosy-scheduler/target/
 .pi
 .codex
 lat.md/.cache/
+.obsidian/
+lat.md/.obsidian/

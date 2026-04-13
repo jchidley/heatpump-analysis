@@ -153,7 +153,7 @@ Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5
 
 ## Where To Read Next
 
-Use `lat.md/` for current project truth and `docs/code-truth/` for code location maps.
+Use `lat.md/` for current project truth and `lat.md/src/` plus the source tree for code location maps.
 
 - `lat.md/constraints.md` — boundaries, gotchas, eBUS timer rules, duplicated values
 - `lat.md/domain.md` — operating states, house model, DHW cylinder, tariff, feeds
@@ -161,7 +161,8 @@ Use `lat.md/` for current project truth and `docs/code-truth/` for code location
 - `lat.md/infrastructure.md` — hosts, MQTT, eBUS stack, room sensors, baseline VRC 700 settings
 - `lat.md/architecture.md` — binaries, data flow, config split, implicit contracts
 - `lat.md/history-evidence.md` — default review window and history-review boundaries
-- `docs/code-truth/` — file map, architecture, patterns, decisions
+- `lat.md/tsdb-migration.md` — sole repo-local TSDB migration tracker; shared platform truth stays in `~/github/energy-hub/lat.md/tsdb-migration.md`
+- `lat.md/src/` — file-level source pages when a source file has dedicated documentation
 
 ## Fast reminders
 
@@ -169,7 +170,8 @@ Use `lat.md/` for current project truth and `docs/code-truth/` for code location
 - Adaptive controller API: `http://pi5data:3031` (phone proxy `http://pi5data:3030`)
 - Infrastructure rebuild/recovery: `heating-monitoring-setup.md`, `docs/emon-installation-runbook.md`
 - Secrets and tokens: `deploy/SECRETS.md`
-- **InfluxDB queries from dev machine**: `INFLUX_TOKEN=$(ak get influxdb)` then `curl` to `http://pi5data:8086/api/v2/query?org=home` with Flux. See `lat.md/infrastructure.md#Ad-hoc InfluxDB Queries from Dev Machine`.
-- **InfluxDB-first analysis**: push all filtering, aggregation, pivoting, and arithmetic into Flux queries. Client-side code (Python/shell) is for final formatting only. See `lat.md/constraints.md#InfluxDB-First Analysis`.
+- **PostgreSQL queries from dev machine**: use `TIMESCALEDB_CONNINFO` with `psql`. See `lat.md/infrastructure.md#Ad-hoc PostgreSQL Queries from Dev Machine`.
+- **PostgreSQL-first analysis**: push all filtering, aggregation, windowing, and arithmetic into SQL/TimescaleDB queries. Client-side code (Python/shell) is for final formatting only. See `lat.md/constraints.md#PostgreSQL-First Analysis`.
+- **Legacy Flux/Influx diagnostics**: only use them when explicitly working on the migration tail tracked in `lat.md/tsdb-migration.md`.
 
 For operational facts, gotchas, and hard boundaries, prefer `lat.md/` instead of duplicating them here.

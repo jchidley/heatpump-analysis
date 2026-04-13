@@ -1,6 +1,8 @@
-# Code-Truth Documents
+# Implementation Maps
 
-These documents describe the implementation structure of the repository as observed in source at the time they were generated/audited.
+These documents preserve the retired `docs/code-truth/` snapshots so implementation-discovery detail was not lost when the folder was removed.
+
+They describe the implementation structure of the repository as observed in source at the time they were generated/audited.
 
 Use them for:
 - locating code
