@@ -26,6 +26,10 @@ scp "${LOCAL_ROOT}/src/thermal.rs" "${REMOTE}:${REMOTE_DIR}/src/thermal.rs"
 # octopus_tariff.rs — thin re-export of the shared octopus-tariff crate
 scp "${LOCAL_ROOT}/src/octopus_tariff.rs" "${REMOTE}:${REMOTE_DIR}/src/octopus_tariff.rs"
 
+# Cargo manifest/lockfile — required when dependencies change (for example TSDB postgres support)
+scp "${LOCAL_ROOT}/Cargo.toml" "${REMOTE}:${REMOTE_DIR}/Cargo.toml"
+scp "${LOCAL_ROOT}/Cargo.lock" "${REMOTE}:${REMOTE_DIR}/Cargo.lock"
+
 # Shared octopus-tariff crate (path dependency — must exist on pi5data)
 ssh "${REMOTE}" "mkdir -p ${OCTOPUS_TARIFF_REMOTE}/src"
 scp "${OCTOPUS_TARIFF_SRC}/Cargo.toml" "${REMOTE}:${OCTOPUS_TARIFF_REMOTE}/Cargo.toml"
@@ -40,7 +44,7 @@ scp "${LOCAL_ROOT}/model/adaptive-heating-mvp.toml" \
     "${REMOTE}:${REMOTE_DIR}/model/adaptive-heating-mvp.toml"
 
 echo "=== Sources synced. Now build on pi5data: ==="
-echo "  ssh pi5data 'cd ${REMOTE_DIR} && . ~/.cargo/env && cargo build --release'"
+echo "  ssh pi5data 'cd ${REMOTE_DIR} && . ~/.cargo/env && cargo build --release && cp target/release/heatpump-analysis target/release/adaptive-heating-mvp'"
 echo ""
 echo "Then restart:"
 echo "  ssh pi5data 'sudo systemctl restart adaptive-heating-mvp'"

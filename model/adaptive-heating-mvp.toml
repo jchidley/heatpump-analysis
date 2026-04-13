@@ -1,9 +1,6 @@
 ebusd_host = "127.0.0.1"
 ebusd_port = 8888
-influx_url = "http://127.0.0.1:8086"
-influx_org = "home"
-influx_bucket = "energy"
-influx_token_env = "INFLUX_TOKEN"
+postgres.conninfo_env = "TIMESCALEDB_CONNINFO"
 http_bind = "0.0.0.0:3031"
 state_file = "/home/jack/.local/state/adaptive-heating-mvp/state.toml"
 jsonl_log_file = "/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl"

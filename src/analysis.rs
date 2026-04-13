@@ -988,6 +988,7 @@ pub fn design_comparison(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use polars::df;
     use std::path::Path;
     use std::sync::Once;
 
@@ -995,7 +996,8 @@ mod tests {
 
     fn ensure_config_loaded() {
         INIT_CONFIG.call_once(|| {
-            crate::config::load(Path::new("config.toml")).expect("config.toml should load for tests");
+            crate::config::load(Path::new("config.toml"))
+                .expect("config.toml should load for tests");
         });
     }
 
@@ -1049,9 +1051,15 @@ mod tests {
         let thresholds = &config().thresholds;
 
         let states = classify_states(
-            &[Some(thresholds.elec_running_w - 1.0), Some(thresholds.elec_running_w + 100.0)],
+            &[
+                Some(thresholds.elec_running_w - 1.0),
+                Some(thresholds.elec_running_w + 100.0),
+            ],
             &[Some(-200.0), Some(2000.0)],
-            &[Some(thresholds.dhw_enter_flow_rate + 0.2), Some(thresholds.dhw_exit_flow_rate - 0.1)],
+            &[
+                Some(thresholds.dhw_enter_flow_rate + 0.2),
+                Some(thresholds.dhw_exit_flow_rate - 0.1),
+            ],
             &[thresholds.defrost_dt_threshold - 0.1, 1.0],
         );
 
@@ -1093,8 +1101,8 @@ mod tests {
             &[e; 3],
             &[Some(2000.0), Some(-200.0), Some(2000.0)],
             &[
-                Some(14.0), // heating
-                Some(14.0), // defrost (heat <= 0)
+                Some(14.0),       // heating
+                Some(14.0),       // defrost (heat <= 0)
                 Some(transition), // recovery → pre_defrost=heating
             ],
             &[1.0, -1.0, 1.0],
@@ -1117,7 +1125,11 @@ mod tests {
             &[Some(14.0)],
             &[thresholds.defrost_dt_threshold],
         );
-        assert_eq!(at_boundary, vec!["heating"], "exact threshold should be heating, not defrost");
+        assert_eq!(
+            at_boundary,
+            vec!["heating"],
+            "exact threshold should be heating, not defrost"
+        );
 
         // Just below threshold → defrost
         let below = classify_states(
@@ -1144,5 +1156,36 @@ mod tests {
         );
 
         assert_eq!(states, vec!["heating", "heating"]);
+    }
+
+    // @lat: [[tests#CLI state classification#Enrich derives state delta-T and running-only COP]]
+    #[test]
+    fn enrich_derives_state_delta_t_and_running_only_cop() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+
+        let running_elec = thresholds.elec_running_w + 100.0;
+        let running_heat = 2400.0;
+        let df = df!(
+            "elec_w" => &[thresholds.elec_running_w - 1.0, running_elec],
+            "heat_w" => &[0.0, running_heat],
+            "flow_rate" => &[14.0, 14.0],
+            "flow_t" => &[35.0, 40.0],
+            "return_t" => &[30.0, 32.0],
+            "outside_t" => &[8.0, 8.0],
+        )
+        .expect("test dataframe");
+
+        let enriched = enrich(&df).expect("enrich should succeed");
+
+        let states: Vec<Option<&str>> = enriched.column("state").unwrap().str().unwrap().into_iter().collect();
+        assert_eq!(states, vec![Some("idle"), Some("heating")]);
+
+        let delta_t: Vec<Option<f64>> = enriched.column("delta_t").unwrap().f64().unwrap().into_iter().collect();
+        assert_eq!(delta_t, vec![Some(5.0), Some(8.0)]);
+
+        let cop: Vec<Option<f64>> = enriched.column("cop").unwrap().f64().unwrap().into_iter().collect();
+        assert_eq!(cop[0], None);
+        assert_eq!(cop[1], Some(running_heat / running_elec));
     }
 }

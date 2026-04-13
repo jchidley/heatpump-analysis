@@ -46,6 +46,14 @@ This spec verifies that a normal-mode overnight DHW event is deferred to the nex
 
 This spec verifies that a normal-mode overnight DHW event launches immediately in the overnight battery-backed slot once discretionary headroom is sufficient to cover the expected charge.
 
+### Low remaining litres triggers DHW even when T1 looks safe
+
+This spec verifies that the scheduler now treats low `dhw.remaining_litres` as an independent recharge trigger, so a deceptively warm T1 cannot hide an already-depleted practical hot-water budget.
+
+### Recommended full litres caps optimistic remaining estimate
+
+This spec verifies that the scheduler caps `remaining_litres` by the latest `dhw_capacity.recommended_full_litres`, preventing an over-optimistic remaining-volume estimate from suppressing a needed recharge.
+
 ### Warm-end curve fallback uses the baseline seed
 
 This spec verifies that when forecast outside temperature is at or above the VRC setpoint, the outer loop seeds the known-safe baseline curve instead of inverting the ill-conditioned heat-curve formula.
@@ -110,10 +118,6 @@ This spec verifies that Cosy windows are sorted by start time regardless of conf
 
 This spec verifies that the morning DHW filter drops the Cosy window whose end time matches waking_start and keeps all others, controlling which timer slots are written to the VRC 700.
 
-### influx_field formats Some and returns None for None
-
-This spec verifies the InfluxDB line-protocol field formatter produces a name=value string for Some values and None for missing values.
-
 ### hours_until_time is always in 0 to 24 range
 
 This property test verifies across random time pairs that hours_until_time is always non-negative and strictly less than 24, and returns zero when now equals target.
@@ -144,7 +148,15 @@ This spec verifies that DHW scheduling maps overnight, Cosy, and non-Cosy gaps t
 
 ### Morning DHW timer skip uses dash-colon padding
 
-This spec verifies that disabling the morning fallback timer removes that window and pads the unused VRC 700 timer slots with `-:-`, matching the required eBUS encoding.
+This spec verifies that disabling the morning fallback timer removes that window and that any end-of-day evening slot is encoded as `-:-`, with unused slots also padded as `-:-` to match VRC 700 eBUS semantics.
+
+### Midnight tariff-window end normalizes for runtime matching
+
+This spec verifies that any imported tariff window ending at `00:00` is normalized to a same-day runtime end (`23:59`) before controller slot matching, so the evening Cosy slot still matches times like 22:30.
+
+### Midnight tariff-window end encodes as dash-colon for eBUS writes
+
+This spec verifies that any end-of-day tariff/timer window is encoded as `-:-` before VRC 700 timer writes, whether it still appears as raw `00:00` or has already been normalized to same-day `23:59` for runtime matching.
 
 ### DHW timer weekday rolls after waking
 
@@ -297,6 +309,10 @@ This spec verifies that when flow rate readings are absent (None), the state mac
 ### Defrost DT boundary is exclusive
 
 This spec verifies that the defrost DT threshold is strictly less-than (exclusive), so a sample exactly at the threshold stays in the current circuit rather than entering defrost.
+
+### Enrich derives state delta-T and running-only COP
+
+This spec verifies that analysis row enrichment adds `state` and `delta_t`, while leaving COP unset for non-running rows so idle samples do not fabricate efficiency.
 
 ## DHW session analysis
 
@@ -478,6 +494,12 @@ This spec verifies that string value extraction skips empty strings and the CSV 
 
 This spec verifies that target-flow series extraction drops rows where target_flow_c is None, producing only rows with actual flow targets.
 
+### Controller rows match between Flux and PostgreSQL on a representative window
+
+This ignored integration spec verifies that `query_controller_rows` returns the same controller events from Flux and PostgreSQL over one representative live window.
+
+It preserves timestamps, labels, and numeric optionals during the staged adaptive-heating-mvp reader migration.
+
 ### numeric_points_from_series maps DateTime-f64 pairs
 
 This spec verifies that numeric time-series helpers preserve timestamp ordering and pair each DateTime with its numeric value when converting summary evidence into display-ready points.
@@ -588,7 +610,7 @@ This spec verifies that record-count drop gates are skipped when the baseline ha
 
 ## InfluxDB wire-format parsing
 
-These tests pin the annotated CSV parsing contract that downstream consumers depend on. The TimescaleDB migration replaces this parser — these specs define the output shape to preserve.
+These tests are now legacy-compatibility specs for the remaining Flux/CSV migration tail. They should stay only while raw Influx parsing still exists; end-state PostgreSQL work belongs in [[tsdb-migration]].
 
 ### Empty CSV input returns empty vec
 
@@ -618,33 +640,35 @@ This spec verifies that a CSV containing only annotation lines and no data rows 
 
 This spec verifies that the timestamp parser handles Z-suffixed, explicit +00:00, and non-zero offset RFC3339 formats, producing correct and equivalent Unix timestamps.
 
-### parse_dt rejects non-RFC3339 input
+### parse_dt rejects invalid timestamp input
 
-This spec verifies that space-separated datetime strings, bare text, and empty strings are rejected, documenting the format boundary that the PostgreSQL migration must respect.
+This spec verifies that incomplete timestamps without timezone information, bare text, and empty strings are rejected so row adapters fail loudly on malformed source data.
 
 ## Query return contracts
 
-These tests pin the typed output shape that each InfluxDB query function produces from its CSV response. The PostgreSQL migration must preserve these contracts: same field names, same types, same sort order.
+These tests pin the typed output shape that TSDB readers must preserve across the migration. The transport may change, but the returned field names, types, and sort order must remain stable for callers.
 
 ### Room temps extracts timestamp-topic-value triples
 
-This spec verifies that room temperature CSV rows are parsed into (DateTime, topic_string, f64) triples sorted by timestamp, preserving both the topic identifier and the numeric value for multi-sensor queries.
+This spec verifies that room temperature query results are exposed as (DateTime, topic_string, f64) triples sorted by timestamp, preserving both the topic identifier and the numeric value for multi-sensor queries.
 
 ### Outside temp extracts timestamp-value pairs sorted by time
 
-This spec verifies that outside temperature CSV rows are parsed into (DateTime, f64) pairs and sorted by timestamp, matching the contract that calibration and display modules depend on.
+This spec verifies that outside temperature query results are exposed as (DateTime, f64) pairs sorted by timestamp, matching the contract that calibration and display modules depend on.
 
 ### Status codes round float to integer
 
-This spec verifies that status code values (categorical, not numeric) are parsed from float CSV values and rounded to integer, matching the HP state classification contract.
+This spec verifies that status code values (categorical, not numeric) are exposed as rounded integers, matching the HP state classification contract.
 
 ### MWT CSV with flow and return produces averaged pairs
 
 This spec verifies that the mean water temperature query produces (DateTime, f64) pairs from the pre-computed flow/return average, matching the contract that the thermal solver depends on.
 
+Despite the heading's historical wording, this is now a transport-agnostic reader contract.
+
 ### Missing required column returns MissingColumn error
 
-This spec verifies that when a required column (like _value) is absent from the CSV response, the consumer detects it rather than silently producing bad data.
+This spec verifies that when a required value column is absent from a row-shaped response, the consumer detects it rather than silently producing bad data.
 
 ### Unparseable float in value column returns FloatParse error
 
@@ -660,15 +684,15 @@ This spec verifies that CSV rows with empty _value fields (from wide-row NULLs l
 
 ### Single-value CSV parsing extracts last value
 
-This spec verifies that a last() query result containing a single data row is correctly parsed to extract the _value, matching the contract used by the adaptive-heating-mvp live daemon.
+This spec verifies that a single-value latest-reading result is correctly reduced to the returned value, matching the contract used by the adaptive-heating-mvp live daemon.
 
 ### Empty result from last query returns no rows
 
-This spec verifies that when a sensor has no data in the lookback window, the CSV parser returns zero rows rather than erroring, so callers can safely handle the None case.
+This spec verifies that when a sensor has no data in the lookback window, the query adapter returns zero rows rather than erroring, so callers can safely handle the None case.
 
 ## Topic to table routing
 
-These tests document the implicit mapping from InfluxDB topic tags to TimescaleDB tables and columns. The PostgreSQL migration must implement this routing correctly.
+These tests document the canonical mapping from logical telemetry topics to PostgreSQL/TimescaleDB tables and columns. Historical Influx topic/tag shapes matter only because the PostgreSQL routing must preserve the same reader semantics.
 
 ### Room sensor topics use correct field name
 
@@ -678,13 +702,17 @@ This spec verifies that the _field distinction is preserved: Zigbee sensors use 
 
 This spec verifies the complete topic-to-table mapping: emon/EmonPi2 → ct_monitor, emon/tesla → tesla, ebusd/poll → ebusd_poll, zigbee2mqtt → zigbee, and all other sensor topic prefixes to their correct tables.
 
+### Live eBUS topics map to ebusd field names
+
+This spec verifies that live `ebusd/<circuit>/<field>` topics such as `ebusd/hmu/CurrentYieldPower` route to the shared `ebusd` field/value table by using the final path segment as the field name.
+
 ### PV power topic maps to ct_monitor P3 column
 
 This spec verifies that the emon/EmonPi2/P3 topic is decomposed into source=EmonPi2 and column=P3 in the wide ct_monitor table.
 
 ## Timestamp migration contracts
 
-These tests pin timestamp handling constraints that the TimescaleDB migration must preserve.
+These tests pin timestamp handling constraints that the PostgreSQL/TimescaleDB path must preserve, including legacy-compatibility edges still present during cutover.
 
 ### Microsecond truncation preserves 10s-interval data
 
@@ -692,11 +720,11 @@ This spec verifies that truncating InfluxDB nanosecond timestamps to TimescaleDB
 
 ### PostgreSQL TIMESTAMPTZ offset formats parse correctly
 
-This spec documents that the current parse_dt requires RFC3339 format and will reject the common PostgreSQL TIMESTAMPTZ display format (space separator, short offset), flagging this as a required migration adaptation.
+This spec verifies that the shared timestamp parser accepts PostgreSQL TIMESTAMPTZ text forms with space separators, short offsets, and fractional seconds so migration-path readers do not depend on RFC3339-only formatting.
 
 ## DHW write contracts
 
-These tests pin the line-protocol field mapping for DHW session writes. The PostgreSQL migration replaces LP writes with INSERT statements — these specs define which columns must be populated.
+These tests pin DHW session write semantics across the migration. Legacy line-protocol coverage remains as a compatibility harness, but PostgreSQL column population is the target contract.
 
 ### dhw_inflection LP line contains all required fields
 
@@ -722,49 +750,57 @@ This spec verifies that dhw_sessions find_events measurement-based filters route
 
 This spec verifies that emon measurement queries use the triple-filter pattern (_measurement + _field="value" + field=name). In PostgreSQL this collapses to a direct column SELECT from the multical table.
 
+### Postgres inflection row maps all LP tags and fields to columns
+
+This spec verifies that the PostgreSQL dhw_inflection mirror uses the same category/crossover/draw_type tags and 11 numeric values as the legacy LP row, preserving row-equivalent semantics across transports.
+
 ### dhw_capacity LP line maps to TimescaleDB columns
 
 This spec verifies that the dhw_capacity LP line includes recommended_full_litres and method fields matching the TimescaleDB schema.
 
+### Optional postgres conninfo is read from env when configured
+
+This spec verifies that the staged TSDB migration can enable `dhw_capacity` TimescaleDB mirroring via `[postgres].conninfo_env` without putting database credentials in TOML.
+
 ## Adaptive heating write contracts
 
-These tests pin the line-protocol field mapping for adaptive heating decision logging. The PostgreSQL migration replaces LP writes with INSERT statements.
+These tests pin PostgreSQL-first adaptive-heating decision write semantics now that the controller no longer relies on Flux fallback reads or Influx line-protocol mirroring.
 
-### Decision LP line maps all fields to TimescaleDB columns
+### Decision PostgreSQL row maps tags and boolean fields correctly
 
-This spec verifies that when all DecisionLog fields are Some, the LP line contains all 24 numeric/boolean fields and 3 tag fields (mode, action, tariff) that the TimescaleDB adaptive_heating_mvp schema defines.
+This spec verifies that the PostgreSQL write-row helper mirrors LP semantics by underscore-normalizing `mode`/`action`/`tariff` tags and converting `battery_adequate_to_next_cosy` into the schema's FLOAT8 1.0/0.0 representation.
 
-### Decision LP with None fields omits them cleanly
+### Decision PostgreSQL row keeps line-protocol second precision
 
-This spec verifies that Option::None fields do not appear in the LP field set, establishing the contract that the PostgreSQL INSERT must handle via NULL columns rather than default values.
+This spec verifies that the PostgreSQL write-row helper truncates controller decision timestamps to whole seconds so staged SQL rows can match the existing Influx line-protocol write precision during parity checks.
 
-### query_single_value inline parser extracts value from CSV
+### Real PostgreSQL decision insert includes explicit timestamp
 
-This spec verifies that the adaptive-heating-mvp inline CSV parser (used in query_single_value) correctly extracts the _value field from a single-row Flux last() response, matching the contract the PostgreSQL migration must preserve.
+This spec verifies that a real TimescaleDB insert for `adaptive_heating_mvp` writes an explicit recent timestamp rather than relying on LP-style server-time behaviour.
 
-### query_single_value returns None for empty result
+### Real PostgreSQL decision insert preserves column types and values
 
-This spec verifies that when no sensor data exists in the lookback window, the inline CSV parser returns None rather than a default value, so the control loop can skip decisions safely.
-
-### LP tag values escape spaces to underscores
-
-This spec verifies that action and tariff_period values have spaces replaced with underscores before LP emission, preventing LP format parsing errors where spaces are delimiters.
+This spec verifies that a real TimescaleDB insert round-trips the expected TEXT and FLOAT8 values for controller decision rows, including tag columns and the boolean-as-float field.
 
 ### Room temp field routing matches influx.rs contract
 
-This spec verifies that the adaptive-heating-mvp field-name routing (value vs temperature) matches the influx.rs query_room_temps logic, documenting the duplication that the migration must preserve or unify.
+This spec verifies that the adaptive-heating-mvp latest-room-temperature helpers use the same value-vs-temperature field split and PostgreSQL topic routing as `influx.rs`, so controller reads stay aligned with the shared TSDB reader contract.
+
+### Latest topic routing covers Tesla and Multical sources
+
+This spec verifies that latest-value topic routing sends `emon/tesla/*` topics to Tesla columns and `emon/multical/*` topics to Multical columns, including the `dhw_volume_V1` name-normalization edge.
 
 ### DHW T1 query uses value field
 
-This spec verifies that DHW T1 queries always use _field="value" for the emon Multical topic, matching the multical table column mapping in PostgreSQL.
+This spec verifies that DHW T1 latest-value reads keep the emon measurement `value` field semantics and route to the PostgreSQL `multical.dhw_t1` column, including the `dhw_volume_V1` name-normalization edge.
 
-### Boolean field encodes as integer in LP
+### Measurement routing covers ebusd_poll and direct tables
 
-This spec verifies that battery_adequate_to_next_cosy encodes as 1/0 in LP format. The TimescaleDB schema uses FLOAT8 for this column, so the migration must convert accordingly.
+This spec verifies that latest-value measurement reads keep `ebusd_poll` on the field/value table while routing other measurements through direct table/column selection.
 
 ## History filter variant routing
 
-These tests document the three distinct InfluxDB filter patterns used by history.rs and their PostgreSQL table routing implications. The SQL migration must handle each pattern differently.
+These tests document the three history.rs filter patterns and their PostgreSQL table routing implications. Any remaining Flux-backed helpers are migration-tail compatibility only.
 
 ### Topic filter routes by topic prefix and field name
 
@@ -774,13 +810,39 @@ This spec verifies that TopicSummarySpec queries route by topic prefix to the co
 
 This spec verifies that MeasurementSummarySpec queries route by _measurement to the correct PG table. Notably, measurement="emon" with dhw_ fields routes to multical, not emon.
 
+### Measurement filter routing covers live ebusd fields
+
+This spec verifies that numeric MeasurementSummarySpec queries route live `ebusd` fields through the shared `ebusd.value` table with the field name carried as the selector.
+
+### Text ebusd_poll fields route to ebusd_poll_text
+
+This spec verifies that string-valued `ebusd_poll` history fields such as `Statuscode` route to the sibling `ebusd_poll_text` hypertable under PostgreSQL, while numeric `ebusd_poll` reads stay on the numeric table.
+
+### Native text measurements route to their direct tables
+
+This spec verifies that repo-native text measurements stay on their own PostgreSQL tables instead of being misrouted through `ebusd_poll_text`.
+
+It covers `dhw.charge_state`, `dhw_capacity.method`, `dhw_inflection.category/draw_type`, and adaptive controller labels.
+
+### HwcSFMode reads use ebusd live field semantics
+
+This spec verifies that `HwcSFMode` history evidence reads from the live `ebusd` field (`circuit=700`, `field=HwcSFMode`) for both Flux and PostgreSQL, because that signal is not actually stored as a string-valued `ebusd_poll` series.
+
 ### Plain measurement filter uses underscore field
 
 This spec verifies that PlainMeasurementSummarySpec queries use r._field (underscore), a third distinct pattern where _measurement maps directly to the PG table name and _field maps directly to the column name.
 
+### Active-series periods respect baseline carry and minimum duration
+
+This spec verifies that active/inactive boolean series expand into periods that can start active at the window boundary and drop sub-threshold durations.
+
+### Numeric summaries choose extrema by value not recency
+
+This spec verifies that numeric summary extrema come from the lowest and highest values even when they are not the first or last samples, while `latest` still tracks the final sample.
+
 ## Display migration contracts
 
-These tests pin routing contracts in the display module that the PostgreSQL migration must preserve.
+These tests pin display-module routing contracts that the PostgreSQL path must preserve once the migration tail is removed.
 
 ### Humidity query skips emonth2 topic
 

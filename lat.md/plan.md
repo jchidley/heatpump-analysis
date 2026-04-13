@@ -1,8 +1,29 @@
 # Plan
 
-Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-11 08:39 BST**. The previous review snapshot lives in [[reviews]].
+Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-13 07:20 BST**. The previous review snapshot lives in [[reviews]].
 
-The repo-local PostgreSQL cutover plan now lives in [[postgres-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/timescaledb-migration.md`.
+The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/tsdb-migration.md`.
+
+## TSDB Migration
+
+The repo-local PostgreSQL cutover is now in its final verification and deployment phase, and this plan section intentionally keeps only the remaining completion work.
+
+Detailed status and proof now live in [[tsdb-migration]], especially [[tsdb-migration#Migration Snapshot]] and [[tsdb-migration#Completion-critical next actions]].
+
+### Active completion plan
+
+Only actions still required to finish this repo's PostgreSQL migration belong here.
+
+1. Decide the end-state for the last generic Flux helpers in `src/thermal/history.rs`: either keep profiling/raw compatibility explicitly Flux-only, or replace it with a small PostgreSQL row-adapter path and test that contract.
+2. Run the remaining representative PostgreSQL parity/integration windows for history outputs, DHW outputs, and controller evidence, then record the proof windows in [[tsdb-migration]].
+3. Rehearse the live `adaptive-heating-mvp` cutover and rollback path on `pi5data` with the staged PostgreSQL config until restore confidence is explicit rather than inferred.
+4. Perform the live controller cutover on `pi5data`, removing the legacy Influx-only config/credential dependency, monitor journal/API/TimescaleDB evidence immediately after restart, and then update the shared migration tracker to mark this repo complete.
+
+Cross-repo prerequisite status is now stable enough to treat as background context rather than a plan item: `energy-hub` shared-platform phases are green and `z2m-hub` has closed its repo-local migration, so this repo is the remaining consumer cutover.
+
+### Agent handoff shortcut
+
+Use [[tsdb-migration#Migration Snapshot]] first for the shortest current-state briefing, then [[tsdb-migration#Completion-critical next actions]] for the ordered finish-the-migration plan.
 
 ## Heating Controller
 
@@ -104,9 +125,9 @@ On 6 Apr `sync_morning_dhw_timer` correctly decided to skip the morning window (
 
 #### Fixed: Production Influx Secret Migration
 
-The blind-controller outage was first fixed by restoring `INFLUX_TOKEN` in `/etc/adaptive-heating-mvp.env`, then hardened properly by migrating the controller to a dedicated systemd credential. **Restored 8 Apr 08:39 BST; hardened 8 Apr 08:57 BST.**
+The blind-controller outage was first fixed by restoring `INFLUX_TOKEN` in `/etc/adaptive-heating-mvp.env`, then hardened by moving the controller to a dedicated systemd credential. **Restored 8 Apr 08:39 BST; hardened 8 Apr 08:57 BST.**
 
-Root cause: systemd had been depending on `/etc/adaptive-heating-mvp.env`, and that file was overwritten without `INFLUX_TOKEN`. The controller's dev fallback (`ak get influxdb`) cannot work under systemd because there is no gpg-agent session. Permanent fix: create a dedicated InfluxDB auth for `adaptive-heating-mvp`, store it in `/etc/adaptive-heating-mvp/influx.token` (root-only), and load it via `LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token`. `/etc/adaptive-heating-mvp.env` now remains only for non-Influx env vars such as Octopus credentials.
+Root cause: systemd had been depending on `/etc/adaptive-heating-mvp.env`, and that file was overwritten without `INFLUX_TOKEN`. The controller's dev fallback (`ak get influxdb`) cannot work under systemd because there is no gpg-agent session. Current deployment stores a dedicated InfluxDB auth for `adaptive-heating-mvp` in `/etc/adaptive-heating-mvp/influx.token` (root-only) and loads it via `LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token`. Repo-wide secret policy now lives in [[infrastructure#Secrets]]: prefer encrypted systemd credentials (`systemd-creds encrypt` + `SetCredentialEncrypted=`) where supported, while this service remains on the root-only `LoadCredential=` path until migrated. `/etc/adaptive-heating-mvp.env` now remains only for non-Influx env vars such as Octopus credentials.
 
 Verification: the running service restarts with the credential present, without relying on `INFLUX_TOKEN` in its environment. **7–8 Apr controller evidence is still lost**, but future outer ticks and decision-log writes now depend on the dedicated local credential rather than a copied env var.
 
@@ -116,13 +137,22 @@ DHW scheduling is operational within the adaptive controller. This section uses 
 
 Detailed plan: [`docs/dhw-plan.md`](../docs/dhw-plan.md)
 
-### Open: Volume-Aware DHW Demand Prediction
+### Progressing: Volume-Aware DHW Demand Prediction
 
-This remains the main actionable DHW software item. T1 standby decay is calibrated, but the model still assumes no draws occur.
+This remains the main actionable DHW software item, but the controller no longer relies on T1 alone.
 
-On 47% of nights there's an overnight shower (avg 62L, max 120L). The 27 Mar night showed the risk: a 120L shower at 23:23 dropped T1 from 43.5→~37°C, below the 40°C comfort floor, and the model would have predicted 41.8°C. Recent charge reviews have shown both partial/no-crossover and full-crossover sessions, so the missing piece is still the draw-aware demand budget rather than basic charge execution. Demand slots aligned to Cosy charge windows: morning 07:00–13:00 (71% of days, avg 89L), afternoon 16:00–22:00 (24%, avg 72L), overnight 22:00–04:00 (47%, avg 62L). Next step: budget expected demand per slot using `dhw_capacity` from InfluxDB alongside T1.
+On 47% of nights there's an overnight shower (avg 62L, max 120L). The 27 Mar night showed the risk: a 120L shower at 23:23 dropped T1 from 43.5→~37°C, below the 40°C comfort floor, and the old model would have predicted 41.8°C. The controller now adds a first practical draw-aware budget: it reads `dhw.remaining_litres` plus the latest `dhw_capacity.recommended_full_litres`, caps optimistic remaining-volume estimates by that practical full-capacity value, and compares the resulting remaining litres with slot demand budgets aligned to Cosy charge windows (morning 89L, afternoon 72L, overnight 62L). That means a warm-looking T1 no longer suppresses a recharge when practical hot-water volume is already too low.
 
-**11 Apr data review (08:39 BST)**: This exact review window did not add a cleaner demand-budget anchor, but it also did not reduce the uncertainty. `dhw-history` saw **3 full-crossover charges** in the daytime part of the window, and the controller later enabled the Sunday morning timer at **07:03 BST** because predicted **07:00 T1 = 35.2°C**. By the review end, `T1` was still only **40.4°C** and `remaining_litres` had fallen back to **0L**, so the software still lacks a draw-aware demand budget for deciding when a recharge is really needed. Item stays open.
+This is still not the final DHW demand model. It is a volume-budget guardrail, not a full probabilistic draw predictor, and it still depends on the quality/timeliness of the upstream `dhw` + `dhw_capacity` feeds. Remaining work: tune slot budgets against recent evidence, verify no over-trigger regressions, and decide whether later slots should become more explicitly demand-ranked rather than fixed-budget thresholds.
+
+Immediate regression-test follow-up from the 12 Apr evening incident:
+- keep the new unit coverage for imported `22:00–00:00` tariff windows (`00:00` must normalize to `23:59` for runtime matching and to `-:-` for VRC 700 writes)
+- add at least one higher-level controller-path test that starts from raw imported tariff windows and proves the evening slot is classified as active at 22:xx while the emitted `HwcTimer_*` payload still uses `-:-`
+- add a deployment/ops smoke check that rejects any observed `HwcTimer_*` write containing raw `00:00`
+
+**Deployed 12 Apr 2026 22:47 BST on `pi5data`**: the live `adaptive-heating-mvp` service was rebuilt and restarted with the remaining-litres / recommended-capacity guardrail active. Immediate post-restart checks showed the service listening on port 3031, startup eBUS writes succeeding, and fresh controller logs resuming without the old dependency-sync build failure.
+
+**Follow-up fix deployed from the same evening**: Octopus-derived tariff windows could still arrive with an evening end of `00:00`, which is invalid for VRC 700 end-of-day timer encoding and also breaks same-day controller slot matching. The live controller now treats write-time normalization as the hard safety boundary (`00:00` → `-:-` for eBUS writes) and also normalizes imported `00:00` ends to `23:59` for same-day runtime matching.
 
 ### Manual: Seasonal Eco→Normal Switch
 
@@ -148,7 +178,9 @@ Prerequisites remain: Pico W board, xyzroe eBus-TTL adapter, and Embassy + PIO s
 
 ## Open Questions
 
-Empirical or hardware unknowns that need real-world evidence before they can inform control decisions. Migrated from `docs/code-truth/DECISIONS.md` — these are live unknowns, not static architecture.
+Empirical or hardware unknowns that still need real-world evidence before they can inform control decisions.
+
+These were moved out of the former code-truth decisions notes, now preserved under `docs/implementation-maps/`, because they are live unknowns rather than static architecture.
 
 ### OQ1: Aldora Proxy Comfort Band
 

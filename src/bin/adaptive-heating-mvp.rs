@@ -2,8 +2,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,6 +12,7 @@ use axum::Json;
 use chrono::{DateTime, Datelike, Local, NaiveTime, Timelike, Utc, Weekday};
 use clap::{Parser, Subcommand, ValueEnum};
 use heatpump_analysis::octopus_tariff::CachedTariffWindows;
+use postgres::{Client as PgClient, NoTls};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
@@ -55,12 +54,7 @@ enum Commands {
 struct Config {
     ebusd_host: String,
     ebusd_port: u16,
-    influx_url: String,
-    influx_org: String,
-    influx_bucket: String,
-    influx_token_env: String,
-    #[serde(default = "default_influx_token_credential")]
-    influx_token_credential: String,
+    postgres: PostgresConfig,
     http_bind: String,
     state_file: PathBuf,
     jsonl_log_file: PathBuf,
@@ -79,6 +73,11 @@ struct Config {
     dhw: DhwConfig,
     #[serde(default)]
     model: ModelConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PostgresConfig {
+    conninfo_env: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -555,23 +554,88 @@ struct DecisionLog {
     write_results: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct DecisionWriteRow {
+    ts: DateTime<Utc>,
+    mode: String,
+    action: String,
+    tariff: String,
+    leather_temp_c: Option<f64>,
+    aldora_temp_c: Option<f64>,
+    outside_temp_c: Option<f64>,
+    hwc_storage_temp_c: Option<f64>,
+    dhw_t1_c: Option<f64>,
+    battery_soc_pct: Option<f64>,
+    battery_power_w: Option<f64>,
+    battery_home_w: Option<f64>,
+    battery_headroom_to_next_cosy_kwh: Option<f64>,
+    battery_adequate_to_next_cosy: Option<f64>,
+    compressor_util: Option<f64>,
+    elec_consumption_w: Option<f64>,
+    yield_power_kw: Option<f64>,
+    flow_desired_c: Option<f64>,
+    flow_actual_c: Option<f64>,
+    return_actual_c: Option<f64>,
+    curve_before: Option<f64>,
+    curve_after: Option<f64>,
+    target_flow_c: Option<f64>,
+    forecast_outside_c: Option<f64>,
+    forecast_solar_w_m2: Option<f64>,
+    model_required_mwt: Option<f64>,
+    model_required_flow: Option<f64>,
+    model_required_curve: Option<f64>,
+}
+
+fn decision_write_row(entry: &DecisionLog) -> DecisionWriteRow {
+    DecisionWriteRow {
+        ts: entry.ts.with_nanosecond(0).expect("truncate decision timestamp to whole seconds"),
+        mode: format!("{:?}", entry.mode).to_lowercase(),
+        action: entry.action.replace(' ', "_"),
+        tariff: entry.tariff_period.replace(' ', "_"),
+        leather_temp_c: entry.leather_temp_c,
+        aldora_temp_c: entry.aldora_temp_c,
+        outside_temp_c: entry.outside_temp_c,
+        hwc_storage_temp_c: entry.hwc_storage_temp_c,
+        dhw_t1_c: entry.dhw_t1_c,
+        battery_soc_pct: entry.battery_soc_pct,
+        battery_power_w: entry.battery_power_w,
+        battery_home_w: entry.battery_home_w,
+        battery_headroom_to_next_cosy_kwh: entry.battery_headroom_to_next_cosy_kwh,
+        battery_adequate_to_next_cosy: entry.battery_adequate_to_next_cosy.map(|v| {
+            if v {
+                1.0
+            } else {
+                0.0
+            }
+        }),
+        compressor_util: entry.compressor_util,
+        elec_consumption_w: entry.elec_consumption_w,
+        yield_power_kw: entry.yield_power_kw,
+        flow_desired_c: entry.flow_desired_c,
+        flow_actual_c: entry.flow_actual_c,
+        return_actual_c: entry.return_actual_c,
+        curve_before: entry.curve_before,
+        curve_after: entry.curve_after,
+        target_flow_c: entry.target_flow_c,
+        forecast_outside_c: entry.forecast_outside_c,
+        forecast_solar_w_m2: entry.forecast_solar_w_m2,
+        model_required_mwt: entry.model_required_mwt,
+        model_required_flow: entry.model_required_flow,
+        model_required_curve: entry.model_required_curve,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Config helpers
 // ---------------------------------------------------------------------------
-
-fn default_influx_token_credential() -> String {
-    "influx_token".to_string()
-}
 
 fn default_config() -> Config {
     Config {
         ebusd_host: "127.0.0.1".to_string(),
         ebusd_port: 8888,
-        influx_url: "http://127.0.0.1:8086".to_string(),
-        influx_org: "home".to_string(),
-        influx_bucket: "energy".to_string(),
-        influx_token_env: "INFLUX_TOKEN".to_string(),
-        influx_token_credential: default_influx_token_credential(),
+        postgres: PostgresConfig {
+            conninfo_env: "TIMESCALEDB_CONNINFO".to_string(),
+        },
         http_bind: "0.0.0.0:3031".to_string(),
         state_file: PathBuf::from("/home/jack/.local/state/adaptive-heating-mvp/state.toml"),
         jsonl_log_file: PathBuf::from("/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl"),
@@ -640,80 +704,100 @@ fn save_runtime_state(path: &Path, state: &RuntimeState) -> Result<()> {
     Ok(())
 }
 
-/// Cached InfluxDB token (resolved once, reused for all queries).
-static INFLUX_TOKEN_CACHE: OnceLock<String> = OnceLock::new();
-
-/// Get InfluxDB token (cached after first call).
-///
-/// Production (systemd): prefer a credential loaded via `LoadCredential=` and exposed at
-/// `$CREDENTIALS_DIRECTORY/<credential-name>`. Legacy env-var injection remains supported as a
-/// fallback for manual runs.
-///
-/// Development: falls back to `ak get influxdb` (GPG-encrypted keystore on dev machine).
-/// This fallback will fail on pi5data if ak is not installed — that's intentional.
-fn influx_token(config: &Config) -> Result<String> {
-    if let Some(cached) = INFLUX_TOKEN_CACHE.get() {
-        return Ok(cached.clone());
-    }
-    let token = resolve_influx_token(config)?;
-    let _ = INFLUX_TOKEN_CACHE.set(token.clone());
-    Ok(token)
+fn resolve_postgres_conninfo(config: &Config) -> Result<String> {
+    std::env::var(&config.postgres.conninfo_env)
+        .map_err(|_| anyhow!("missing postgres conninfo env {}", config.postgres.conninfo_env))
 }
 
-fn resolve_influx_token(config: &Config) -> Result<String> {
-    let env_name = &config.influx_token_env;
-
-    if let Ok(v) = std::env::var(env_name) {
-        if !v.trim().is_empty() {
-            return Ok(v);
-        }
-    }
-
-    let env_file_name = format!("{env_name}_FILE");
-    if let Ok(path) = std::env::var(&env_file_name) {
-        if let Ok(token) = read_token_file(Path::new(&path)) {
-            return Ok(token);
-        }
-    }
-
-    if let Ok(dir) = std::env::var("CREDENTIALS_DIRECTORY") {
-        let path = Path::new(&dir).join(&config.influx_token_credential);
-        if let Ok(token) = read_token_file(&path) {
-            return Ok(token);
-        }
-    }
-
-    warn!(
-        "{} not available via env, *_FILE, or systemd credential — falling back to 'ak get influxdb' (dev mode)",
-        env_name
-    );
-    let output = Command::new("ak")
-        .arg("get")
-        .arg("influxdb")
-        .output()
-        .context(format!(
-            "{} not available via env, *_FILE, or systemd credential and 'ak get influxdb' failed. \
-             Production: configure LoadCredential={}:/path/to/token or set {}_FILE",
-            env_name, config.influx_token_credential, env_name
-        ))?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "{} not available via env, *_FILE, or systemd credential and 'ak get influxdb' returned error. \
-             Production: configure LoadCredential={}:/path/to/token or set {}_FILE",
-            env_name,
-            config.influx_token_credential,
-            env_name
-        ));
-    }
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+fn pg_client(conninfo: &str) -> Result<PgClient> {
+    PgClient::connect(conninfo, NoTls).context("connect postgres")
 }
 
-fn read_token_file(path: &Path) -> Result<String> {
-    let token = fs::read_to_string(path)?.trim().to_string();
-    if token.is_empty() {
-        return Err(anyhow!("token file {} is empty", path.display()));
+fn quoted_identifier(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LatestTopicPgRoute<'a> {
+    ZigbeeTemperature { device: &'a str },
+    EmonthColumn { column: &'a str },
+    TeslaColumn { column: &'a str },
+    MulticalColumn { column: &'a str },
+}
+
+fn latest_topic_field(topic: &str) -> &'static str {
+    if topic == "emon/emonth2_23/temperature" {
+        "value"
+    } else {
+        "temperature"
     }
-    Ok(token)
+}
+
+fn latest_topic_pg_route(topic: &str) -> Option<LatestTopicPgRoute<'_>> {
+    if let Some(device) = topic.strip_prefix("zigbee2mqtt/") {
+        return Some(LatestTopicPgRoute::ZigbeeTemperature { device });
+    }
+    if let Some(column) = topic.strip_prefix("emon/tesla/") {
+        return Some(LatestTopicPgRoute::TeslaColumn { column });
+    }
+    if let Some(column) = topic.strip_prefix("emon/multical/") {
+        let column = if column == "dhw_volume_V1" {
+            "dhw_volume_v1"
+        } else {
+            column
+        };
+        return Some(LatestTopicPgRoute::MulticalColumn { column });
+    }
+    if topic == "emon/emonth2_23/temperature" {
+        return Some(LatestTopicPgRoute::EmonthColumn {
+            column: "temperature",
+        });
+    }
+    None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LatestMeasurementPgRoute<'a> {
+    MulticalColumn { column: &'a str },
+    EbusdPollValue { field: &'a str },
+    DirectTableColumn { table: &'a str, column: &'a str },
+}
+
+fn latest_measurement_pg_route<'a>(
+    measurement: &'a str,
+    field: &'a str,
+) -> LatestMeasurementPgRoute<'a> {
+    match measurement {
+        "emon" if field.starts_with("dhw_") => LatestMeasurementPgRoute::MulticalColumn {
+            column: if field == "dhw_volume_V1" {
+                "dhw_volume_v1"
+            } else {
+                field
+            },
+        },
+        "ebusd_poll" => LatestMeasurementPgRoute::EbusdPollValue { field },
+        table => LatestMeasurementPgRoute::DirectTableColumn {
+            table,
+            column: field,
+        },
+    }
+}
+
+fn lookback_cutoff(lookback: &str) -> Result<DateTime<Utc>> {
+    let value = lookback
+        .strip_prefix('-')
+        .ok_or_else(|| anyhow!("unsupported lookback format: {lookback}"))?;
+    let (amount, unit) = value.split_at(value.len().saturating_sub(1));
+    let amount: i64 = amount
+        .parse()
+        .with_context(|| format!("parse lookback amount from {lookback}"))?;
+    let delta = match unit {
+        "m" => chrono::TimeDelta::minutes(amount),
+        "h" => chrono::TimeDelta::hours(amount),
+        "d" => chrono::TimeDelta::days(amount),
+        _ => return Err(anyhow!("unsupported lookback unit in {lookback}")),
+    };
+    Ok(Utc::now() - delta)
 }
 
 // ---------------------------------------------------------------------------
@@ -769,27 +853,61 @@ fn parse_f64(s: Result<String>) -> Option<f64> {
 // ---------------------------------------------------------------------------
 
 fn query_latest_topic_value(
-    client: &Client,
+    _client: &Client,
     config: &Config,
     topic: &str,
-    field: &str,
+    _field: &str,
     lookback: &str,
 ) -> Result<Option<f64>> {
-    let token = influx_token(config)?;
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> last() |> keep(columns: [\"_value\"])",
-        config.influx_bucket, lookback, topic, field
-    );
-    query_single_value(client, config, &token, &flux)
+    let conninfo = resolve_postgres_conninfo(config)?;
+    query_latest_topic_value_pg(&conninfo, topic, lookback)
+}
+
+fn query_latest_topic_value_pg(conninfo: &str, topic: &str, lookback: &str) -> Result<Option<f64>> {
+    let cutoff = lookback_cutoff(lookback)?;
+    let mut pg = pg_client(conninfo)?;
+
+    match latest_topic_pg_route(topic) {
+        Some(LatestTopicPgRoute::ZigbeeTemperature { device }) => pg
+            .query_opt(
+                "SELECT temperature FROM zigbee WHERE device = $1 AND time >= $2 AND temperature IS NOT NULL ORDER BY time DESC LIMIT 1",
+                &[&device, &cutoff],
+            )
+            .map(|row| row.map(|r| r.get::<_, f64>(0)))
+            .context("query zigbee topic latest value"),
+        Some(LatestTopicPgRoute::EmonthColumn { column }) => {
+            let sql = format!(
+                "SELECT {column} FROM emonth WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
+                column = quoted_identifier(column)
+            );
+            pg.query_opt(&sql, &[&cutoff])
+                .map(|row| row.map(|r| r.get::<_, f64>(0)))
+                .context("query emonth topic latest value")
+        }
+        Some(LatestTopicPgRoute::TeslaColumn { column }) => {
+            let sql = format!(
+                "SELECT {column} FROM tesla WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
+                column = quoted_identifier(column)
+            );
+            pg.query_opt(&sql, &[&cutoff])
+                .map(|row| row.map(|r| r.get::<_, f64>(0)))
+                .with_context(|| format!("query tesla topic {topic} latest value"))
+        }
+        Some(LatestTopicPgRoute::MulticalColumn { column }) => {
+            let sql = format!(
+                "SELECT {column} FROM multical WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
+                column = quoted_identifier(column)
+            );
+            pg.query_opt(&sql, &[&cutoff])
+                .map(|row| row.map(|r| r.get::<_, f64>(0)))
+                .with_context(|| format!("query multical topic {topic} latest value"))
+        }
+        None => Err(anyhow!("unsupported PostgreSQL topic route for {topic}")),
+    }
 }
 
 fn query_latest_room_temp(client: &Client, config: &Config, topic: &str) -> Result<Option<f64>> {
-    let field = if topic == "emon/emonth2_23/temperature" {
-        "value"
-    } else {
-        "temperature"
-    };
-    query_latest_topic_value(client, config, topic, field, "-2h")
+    query_latest_topic_value(client, config, topic, latest_topic_field(topic), "-2h")
 }
 
 /// Query latest DHW T1 (cylinder top) from InfluxDB Multical data.
@@ -798,39 +916,54 @@ fn query_latest_dhw_t1(client: &Client, config: &Config) -> Result<Option<f64>> 
     query_latest_topic_value(client, config, &config.topics.dhw_t1, "value", "-2h")
 }
 
-fn query_single_value(
-    client: &Client,
+fn query_latest_measurement_value(
+    _client: &Client,
     config: &Config,
-    token: &str,
-    flux: &str,
+    measurement: &str,
+    field: &str,
+    lookback: &str,
 ) -> Result<Option<f64>> {
-    let resp = client
-        .post(format!(
-            "{}/api/v2/query?org={}",
-            config.influx_url, config.influx_org
-        ))
-        .header("Authorization", format!("Token {}", token))
-        .header("Content-Type", "application/vnd.flux")
-        .header("Accept", "application/csv")
-        .body(flux.to_string())
-        .send()?;
-    let body = resp.text()?;
-    let mut headers: Vec<String> = Vec::new();
-    let mut val = None;
-    for line in body.lines() {
-        if line.starts_with('#') || line.is_empty() {
-            continue;
+    let conninfo = resolve_postgres_conninfo(config)?;
+    query_latest_measurement_value_pg(&conninfo, measurement, field, lookback)
+}
+
+fn query_latest_measurement_value_pg(
+    conninfo: &str,
+    measurement: &str,
+    field: &str,
+    lookback: &str,
+) -> Result<Option<f64>> {
+    let cutoff = lookback_cutoff(lookback)?;
+    let mut pg = pg_client(conninfo)?;
+
+    match latest_measurement_pg_route(measurement, field) {
+        LatestMeasurementPgRoute::MulticalColumn { column } => {
+            let sql = format!(
+                "SELECT {column} FROM multical WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
+                column = quoted_identifier(column)
+            );
+            pg.query_opt(&sql, &[&cutoff])
+                .map(|row| row.map(|r| r.get::<_, f64>(0)))
+                .with_context(|| format!("query measurement {measurement}.{field} latest value"))
         }
-        let fields: Vec<&str> = line.split(',').collect();
-        if headers.is_empty() {
-            headers = fields.iter().map(|s| s.to_string()).collect();
-            continue;
-        }
-        if let Some(i) = headers.iter().position(|h| h == "_value") {
-            val = fields.get(i).and_then(|s| s.parse::<f64>().ok());
+        LatestMeasurementPgRoute::EbusdPollValue { field } => pg
+            .query_opt(
+                "SELECT value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND value IS NOT NULL ORDER BY time DESC LIMIT 1",
+                &[&field, &cutoff],
+            )
+            .map(|row| row.map(|r| r.get::<_, f64>(0)))
+            .with_context(|| format!("query measurement {measurement}.{field} latest value")),
+        LatestMeasurementPgRoute::DirectTableColumn { table, column } => {
+            let sql = format!(
+                "SELECT {column} FROM {table} WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
+                column = quoted_identifier(column),
+                table = table
+            );
+            pg.query_opt(&sql, &[&cutoff])
+                .map(|row| row.map(|r| r.get::<_, f64>(0)))
+                .with_context(|| format!("query measurement {measurement}.{field} latest value"))
         }
     }
-    Ok(val)
 }
 
 // ---------------------------------------------------------------------------
@@ -845,68 +978,76 @@ fn write_jsonl(path: &Path, entry: &DecisionLog) -> Result<()> {
     Ok(())
 }
 
-fn write_influx_decision(client: &Client, config: &Config, entry: &DecisionLog) -> Result<()> {
-    let token = influx_token(config)?;
-    let mode = format!("{:?}", entry.mode).to_lowercase();
-    let action = entry.action.replace(' ', "_");
-    let fields: Vec<String> = [
-        influx_field("leather_temp_c", entry.leather_temp_c),
-        influx_field("aldora_temp_c", entry.aldora_temp_c),
-        influx_field("outside_temp_c", entry.outside_temp_c),
-        influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
-        influx_field("dhw_t1_c", entry.dhw_t1_c),
-        influx_field("battery_soc_pct", entry.battery_soc_pct),
-        influx_field("battery_power_w", entry.battery_power_w),
-        influx_field("battery_home_w", entry.battery_home_w),
-        influx_field(
-            "battery_headroom_to_next_cosy_kwh",
-            entry.battery_headroom_to_next_cosy_kwh,
-        ),
-        entry
-            .battery_adequate_to_next_cosy
-            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 })),
-        influx_field("compressor_util", entry.compressor_util),
-        influx_field("elec_consumption_w", entry.elec_consumption_w),
-        influx_field("yield_power_kw", entry.yield_power_kw),
-        influx_field("flow_desired_c", entry.flow_desired_c),
-        influx_field("flow_actual_c", entry.flow_actual_c),
-        influx_field("return_actual_c", entry.return_actual_c),
-        influx_field("curve_before", entry.curve_before),
-        influx_field("curve_after", entry.curve_after),
-        influx_field("target_flow_c", entry.target_flow_c),
-        influx_field("forecast_outside_c", entry.forecast_outside_c),
-        influx_field("forecast_solar_w_m2", entry.forecast_solar_w_m2),
-        influx_field("model_required_mwt", entry.model_required_mwt),
-        influx_field("model_required_flow", entry.model_required_flow),
-        influx_field("model_required_curve", entry.model_required_curve),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if fields.is_empty() {
-        return Ok(());
-    }
-    let line = format!(
-        "adaptive_heating_mvp,mode={},action={},tariff={} {} {}",
-        mode,
-        action,
-        entry.tariff_period.replace(' ', "_"),
-        fields.join(","),
-        entry.ts.timestamp()
-    );
-    client
-        .post(format!(
-            "{}/api/v2/write?org={}&bucket={}&precision=s",
-            config.influx_url, config.influx_org, config.influx_bucket
-        ))
-        .header("Authorization", format!("Token {}", token))
-        .body(line)
-        .send()?;
+fn write_postgres_decision_with_client(pg: &mut PgClient, entry: &DecisionLog) -> Result<()> {
+    let row = decision_write_row(entry);
+
+    pg.execute(
+        "INSERT INTO adaptive_heating_mvp (
+            time, mode, action, tariff,
+            leather_temp_c, aldora_temp_c, outside_temp_c,
+            hwc_storage_temp_c, dhw_t1_c,
+            battery_soc_pct, battery_power_w, battery_home_w,
+            \"battery_headroom_to_next_cosy_kwh\", battery_adequate_to_next_cosy,
+            compressor_util, elec_consumption_w, yield_power_kw,
+            flow_desired_c, flow_actual_c, return_actual_c,
+            curve_before, curve_after, target_flow_c,
+            forecast_outside_c, forecast_solar_w_m2,
+            model_required_mwt, model_required_flow, model_required_curve
+        ) VALUES (
+            $1, $2, $3, $4,
+            $5, $6, $7,
+            $8, $9,
+            $10, $11, $12,
+            $13, $14,
+            $15, $16, $17,
+            $18, $19, $20,
+            $21, $22, $23,
+            $24, $25,
+            $26, $27, $28
+        )",
+        &[
+            &row.ts,
+            &row.mode,
+            &row.action,
+            &row.tariff,
+            &row.leather_temp_c,
+            &row.aldora_temp_c,
+            &row.outside_temp_c,
+            &row.hwc_storage_temp_c,
+            &row.dhw_t1_c,
+            &row.battery_soc_pct,
+            &row.battery_power_w,
+            &row.battery_home_w,
+            &row.battery_headroom_to_next_cosy_kwh,
+            &row.battery_adequate_to_next_cosy,
+            &row.compressor_util,
+            &row.elec_consumption_w,
+            &row.yield_power_kw,
+            &row.flow_desired_c,
+            &row.flow_actual_c,
+            &row.return_actual_c,
+            &row.curve_before,
+            &row.curve_after,
+            &row.target_flow_c,
+            &row.forecast_outside_c,
+            &row.forecast_solar_w_m2,
+            &row.model_required_mwt,
+            &row.model_required_flow,
+            &row.model_required_curve,
+        ],
+    )
+    .context("insert adaptive_heating_mvp row")?;
     Ok(())
 }
 
-fn influx_field(name: &str, v: Option<f64>) -> Option<String> {
-    v.map(|x| format!("{name}={x}"))
+fn write_postgres_decision(conninfo: &str, entry: &DecisionLog) -> Result<()> {
+    let mut pg = pg_client(conninfo)?;
+    write_postgres_decision_with_client(&mut pg, entry)
+}
+
+fn write_decision_log(_client: &Client, config: &Config, entry: &DecisionLog) -> Result<()> {
+    let conninfo = resolve_postgres_conninfo(config).context("resolve postgres decision log conninfo")?;
+    write_postgres_decision(&conninfo, entry).context("postgres decision log")
 }
 
 // ---------------------------------------------------------------------------
@@ -917,15 +1058,45 @@ fn parse_time(s: &str) -> Option<NaiveTime> {
     NaiveTime::parse_from_str(s, "%H:%M").ok()
 }
 
+fn normalize_window_end_for_runtime(end: &str) -> String {
+    if end == "00:00" {
+        "23:59".to_string()
+    } else {
+        end.to_string()
+    }
+}
+
+fn normalize_window_end_for_ebus(end: &str) -> String {
+    let end = end.trim();
+    if end == "00:00" || end == "23:59" {
+        "-:-".to_string()
+    } else {
+        end.to_string()
+    }
+}
+
+fn normalized_time_window_for_runtime(window: &TimeWindow) -> TimeWindow {
+    TimeWindow {
+        start: window.start.clone(),
+        end: normalize_window_end_for_runtime(&window.end),
+    }
+}
+
 fn within_window(now: NaiveTime, window: &TimeWindow) -> bool {
-    match (parse_time(&window.start), parse_time(&window.end)) {
+    let normalized = normalized_time_window_for_runtime(window);
+    match (parse_time(&normalized.start), parse_time(&normalized.end)) {
         (Some(s), Some(e)) => now >= s && now <= e,
         _ => false,
     }
 }
 
 fn sorted_cosy_windows(config: &Config) -> Vec<TimeWindow> {
-    let mut windows = config.dhw.cosy_windows.clone();
+    let mut windows = config
+        .dhw
+        .cosy_windows
+        .iter()
+        .map(normalized_time_window_for_runtime)
+        .collect::<Vec<_>>();
     windows.sort_by_key(|window| parse_time(&window.start));
     windows
 }
@@ -1018,7 +1189,7 @@ fn dhw_timer_payload(config: &Config, morning_enabled: bool) -> String {
     let mut parts = Vec::with_capacity(6);
     for window in windows.into_iter().take(3) {
         parts.push(window.start);
-        parts.push(window.end);
+        parts.push(normalize_window_end_for_ebus(&window.end));
     }
     while parts.len() < 6 {
         parts.push("-:-".to_string());
@@ -1447,12 +1618,23 @@ fn current_dhw_slot(config: &Config, now: NaiveTime) -> Option<&'static str> {
     }
 }
 
+fn expected_dhw_draw_l_for_slot(slot: &str) -> Option<f64> {
+    match slot {
+        "evening_bank" | "overnight_battery" => Some(62.0),
+        "cosy_morning" => Some(89.0),
+        "afternoon_fallback" => Some(72.0),
+        _ => None,
+    }
+}
+
 fn plan_dhw_schedule(
     config: &Config,
     now: DateTime<Local>,
     outside_c: Option<f64>,
     dhw_t1: Option<f64>,
     hwc_storage_c: Option<f64>,
+    remaining_litres: Option<f64>,
+    recommended_full_litres: Option<f64>,
     hwc_mode: Option<&str>,
     battery: Option<&BatteryHeadroom>,
 ) -> Option<DhwScheduleDecision> {
@@ -1463,7 +1645,20 @@ fn plan_dhw_schedule(
     let trigger = config.dhw.charge_trigger_c;
     let t1_needs_charge = predicted_t1.map(|t1| t1 < trigger);
     let storage_needs_charge = hwc_storage_c.map(|t| t < trigger - 2.0);
-    let needs_charge = t1_needs_charge.or(storage_needs_charge).unwrap_or(false);
+    let slot_draw_budget_l = expected_dhw_draw_l_for_slot(slot);
+    let practical_remaining_litres = match (remaining_litres, recommended_full_litres) {
+        (Some(remaining), Some(recommended)) => Some(remaining.min(recommended.max(0.0))),
+        (Some(remaining), None) => Some(remaining),
+        _ => None,
+    };
+    let volume_needs_charge = match (practical_remaining_litres, slot_draw_budget_l) {
+        (Some(remaining), Some(budget)) => Some(remaining < budget),
+        _ => None,
+    };
+    let needs_charge = [t1_needs_charge, storage_needs_charge, volume_needs_charge]
+        .into_iter()
+        .flatten()
+        .any(|needs| needs);
     if !needs_charge {
         return None;
     }
@@ -1494,8 +1689,30 @@ fn plan_dhw_schedule(
         None => "headroom_signal=unavailable".to_string(),
     };
 
+    let remaining_summary = match (
+        practical_remaining_litres,
+        slot_draw_budget_l,
+        recommended_full_litres,
+    ) {
+        (Some(remaining), Some(budget), Some(recommended)) => format!(
+            "remaining={:.0}L recommended_full={:.0}L slot_budget={:.0}L volume_needs_charge={}",
+            remaining,
+            recommended,
+            budget,
+            remaining < budget,
+        ),
+        (Some(remaining), Some(budget), None) => format!(
+            "remaining={:.0}L slot_budget={:.0}L volume_needs_charge={}",
+            remaining,
+            budget,
+            remaining < budget,
+        ),
+        (Some(remaining), None, _) => format!("remaining={:.0}L", remaining),
+        _ => "remaining=unavailable".to_string(),
+    };
+
     let reason = format!(
-        "slot={} predicted_T1@{}={} trigger={:.1}°C outside={:.1}°C hwc_mode={} {}{}",
+        "slot={} predicted_T1@{}={} trigger={:.1}°C outside={:.1}°C hwc_mode={} {} {}{}",
         slot,
         waking.format("%H:%M"),
         predicted_t1
@@ -1504,6 +1721,7 @@ fn plan_dhw_schedule(
         trigger,
         outside,
         hwc_mode.unwrap_or("unknown"),
+        remaining_summary,
         battery_summary,
         if launch_now {
             " → launch now"
@@ -1563,6 +1781,19 @@ fn run_outer_cycle(
     let hwc_storage_temp = parse_f64(ebusd_read(config, "700", "HwcStorageTemp"));
     let hwc_mode = ebusd_read(config, "hmu", "HwcMode").ok();
     let dhw_t1 = query_latest_dhw_t1(client, config).ok().flatten();
+    let remaining_litres =
+        query_latest_measurement_value(client, config, "dhw", "remaining_litres", "-6h")
+            .ok()
+            .flatten();
+    let recommended_full_litres = query_latest_measurement_value(
+        client,
+        config,
+        "dhw_capacity",
+        "recommended_full_litres",
+        "-14d",
+    )
+    .ok()
+    .flatten();
     let battery_soc_pct = query_latest_topic_value(
         client,
         config,
@@ -1636,6 +1867,8 @@ fn run_outer_cycle(
                 outside_temp,
                 dhw_t1,
                 hwc_storage_temp,
+                remaining_litres,
+                recommended_full_litres,
                 hwc_mode.as_deref(),
                 battery_adequacy.as_ref(),
             ) {
@@ -1924,8 +2157,8 @@ fn run_outer_cycle(
     };
 
     write_jsonl(&config.jsonl_log_file, &entry)?;
-    if let Err(err) = write_influx_decision(client, config, &entry) {
-        warn!("failed to write Influx decision log: {err}");
+    if let Err(err) = write_decision_log(client, config, &entry) {
+        warn!("failed to write TSDB decision log: {err}");
     }
     info!("outer: {}", serde_json::to_string(&entry)?);
     Ok(())
@@ -2605,12 +2838,36 @@ mod tests {
 
         assert_eq!(
             dhw_timer_payload(&config, true),
-            "04:00;07:00;13:00;16:00;22:00;23:59"
+            "04:00;07:00;13:00;16:00;22:00;-:-"
         );
         assert_eq!(
             dhw_timer_payload(&config, false),
-            "13:00;16:00;22:00;23:59;-:-;-:-"
+            "13:00;16:00;22:00;-:-;-:-;-:-"
         );
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#Midnight tariff-window end normalizes for runtime matching]]
+    #[test]
+    fn midnight_tariff_window_end_normalizes_for_runtime_matching() {
+        let window = TimeWindow {
+            start: "22:00".to_string(),
+            end: "00:00".to_string(),
+        };
+        let normalized = normalized_time_window_for_runtime(&window);
+        assert_eq!(normalized.start, "22:00");
+        assert_eq!(normalized.end, "23:59");
+        assert!(within_window(
+            NaiveTime::from_hms_opt(22, 30, 0).unwrap(),
+            &window
+        ));
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#Midnight tariff-window end encodes as dash-colon for eBUS writes]]
+    #[test]
+    fn midnight_tariff_window_end_encodes_as_dash_colon_for_ebus() {
+        assert_eq!(normalize_window_end_for_ebus("00:00"), "-:-");
+        assert_eq!(normalize_window_end_for_ebus("23:59"), "-:-");
+        assert_eq!(normalize_window_end_for_ebus("23:59\n"), "-:-");
     }
 
     // @lat: [[tests#Controller tariff and timer helpers#DHW timer weekday rolls after waking]]
@@ -2701,6 +2958,8 @@ mod tests {
                 Some(8.0),
                 Some(39.0),
                 Some(39.0),
+                Some(20.0),
+                Some(221.0),
                 Some("normal"),
                 battery.as_ref(),
             )
@@ -2784,6 +3043,8 @@ mod tests {
             Some(6.0),
             Some(40.6),
             Some(41.0),
+            Some(20.0),
+            Some(221.0),
             Some("normal"),
             battery.as_ref(),
         )
@@ -2806,6 +3067,8 @@ mod tests {
             Some(6.0),
             Some(41.2),
             Some(41.0),
+            Some(20.0),
+            Some(221.0),
             Some("eco"),
             battery.as_ref(),
         )
@@ -2830,6 +3093,8 @@ mod tests {
             Some(6.0),
             Some(40.6),
             Some(41.0),
+            Some(20.0),
+            Some(221.0),
             Some("normal"),
             battery.as_ref(),
         )
@@ -2839,6 +3104,55 @@ mod tests {
         assert_eq!(plan.battery_adequate_to_next_cosy, Some(true));
         assert_eq!(plan.slot_key, "2026-04-05:overnight_battery");
         assert!(plan.reason.contains("launch now"));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Low remaining litres triggers DHW even when T1 looks safe]]
+    #[test]
+    fn dhw_scheduler_uses_remaining_litres_budget() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 5, 13, 30, 0).unwrap();
+        let plan = plan_dhw_schedule(
+            &config,
+            now,
+            Some(10.0),
+            Some(43.0),
+            Some(44.0),
+            Some(50.0),
+            Some(221.0),
+            Some("normal"),
+            None,
+        )
+        .expect("low remaining litres should trigger a DHW plan");
+
+        assert!(plan.launch_now);
+        assert_eq!(plan.slot_key, "2026-04-05:afternoon_fallback");
+        assert!(plan.reason.contains("remaining=50L"));
+        assert!(plan.reason.contains("slot_budget=72L"));
+        assert!(plan.reason.contains("volume_needs_charge=true"));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Recommended full litres caps optimistic remaining estimate]]
+    #[test]
+    fn dhw_scheduler_caps_remaining_litres_by_recommended_capacity() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 5, 4, 30, 0).unwrap();
+        let plan = plan_dhw_schedule(
+            &config,
+            now,
+            Some(8.0),
+            Some(42.0),
+            Some(43.0),
+            Some(150.0),
+            Some(80.0),
+            Some("normal"),
+            None,
+        )
+        .expect("recommended full litres should cap an optimistic remaining estimate");
+
+        assert!(plan.launch_now);
+        assert!(plan.reason.contains("remaining=80L"));
+        assert!(plan.reason.contains("recommended_full=80L"));
+        assert!(plan.reason.contains("slot_budget=89L"));
     }
 
     // ----- Phase 1 coverage: pure helpers with zero prior coverage -----
@@ -2860,7 +3174,10 @@ mod tests {
     fn curve_for_flow_moderate_conditions() {
         // 30°C flow, 19°C setpoint, 5°C outside, exponent 1.25
         let c = curve_for_flow(30.0, 19.0, 5.0, 1.25);
-        assert!(c > 0.0 && c < 2.0, "curve {c} should be moderate for typical winter");
+        assert!(
+            c > 0.0 && c < 2.0,
+            "curve {c} should be moderate for typical winter"
+        );
     }
 
     // @lat: [[tests#Adaptive heating controller#Round2 preserves two decimal places]]
@@ -2940,7 +3257,10 @@ mod tests {
         let t1 = predict_t1_at_time(50.0, now, target);
         // 8 hours of decay
         let expected = 50.0 - 8.0 * DHW_T1_DECAY_C_PER_H;
-        assert!((t1 - expected).abs() < 0.01, "decay should be {expected}, got {t1}");
+        assert!(
+            (t1 - expected).abs() < 0.01,
+            "decay should be {expected}, got {t1}"
+        );
         assert!(t1 < 50.0, "T1 should decrease over time");
     }
 
@@ -2950,10 +3270,7 @@ mod tests {
         assert_eq!(parse_f64(Ok("3.14".to_string())), Some(3.14));
         assert_eq!(parse_f64(Ok(" 42 ".to_string())), Some(42.0));
         assert_eq!(parse_f64(Ok("not_a_number".to_string())), None);
-        assert_eq!(
-            parse_f64(Err(anyhow::anyhow!("read error"))),
-            None
-        );
+        assert_eq!(parse_f64(Err(anyhow::anyhow!("read error"))), None);
     }
 
     // @lat: [[tests#Adaptive heating controller#parse_time accepts valid rejects invalid]]
@@ -3016,8 +3333,14 @@ mod tests {
     fn sorted_cosy_windows_returns_time_order() {
         let mut config = test_config();
         config.dhw.cosy_windows = vec![
-            TimeWindow { start: "13:00".to_string(), end: "16:00".to_string() },
-            TimeWindow { start: "04:00".to_string(), end: "07:00".to_string() },
+            TimeWindow {
+                start: "13:00".to_string(),
+                end: "16:00".to_string(),
+            },
+            TimeWindow {
+                start: "04:00".to_string(),
+                end: "07:00".to_string(),
+            },
         ];
         let sorted = sorted_cosy_windows(&config);
         assert_eq!(sorted[0].start, "04:00");
@@ -3030,26 +3353,26 @@ mod tests {
         let mut config = test_config();
         // waking_start defaults to 07:00 — window ending at 07:00 should be excluded
         config.dhw.cosy_windows = vec![
-            TimeWindow { start: "04:00".to_string(), end: "07:00".to_string() },
-            TimeWindow { start: "13:00".to_string(), end: "16:00".to_string() },
+            TimeWindow {
+                start: "04:00".to_string(),
+                end: "07:00".to_string(),
+            },
+            TimeWindow {
+                start: "13:00".to_string(),
+                end: "16:00".to_string(),
+            },
         ];
         let enabled = morning_dhw_windows_enabled(&config);
         assert_eq!(enabled.len(), 1);
         assert_eq!(enabled[0].start, "13:00");
 
         // Window not ending at waking → kept
-        config.dhw.cosy_windows = vec![
-            TimeWindow { start: "04:00".to_string(), end: "08:00".to_string() },
-        ];
+        config.dhw.cosy_windows = vec![TimeWindow {
+            start: "04:00".to_string(),
+            end: "08:00".to_string(),
+        }];
         let enabled = morning_dhw_windows_enabled(&config);
         assert_eq!(enabled.len(), 1);
-    }
-
-    // @lat: [[tests#Adaptive heating controller#influx_field formats Some and returns None for None]]
-    #[test]
-    fn influx_field_formats_some_returns_none_for_none() {
-        assert_eq!(influx_field("temp", Some(21.5)), Some("temp=21.5".to_string()));
-        assert_eq!(influx_field("temp", None), None);
     }
 
     // @lat: [[tests#Adaptive heating controller#Forecast branch uses forecast temperature and solar]]
@@ -3072,22 +3395,21 @@ mod tests {
         };
 
         // With forecast (no sun): should use forecast temp (2.0), not the live temp (10.0)
-        let with_fc = calculate_required_curve_for_target(
-            &config, 20.5, 10.0, None, Some(&forecast_no_sun),
-        );
+        let with_fc =
+            calculate_required_curve_for_target(&config, 20.5, 10.0, None, Some(&forecast_no_sun));
         // With forecast (sunny): same temp but solar gain reduces heating need
-        let with_fc_sunny = calculate_required_curve_for_target(
-            &config, 20.5, 10.0, None, Some(&forecast_sunny),
-        );
+        let with_fc_sunny =
+            calculate_required_curve_for_target(&config, 20.5, 10.0, None, Some(&forecast_sunny));
         // Without forecast: uses live temp (10.0)
-        let without_fc = calculate_required_curve_for_target(
-            &config, 20.5, 10.0, None, None,
-        );
+        let without_fc = calculate_required_curve_for_target(&config, 20.5, 10.0, None, None);
 
         // --- Effective outside and solar are derived from forecast, not live ---
         assert_eq!(with_fc.forecast_outside_c, Some(2.0));
         assert_eq!(with_fc.forecast_solar_w_m2, Some(0.0));
-        assert!(with_fc.reason.contains("forecast"), "reason should cite forecast source");
+        assert!(
+            with_fc.reason.contains("forecast"),
+            "reason should cite forecast source"
+        );
 
         // Sunny forecast applies horizontal_to_sw_vertical: 200 * 0.7 = 140
         assert_eq!(with_fc_sunny.forecast_solar_w_m2, Some(140.0));
@@ -3095,11 +3417,18 @@ mod tests {
         // Without forecast: falls back to live outside temp, zero solar
         assert_eq!(without_fc.forecast_outside_c, Some(10.0));
         assert_eq!(without_fc.forecast_solar_w_m2, Some(0.0));
-        assert!(without_fc.reason.contains("live"), "reason should cite live source");
+        assert!(
+            without_fc.reason.contains("live"),
+            "reason should cite live source"
+        );
 
         // Forecast vs live should produce different curves (different effective outside)
-        let fc_curve = with_fc.required_curve.expect("forecast curve should be present");
-        let live_curve = without_fc.required_curve.expect("live curve should be present");
+        let fc_curve = with_fc
+            .required_curve
+            .expect("forecast curve should be present");
+        let live_curve = without_fc
+            .required_curve
+            .expect("live curve should be present");
         assert!(
             (fc_curve - live_curve).abs() > f64::EPSILON,
             "forecast curve ({fc_curve}) and live curve ({live_curve}) should differ \
@@ -3108,8 +3437,12 @@ mod tests {
 
         // Solar gain should produce a different (lower) required flow than no-sun
         // at the same temperature
-        let fc_flow = with_fc.required_flow.expect("no-sun flow should be present");
-        let fc_sunny_flow = with_fc_sunny.required_flow.expect("sunny flow should be present");
+        let fc_flow = with_fc
+            .required_flow
+            .expect("no-sun flow should be present");
+        let fc_sunny_flow = with_fc_sunny
+            .required_flow
+            .expect("sunny flow should be present");
         assert!(
             fc_sunny_flow < fc_flow,
             "sunny flow ({fc_sunny_flow}) should be less than no-sun flow ({fc_flow}) \
@@ -3122,6 +3455,7 @@ mod tests {
     fn default_config_smoke_test() {
         let config = default_config();
         assert_eq!(config.ebusd_port, 8888);
+        assert_eq!(config.postgres.conninfo_env, "TIMESCALEDB_CONNINFO");
         assert_eq!(config.baseline.hc1_heat_curve, 0.55);
         assert_eq!(config.baseline.z1_day_temp, 21.0);
         assert_eq!(config.baseline.z1_night_temp, 19.0);
@@ -3137,299 +3471,228 @@ mod tests {
 
     // ── Write-contract tests (migration regression) ────────────────────────
 
-    // @lat: [[tests#Adaptive heating write contracts#Decision LP line maps all fields to TimescaleDB columns]]
+    // @lat: [[tests#Adaptive heating write contracts#Decision PostgreSQL row maps tags and boolean fields correctly]]
     #[test]
-    fn decision_lp_field_coverage() {
-        // Build a DecisionLog with all fields populated and verify the LP line
-        // contains every field that the TimescaleDB adaptive_heating_mvp table expects.
-        let entry = DecisionLog {
-            ts: chrono::Utc::now(),
-            mode: Mode::Occupied,
-            tariff_period: "cosy".to_string(),
-            leather_temp_c: Some(20.5),
-            aldora_temp_c: Some(19.0),
-            outside_temp_c: Some(5.0),
-            hwc_storage_temp_c: Some(45.0),
-            dhw_t1_c: Some(42.0),
-            hwc_mode: Some("auto".into()),
-            battery_soc_pct: Some(80.0),
-            battery_power_w: Some(-500.0),
-            battery_home_w: Some(1200.0),
-            battery_headroom_to_next_cosy_kwh: Some(3.5),
-            battery_adequate_to_next_cosy: Some(true),
-            run_status: Some("heating".into()),
-            compressor_util: Some(0.65),
-            elec_consumption_w: Some(800.0),
-            yield_power_kw: Some(3.2),
-            flow_desired_c: Some(35.0),
-            flow_actual_c: Some(34.5),
-            return_actual_c: Some(29.0),
-            curve_before: Some(0.45),
-            curve_after: Some(0.50),
-            target_flow_c: Some(35.0),
-            forecast_outside_c: Some(4.0),
-            forecast_solar_w_m2: Some(50.0),
-            model_required_mwt: Some(32.0),
-            model_required_flow: Some(35.0),
-            model_required_curve: Some(0.48),
-            action: "adjust curve".to_string(),
-            reason: "model says warmer".to_string(),
-            write_results: vec![],
-        };
+    fn decision_postgres_row_maps_tags_and_boolean_fields() {
+        let entry = sample_decision_log();
 
-        let mode = format!("{:?}", entry.mode).to_lowercase();
-        let action = entry.action.replace(' ', "_");
-        let fields: Vec<String> = [
-            influx_field("leather_temp_c", entry.leather_temp_c),
-            influx_field("aldora_temp_c", entry.aldora_temp_c),
-            influx_field("outside_temp_c", entry.outside_temp_c),
-            influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
-            influx_field("dhw_t1_c", entry.dhw_t1_c),
-            influx_field("battery_soc_pct", entry.battery_soc_pct),
-            influx_field("battery_power_w", entry.battery_power_w),
-            influx_field("battery_home_w", entry.battery_home_w),
-            influx_field("battery_headroom_to_next_cosy_kwh", entry.battery_headroom_to_next_cosy_kwh),
-            entry.battery_adequate_to_next_cosy
-                .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 })),
-            influx_field("compressor_util", entry.compressor_util),
-            influx_field("elec_consumption_w", entry.elec_consumption_w),
-            influx_field("yield_power_kw", entry.yield_power_kw),
-            influx_field("flow_desired_c", entry.flow_desired_c),
-            influx_field("flow_actual_c", entry.flow_actual_c),
-            influx_field("return_actual_c", entry.return_actual_c),
-            influx_field("curve_before", entry.curve_before),
-            influx_field("curve_after", entry.curve_after),
-            influx_field("target_flow_c", entry.target_flow_c),
-            influx_field("forecast_outside_c", entry.forecast_outside_c),
-            influx_field("forecast_solar_w_m2", entry.forecast_solar_w_m2),
-            influx_field("model_required_mwt", entry.model_required_mwt),
-            influx_field("model_required_flow", entry.model_required_flow),
-            influx_field("model_required_curve", entry.model_required_curve),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        let line = format!(
-            "adaptive_heating_mvp,mode={},action={},tariff={} {} {}",
-            mode, action, entry.tariff_period.replace(' ', "_"),
-            fields.join(","), entry.ts.timestamp()
-        );
-
-        // Verify measurement name
-        assert!(line.starts_with("adaptive_heating_mvp,"));
-
-        // Verify tags (become TEXT columns in TimescaleDB)
-        assert!(line.contains("mode=occupied"));
-        assert!(line.contains("action=adjust_curve"));
-        assert!(line.contains("tariff=cosy"));
-
-        // All TimescaleDB columns that the schema defines
-        let pg_columns = [
-            "leather_temp_c", "aldora_temp_c", "outside_temp_c",
-            "hwc_storage_temp_c", "dhw_t1_c",
-            "battery_soc_pct", "battery_power_w", "battery_home_w",
-            "battery_headroom_to_next_cosy_kwh", "battery_adequate_to_next_cosy",
-            "compressor_util", "elec_consumption_w", "yield_power_kw",
-            "flow_desired_c", "flow_actual_c", "return_actual_c",
-            "curve_before", "curve_after", "target_flow_c",
-            "forecast_outside_c", "forecast_solar_w_m2",
-            "model_required_mwt", "model_required_flow", "model_required_curve",
-        ];
-        for col in &pg_columns {
-            assert!(
-                line.contains(&format!("{col}=")),
-                "LP line missing field '{col}' — TimescaleDB column will be NULL"
-            );
-        }
+        let row = decision_write_row(&entry);
+        assert_eq!(row.mode, "monitoronly");
+        assert_eq!(row.action, "hold_curve");
+        assert_eq!(row.tariff, "off_peak");
+        assert_eq!(row.battery_adequate_to_next_cosy, Some(1.0));
+        assert_eq!(row.battery_headroom_to_next_cosy_kwh, Some(1.25));
+        assert_eq!(row.aldora_temp_c, None);
     }
 
-    // @lat: [[tests#Adaptive heating write contracts#Decision LP with None fields omits them cleanly]]
+    // @lat: [[tests#Adaptive heating write contracts#Decision PostgreSQL row keeps line-protocol second precision]]
     #[test]
-    fn decision_lp_none_fields_omitted() {
-        // When Option fields are None, they should NOT appear in the LP line.
-        // In TimescaleDB, these become NULL columns via absent INSERT values.
-        let entry = DecisionLog {
+    fn decision_postgres_row_keeps_line_protocol_second_precision() {
+        let entry = sample_decision_log();
+
+        let row = decision_write_row(&entry);
+        assert_eq!(row.ts.timestamp(), entry.ts.timestamp());
+        assert_eq!(row.ts.timestamp_subsec_nanos(), 0);
+    }
+
+    fn sample_decision_log() -> DecisionLog {
+        DecisionLog {
             ts: chrono::Utc::now(),
-            mode: Mode::Occupied,
-            tariff_period: "cosy".to_string(),
+            mode: Mode::MonitorOnly,
+            tariff_period: "off peak".to_string(),
             leather_temp_c: Some(20.5),
-            aldora_temp_c: None,  // ← None
+            aldora_temp_c: None,
             outside_temp_c: Some(5.0),
-            hwc_storage_temp_c: None,  // ← None
-            dhw_t1_c: None,  // ← None
+            hwc_storage_temp_c: None,
+            dhw_t1_c: None,
             hwc_mode: None,
             battery_soc_pct: None,
             battery_power_w: None,
             battery_home_w: None,
-            battery_headroom_to_next_cosy_kwh: None,
-            battery_adequate_to_next_cosy: None,
+            battery_headroom_to_next_cosy_kwh: Some(1.25),
+            battery_adequate_to_next_cosy: Some(true),
             run_status: None,
             compressor_util: None,
-            elec_consumption_w: None,
+            elec_consumption_w: Some(800.0),
             yield_power_kw: None,
-            flow_desired_c: None,
+            flow_desired_c: Some(35.0),
             flow_actual_c: None,
             return_actual_c: None,
-            curve_before: None,
-            curve_after: None,
-            target_flow_c: None,
+            curve_before: Some(0.45),
+            curve_after: Some(0.50),
+            target_flow_c: Some(35.0),
             forecast_outside_c: None,
             forecast_solar_w_m2: None,
-            model_required_mwt: None,
-            model_required_flow: None,
-            model_required_curve: None,
-            action: "skip".to_string(),
-            reason: "no data".to_string(),
+            model_required_mwt: Some(32.0),
+            model_required_flow: Some(35.0),
+            model_required_curve: Some(0.48),
+            action: "hold curve".to_string(),
+            reason: "n/a".to_string(),
             write_results: vec![],
+        }
+    }
+
+    fn real_pg_conninfo() -> Option<String> {
+        std::env::var("TIMESCALEDB_CONNINFO").ok()
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Real PostgreSQL decision insert includes explicit timestamp]]
+    #[test]
+    #[ignore]
+    fn pg_decision_insert_includes_explicit_timestamp() {
+        let Some(conninfo) = real_pg_conninfo() else {
+            eprintln!("skipping: TIMESCALEDB_CONNINFO not set");
+            return;
         };
+        let mut pg = pg_client(&conninfo).expect("connect to real PostgreSQL");
+        pg.batch_execute("BEGIN").expect("begin transaction");
 
-        let fields: Vec<String> = [
-            influx_field("leather_temp_c", entry.leather_temp_c),
-            influx_field("aldora_temp_c", entry.aldora_temp_c),
-            influx_field("outside_temp_c", entry.outside_temp_c),
-            influx_field("hwc_storage_temp_c", entry.hwc_storage_temp_c),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let entry = sample_decision_log();
+        write_postgres_decision_with_client(&mut pg, &entry).expect("insert decision row");
 
-        // Only the Some fields should be present
-        assert_eq!(fields.len(), 2);
-        assert!(fields.iter().any(|f| f.starts_with("leather_temp_c=")));
-        assert!(fields.iter().any(|f| f.starts_with("outside_temp_c=")));
-        // None fields must not appear
-        assert!(!fields.iter().any(|f| f.starts_with("aldora_temp_c=")));
-        assert!(!fields.iter().any(|f| f.starts_with("hwc_storage_temp_c=")));
+        let row = pg
+            .query_one(
+                "SELECT time FROM adaptive_heating_mvp WHERE mode = $1 AND action = $2 AND tariff = $3 ORDER BY time DESC LIMIT 1",
+                &[&"monitoronly", &"hold_curve", &"off_peak"],
+            )
+            .expect("read back inserted decision row");
+        let time: chrono::DateTime<chrono::Utc> = row.get(0);
+        let age = chrono::Utc::now() - time;
+        assert!(
+            age.num_seconds() < 10,
+            "inserted row must be recent, age={age}"
+        );
+
+        pg.batch_execute("ROLLBACK").expect("rollback transaction");
     }
 
-    // @lat: [[tests#Adaptive heating write contracts#query_single_value inline parser extracts value from CSV]]
+    // @lat: [[tests#Adaptive heating write contracts#Real PostgreSQL decision insert preserves column types and values]]
     #[test]
-    fn query_single_value_inline_parser() {
-        // The adaptive-heating-mvp has its own inline CSV parser in query_single_value.
-        // This test pins its contract by simulating what it does.
-        let body = "\
-#datatype,string,long,dateTime:RFC3339,double
-#group,false,false,false,false
-#default,_result,,,
-,result,table,_time,_value
-,_result,0,2026-01-15T10:30:00Z,21.5
-";
-        // Reproduce the inline parser logic
-        let mut headers: Vec<String> = Vec::new();
-        let mut val = None;
-        for line in body.lines() {
-            if line.starts_with('#') || line.is_empty() {
-                continue;
-            }
-            let fields: Vec<&str> = line.split(',').collect();
-            if headers.is_empty() {
-                headers = fields.iter().map(|s| s.to_string()).collect();
-                continue;
-            }
-            if let Some(i) = headers.iter().position(|h| h == "_value") {
-                val = fields.get(i).and_then(|s| s.parse::<f64>().ok());
-            }
-        }
-        assert_eq!(val, Some(21.5));
-    }
+    #[ignore]
+    fn pg_decision_insert_preserves_column_types_and_values() {
+        let Some(conninfo) = real_pg_conninfo() else {
+            eprintln!("skipping: TIMESCALEDB_CONNINFO not set");
+            return;
+        };
+        let mut pg = pg_client(&conninfo).expect("connect to real PostgreSQL");
+        pg.batch_execute("BEGIN").expect("begin transaction");
 
-    // @lat: [[tests#Adaptive heating write contracts#query_single_value returns None for empty result]]
-    #[test]
-    fn query_single_value_empty_result() {
-        // When sensor has no data in lookback window
-        let body = "\
-#datatype,string,long,dateTime:RFC3339,double
-#group,false,false,false,false
-#default,_result,,,
-,result,table,_time,_value
+        let entry = sample_decision_log();
+        write_postgres_decision_with_client(&mut pg, &entry).expect("insert decision row");
 
-";
-        let mut headers: Vec<String> = Vec::new();
-        let mut val = None;
-        for line in body.lines() {
-            if line.starts_with('#') || line.is_empty() {
-                continue;
-            }
-            let fields: Vec<&str> = line.split(',').collect();
-            if headers.is_empty() {
-                headers = fields.iter().map(|s| s.to_string()).collect();
-                continue;
-            }
-            if let Some(i) = headers.iter().position(|h| h == "_value") {
-                val = fields.get(i).and_then(|s| s.parse::<f64>().ok());
-            }
-        }
-        assert!(val.is_none(), "Empty sensor result should return None");
-    }
+        let row = pg
+            .query_one(
+                "SELECT mode, action, tariff, leather_temp_c, \"battery_headroom_to_next_cosy_kwh\", battery_adequate_to_next_cosy, elec_consumption_w, flow_desired_c, curve_before, curve_after, target_flow_c, model_required_mwt, model_required_flow, model_required_curve FROM adaptive_heating_mvp WHERE mode = $1 AND action = $2 AND tariff = $3 ORDER BY time DESC LIMIT 1",
+                &[&"monitoronly", &"hold_curve", &"off_peak"],
+            )
+            .expect("read back typed decision row");
 
-    // @lat: [[tests#Adaptive heating write contracts#LP tag values escape spaces to underscores]]
-    #[test]
-    fn lp_tag_values_escape_spaces() {
-        // action and tariff_period use .replace(' ', "_") before LP emission
-        let action = "adjust curve";
-        let tariff = "off peak";
-        let escaped_action = action.replace(' ', "_");
-        let escaped_tariff = tariff.replace(' ', "_");
-        assert_eq!(escaped_action, "adjust_curve");
-        assert_eq!(escaped_tariff, "off_peak");
-        assert!(!escaped_action.contains(' '));
-        assert!(!escaped_tariff.contains(' '));
+        let mode: String = row.get(0);
+        let action: String = row.get(1);
+        let tariff: String = row.get(2);
+        let leather_temp_c: f64 = row.get(3);
+        let battery_headroom: f64 = row.get(4);
+        let battery_ok: f64 = row.get(5);
+        let elec_consumption_w: f64 = row.get(6);
+        let flow_desired_c: f64 = row.get(7);
+        let curve_before: f64 = row.get(8);
+        let curve_after: f64 = row.get(9);
+        let target_flow_c: f64 = row.get(10);
+        let model_required_mwt: f64 = row.get(11);
+        let model_required_flow: f64 = row.get(12);
+        let model_required_curve: f64 = row.get(13);
+
+        assert_eq!(mode, "monitoronly");
+        assert_eq!(action, "hold_curve");
+        assert_eq!(tariff, "off_peak");
+        assert!((leather_temp_c - 20.5).abs() < f64::EPSILON);
+        assert!((battery_headroom - 1.25).abs() < f64::EPSILON);
+        assert!((battery_ok - 1.0).abs() < f64::EPSILON);
+        assert!((elec_consumption_w - 800.0).abs() < f64::EPSILON);
+        assert!((flow_desired_c - 35.0).abs() < f64::EPSILON);
+        assert!((curve_before - 0.45).abs() < f64::EPSILON);
+        assert!((curve_after - 0.50).abs() < f64::EPSILON);
+        assert!((target_flow_c - 35.0).abs() < f64::EPSILON);
+        assert!((model_required_mwt - 32.0).abs() < f64::EPSILON);
+        assert!((model_required_flow - 35.0).abs() < f64::EPSILON);
+        assert!((model_required_curve - 0.48).abs() < f64::EPSILON);
+
+        pg.batch_execute("ROLLBACK").expect("rollback transaction");
     }
 
     // @lat: [[tests#Adaptive heating write contracts#Room temp field routing matches influx.rs contract]]
     #[test]
     fn room_temp_field_routing_matches_influx() {
-        // query_latest_room_temp has its own field-name routing logic
-        // that must match influx.rs query_room_temps. This duplication
-        // must be preserved (or unified) during migration.
-        let topics_and_fields: Vec<(&str, &str)> = vec![
-            ("emon/emonth2_23/temperature", "value"),       // special case
-            ("zigbee2mqtt/Leather", "temperature"),          // default
-            ("zigbee2mqtt/Aldora", "temperature"),           // default
-            ("zigbee2mqtt/aldora_temp_humid", "temperature"), // default
-        ];
+        assert_eq!(latest_topic_field("emon/emonth2_23/temperature"), "value");
+        assert_eq!(latest_topic_field("zigbee2mqtt/Leather"), "temperature");
+        assert_eq!(
+            latest_topic_field("zigbee2mqtt/aldora_temp_humid"),
+            "temperature"
+        );
 
-        for (topic, expected_field) in &topics_and_fields {
-            let field = if *topic == "emon/emonth2_23/temperature" {
-                "value"
-            } else {
-                "temperature"
-            };
-            assert_eq!(
-                field, *expected_field,
-                "topic '{topic}' should use field '{expected_field}'"
-            );
-        }
+        assert_eq!(
+            latest_topic_pg_route("emon/emonth2_23/temperature"),
+            Some(LatestTopicPgRoute::EmonthColumn {
+                column: "temperature"
+            })
+        );
+        assert_eq!(
+            latest_topic_pg_route("zigbee2mqtt/Leather"),
+            Some(LatestTopicPgRoute::ZigbeeTemperature { device: "Leather" })
+        );
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Latest topic routing covers Tesla and Multical sources]]
+    #[test]
+    fn latest_topic_routing_covers_tesla_and_multical_sources() {
+        assert_eq!(
+            latest_topic_pg_route("emon/tesla/soc_pct"),
+            Some(LatestTopicPgRoute::TeslaColumn { column: "soc_pct" })
+        );
+        assert_eq!(
+            latest_topic_pg_route("emon/multical/dhw_t1"),
+            Some(LatestTopicPgRoute::MulticalColumn { column: "dhw_t1" })
+        );
+        assert_eq!(
+            latest_topic_pg_route("emon/multical/dhw_volume_V1"),
+            Some(LatestTopicPgRoute::MulticalColumn {
+                column: "dhw_volume_v1"
+            })
+        );
+        assert_eq!(latest_topic_pg_route("unsupported/topic"), None);
     }
 
     // @lat: [[tests#Adaptive heating write contracts#DHW T1 query uses value field]]
     #[test]
     fn dhw_t1_field_is_value() {
-        // query_latest_dhw_t1 hard-codes field="value" for the emon
-        // Multical T1 topic. In PG: multical table, dhw_t1 column.
-        let field = "value";
-        assert_eq!(field, "value", "DHW T1 always uses _field='value' in emon measurement");
+        assert_eq!(
+            latest_measurement_pg_route("emon", "dhw_t1"),
+            LatestMeasurementPgRoute::MulticalColumn { column: "dhw_t1" }
+        );
+        assert_eq!(
+            latest_measurement_pg_route("emon", "dhw_volume_V1"),
+            LatestMeasurementPgRoute::MulticalColumn {
+                column: "dhw_volume_v1"
+            }
+        );
     }
 
-    // @lat: [[tests#Adaptive heating write contracts#Boolean field encodes as integer in LP]]
+    // @lat: [[tests#Adaptive heating write contracts#Measurement routing covers ebusd_poll and direct tables]]
     #[test]
-    fn boolean_field_encodes_as_integer() {
-        // InfluxDB LP: boolean → 1/0 integer
-        // TimescaleDB: battery_adequate_to_next_cosy is FLOAT8 (not BOOLEAN)
-        // Migration must convert 1/0 back to float or change schema
-        let encoded_true = Some(true)
-            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 }));
-        assert_eq!(encoded_true, Some("battery_adequate_to_next_cosy=1".to_string()));
-
-        let encoded_false = Some(false)
-            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 }));
-        assert_eq!(encoded_false, Some("battery_adequate_to_next_cosy=0".to_string()));
-
-        let encoded_none: Option<String> = None::<bool>
-            .map(|v| format!("battery_adequate_to_next_cosy={}", if v { 1 } else { 0 }));
-        assert!(encoded_none.is_none());
+    fn measurement_routing_covers_ebusd_poll_and_direct_tables() {
+        assert_eq!(
+            latest_measurement_pg_route("ebusd_poll", "FlowTemp"),
+            LatestMeasurementPgRoute::EbusdPollValue { field: "FlowTemp" }
+        );
+        assert_eq!(
+            latest_measurement_pg_route("ct_monitor", "P3"),
+            LatestMeasurementPgRoute::DirectTableColumn {
+                table: "ct_monitor",
+                column: "P3"
+            }
+        );
     }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -3448,6 +3711,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Run);
     let mut config = load_config(&cli.config)?;
+
+    if matches!(command, Commands::Run | Commands::Status { .. }) {
+        let conninfo = resolve_postgres_conninfo(&config)?;
+        info!(
+            conninfo_env = %config.postgres.conninfo_env,
+            "controller PostgreSQL conninfo resolved"
+        );
+        drop(conninfo);
+    }
 
     match command {
         Commands::RestoreBaseline => {
@@ -3562,7 +3834,7 @@ async fn main() -> Result<()> {
                 .into_iter()
                 .map(|w| TimeWindow {
                     start: w.start,
-                    end: w.end,
+                    end: normalize_window_end_for_runtime(&w.end),
                 })
                 .collect();
             config.dhw.peak_windows = windows
@@ -3570,7 +3842,7 @@ async fn main() -> Result<()> {
                 .into_iter()
                 .map(|w| TimeWindow {
                     start: w.start,
-                    end: w.end,
+                    end: normalize_window_end_for_runtime(&w.end),
                 })
                 .collect();
         }

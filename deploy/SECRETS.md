@@ -1,75 +1,49 @@
 # Secrets Management — adaptive-heating-mvp
 
-Referenced by `docs/heating-plan.md` and `docs/dhw-plan.md` for production and development InfluxDB token handling.
+Referenced by `docs/heating-plan.md` and `docs/dhw-plan.md` for the controller's current production secret handling.
+
+The live controller now reads and writes via PostgreSQL. Repo-local migration state is tracked in `../lat.md/tsdb-migration.md`; shared-platform sequencing remains in `~/github/energy-hub/lat.md/tsdb-migration.md`.
 
 ## Production (pi5data systemd service)
 
-The controller now uses a **dedicated InfluxDB token** delivered via a **systemd credential**, not an environment variable.
+The controller now needs **PostgreSQL conninfo** plus the existing Octopus account credentials. It no longer uses an Influx token or systemd credential.
 
 ### Where it lives
 
 ```text
-/etc/adaptive-heating-mvp/influx.token     # root:root 0600, dedicated controller token
-/etc/adaptive-heating-mvp.env              # optional non-Influx env vars only (for example Octopus creds)
+/etc/adaptive-heating-mvp.env              # Octopus creds + TIMESCALEDB_CONNINFO
+/etc/systemd/system/adaptive-heating-mvp.service
 ```
 
-The systemd unit loads the token with:
+The systemd unit reads the environment file with:
 
 ```ini
-LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token
+EnvironmentFile=-/etc/adaptive-heating-mvp.env
 ```
 
-At runtime systemd exposes the secret at:
+### Required environment variables
 
-```text
-$CREDENTIALS_DIRECTORY/influx_token
+```bash
+OCTOPUS_API_KEY=...
+OCTOPUS_ACCOUNT_NUMBER=...
+TIMESCALEDB_CONNINFO="host=127.0.0.1 port=5432 user=... password=... dbname=..."
 ```
-
-### Token policy
-
-- **Do not reuse the Telegraf token** for the controller
-- Create a dedicated token described as `adaptive-heating-mvp-controller`
-- Grant only:
-  - read access to bucket `energy`
-  - write access to bucket `energy`
-
-This keeps the controller isolated from Telegraf and avoids putting the secret in the process environment.
 
 ### Setup / rotation on pi5data
 
-Run on `pi5data` using the local Telegraf/Influx bootstrap token only for auth creation:
+Derive TimescaleDB connection details from the local container and rewrite the env file entry:
 
 ```bash
-BOOTSTRAP_TOKEN=$(sudo docker exec telegraf grep -oP 'token = "\K[^"]+' /etc/telegraf/telegraf.conf)
-BUCKET_ID=$(docker exec influxdb influx bucket list -t "$BOOTSTRAP_TOKEN" | awk '$2=="energy" {print $1}')
+env_dump=$(docker inspect timescaledb --format '{{range .Config.Env}}{{println .}}{{end}}')
+pg_user=$(printf '%s\n' "$env_dump" | grep '^POSTGRES_USER=' | cut -d= -f2-)
+pg_pass=$(printf '%s\n' "$env_dump" | grep '^POSTGRES_PASSWORD=' | cut -d= -f2-)
+pg_db=$(printf '%s\n' "$env_dump" | grep '^POSTGRES_DB=' | cut -d= -f2-)
+conninfo="host=127.0.0.1 port=5432 user=${pg_user} password=${pg_pass} dbname=${pg_db}"
 
-# Remove older controller auths with the same description
-for id in $(docker exec influxdb influx auth list -t "$BOOTSTRAP_TOKEN" | awk '$2=="adaptive-heating-mvp-controller" {print $1}'); do
-  docker exec influxdb influx auth delete -t "$BOOTSTRAP_TOKEN" --id "$id"
-done
-
-AUTH_TABLE=$(mktemp)
-docker exec influxdb influx auth create \
-  -t "$BOOTSTRAP_TOKEN" \
-  --org home \
-  --description adaptive-heating-mvp-controller \
-  --read-bucket "$BUCKET_ID" \
-  --write-bucket "$BUCKET_ID" > "$AUTH_TABLE"
-
-NEW_AUTH_ID=$(awk 'NR==2 {print $1}' "$AUTH_TABLE")
-NEW_TOKEN=$(awk 'NR==2 {print $3}' "$AUTH_TABLE")
-rm -f "$AUTH_TABLE"
-
-test -n "$NEW_AUTH_ID" && test -n "$NEW_TOKEN"
-
-sudo install -d -m 700 -o root -g root /etc/adaptive-heating-mvp
-printf '%s\n' "$NEW_TOKEN" | sudo tee /etc/adaptive-heating-mvp/influx.token >/dev/null
-sudo chmod 600 /etc/adaptive-heating-mvp/influx.token
-printf '%s\n' "$NEW_AUTH_ID" | sudo tee /etc/adaptive-heating-mvp/influx.auth-id >/dev/null
-sudo chmod 600 /etc/adaptive-heating-mvp/influx.auth-id
-
-# Optional after migration: remove legacy env injection
-sudo sed -i '/^INFLUX_TOKEN=/d' /etc/adaptive-heating-mvp.env
+{
+  sudo grep -v '^TIMESCALEDB_CONNINFO=' /etc/adaptive-heating-mvp.env 2>/dev/null || true
+  echo "TIMESCALEDB_CONNINFO=${conninfo}"
+} | sudo tee /etc/adaptive-heating-mvp.env >/dev/null
 
 sudo systemctl daemon-reload
 sudo systemctl restart adaptive-heating-mvp
@@ -78,33 +52,30 @@ sudo systemctl restart adaptive-heating-mvp
 ### Verification
 
 ```bash
-sudo systemctl show adaptive-heating-mvp -p MainPID
-sudo journalctl -u adaptive-heating-mvp -n 50 --no-pager
-sudo test -s /etc/adaptive-heating-mvp/influx.token
+systemctl is-active adaptive-heating-mvp
+curl -fsS http://127.0.0.1:3031/status
+sudo grep '^TIMESCALEDB_CONNINFO=' /etc/adaptive-heating-mvp.env
 ```
 
-The service should restart without `INFLUX_TOKEN not set in environment` warnings.
+The service should stay up and `/status` should respond without any Influx token or credential configured.
 
 ## Development (WSL2 / local testing)
 
-When neither a systemd credential, `INFLUX_TOKEN`, nor `INFLUX_TOKEN_FILE` is available, the code falls back to:
-
-```bash
-ak get influxdb    # GPG-encrypted keystore on dev machine
-```
-
-This only works on the dev machine where `ak` is installed. On pi5data, production should use the systemd credential file instead.
+Local controller runs now need `TIMESCALEDB_CONNINFO` when using `status` or `run`, alongside any existing Octopus environment variables.
 
 ## Other credentials
 
 | Credential | Used by | Where stored | Notes |
 |---|---|---|---|
-| InfluxDB token | Controller (read sensors, write decisions) | `/etc/adaptive-heating-mvp/influx.token` | Dedicated controller token via systemd credential |
+| PostgreSQL conninfo | Controller latest-value reads + decision writes | `/etc/adaptive-heating-mvp.env` | Local container-backed TimescaleDB conninfo |
+| Octopus API key | Controller tariff fetch | `/etc/adaptive-heating-mvp.env` | Existing account API credential |
 | eBUS | Controller (read/write VRC 700) | None needed | Unauthenticated TCP to ebusd on localhost:8888 |
-| MQTT | Not used directly | N/A | Z2M sensors come via Telegraf→InfluxDB |
+| MQTT | Not used directly | N/A | Z2M sensors arrive through the shared data hub |
 | Open-Meteo | Controller (weather forecast) | None needed | Public API, no auth |
 
-## Ad-hoc InfluxDB queries from dev machine (WSL2)
+## Legacy ad-hoc InfluxDB queries from dev machine (WSL2)
+
+Use this only for migration-tail diagnostics. PostgreSQL is the default operator query path; see `lat.md/infrastructure.md#Ad-hoc PostgreSQL Queries from Dev Machine`.
 
 To query InfluxDB on pi5data from the dev machine without SSH:
 

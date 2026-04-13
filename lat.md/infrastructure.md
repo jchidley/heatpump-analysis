@@ -1,6 +1,6 @@
 # Infrastructure
 
-Four monitoring devices feeding a central data hub. Sensors → MQTT → InfluxDB → Grafana/controller.
+Four monitoring devices feeding a central data hub. Sensors → MQTT → pi5data TSDB services → Grafana/controller.
 
 ## Devices
 
@@ -11,7 +11,7 @@ Four hosts: three emon monitors and one central data hub.
 | **emonpi** | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Zigbee2MQTT (21 devices) |
 | **emonhp** | 10.0.1.169 | Heat meter (MBUS) + SDM120 electricity meter → emoncms.org |
 | **emondhw** | 10.0.1.46 | Multical 403 DHW meter (T1, T2, flow, volume) |
-| **pi5data** | 10.0.1.230 | Central hub: Docker (Mosquitto, InfluxDB, Telegraf, Grafana, ebusd) + systemd (z2m-hub :3030, adaptive-heating-mvp :3031) |
+| **pi5data** | 10.0.1.230 | Central hub: Docker/system services for Mosquitto, TimescaleDB/PostgreSQL, Telegraf, Grafana, ebusd, plus legacy InfluxDB coexistence, `z2m-hub` (:3030), and `adaptive-heating-mvp` (:3031) |
 
 emonpi also runs `energy-hub-tesla.service` — a Python collector that polls the local Powerwall Gateway API every 10s and publishes raw metrics plus derived signals to MQTT as `emon/tesla/+`.
 
@@ -19,16 +19,16 @@ MQTT credentials: `emonpi` / `emonpimqtt2016`. Z2M WebSocket: `ws://emonpi:8080/
 
 ## Data Path
 
-Each emon host runs local Mosquitto, bridging to central Mosquitto on pi5data.
+Each emon host runs local Mosquitto, bridging to central Mosquitto on pi5data. PostgreSQL/TimescaleDB is the intended store for `heatpump-analysis`; legacy InfluxDB still coexists only so the final cutover can complete without changing field devices.
 
 ```
 emonhp  ──bridge──┐
-emondhw ──bridge──┼──> pi5data mosquitto → telegraf → InfluxDB (bucket "energy") → Grafana
+emondhw ──bridge──┼──> pi5data mosquitto → TSDB ingest/services → TimescaleDB/PostgreSQL (+ legacy Influx coexistence) → Grafana/controller
 emonpi  ──bridge──┘           │
                               └── ebusd (Docker) → ebusd-poll.sh (systemd)
 ```
 
-Telegraf subscribes to `emon/+/+` and other MQTT topics, writes to InfluxDB. The adaptive controller and thermal model both query InfluxDB directly. z2m-hub polls eBUS via TCP and MQTT for DHW tracking.
+Telegraf subscribes to `emon/+/+` and other MQTT topics and feeds the shared ingest path on pi5data. `heatpump-analysis` is being cut over to PostgreSQL by command/config path, while any remaining Influx-only behaviour belongs in [[tsdb-migration]]. `z2m-hub` polls eBUS via TCP and MQTT for DHW tracking.
 
 ### Tesla MQTT Topics
 
@@ -62,7 +62,7 @@ Planned replacement: xyzroe eBus-TTL adapter → Pico W (Rust/Embassy firmware) 
 
 ## Room Sensors
 
-11× SONOFF SNZB-02P (v2.2.0) indoor + 1 outdoor + 1 emonth2. Data: Z2M → MQTT → pi5data Telegraf → InfluxDB.
+11× SONOFF SNZB-02P (v2.2.0) indoor + 1 outdoor + 1 emonth2. Data: Z2M → MQTT → pi5data Telegraf → TSDB ingest, with PostgreSQL/TimescaleDB as the migration target and legacy Influx shadowing still in the tail.
 
 12/13 rooms have dedicated sensors (Office + Landing added 24 Mar 2026). Conservatory uses `ebusd/poll/Z2RoomTemp` from the VRC 700 (tracks within 1°C of the former SNZB-02P). `outside_temp_humid` (0x842712fffe772723) paired 7 Apr 2026, deployed to shaded SE wall near VRC 700 OAT sensor. Zigbee routers (ZBMINI switches) at hall, landing, kitchen, top_landing provide mesh coverage for battery sensors.
 
@@ -78,9 +78,15 @@ Temperature and humidity from separate sources.
 
 ## Secrets
 
-pi5data keeps the controller InfluxDB token in a root-only credential file, not in the service environment.
+Secrets follow device class and trust boundary.
 
-The token lives at `/etc/adaptive-heating-mvp/influx.token` (root:root 0600) and systemd injects it with `LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token`. It is a dedicated controller token, separate from Telegraf. Dev machine ad-hoc queries still use `ak get influxdb`. See `deploy/SECRETS.md`.
+Pi/Linux services should hold stronger runtime secrets in systemd-managed credentials. Preferred policy is `systemd-creds encrypt` + `SetCredentialEncrypted=` where supported; current adaptive-heating-mvp deployment still uses `LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token` from a root-only file at `/etc/adaptive-heating-mvp/influx.token` (root:root 0600) for the remaining legacy compatibility path. Final removal of that Influx credential dependency belongs in [[tsdb-migration]]. Do not store secrets in TOML, pass them on command lines, or check them into the repo.
+
+Dev/test may use one-shot `ak`-sourced environment injection on the trusted machine only, e.g. `PGPASSWORD=$(ak get timescaledb) ...` or `export TIMESCALEDB_CONNINFO=...`. This is a local operator convenience for verification, not a production secret-distribution mechanism. Legacy ad-hoc Influx access likewise uses `ak get influxdb` only while migration-tail diagnostics still exist. See `deploy/SECRETS.md`.
+
+MCUs should prefer a gateway pattern via MQTT or a Pi-owned API and should not hold database or cloud secrets unless unavoidable. Any device that must access PostgreSQL, MQTT, or another backend directly gets its own least-privilege credential. Assume MCU secrets may be extractable, so use per-device rotation and revocation.
+
+Many field devices already publish to Pi-side services over MQTT, so stronger secrets should stay on the Pi side.
 
 ### Octopus API Credentials
 
@@ -92,32 +98,26 @@ Credentials for the `octopus-tariff` crate resolve in order: env vars → `~/.oc
 
 On pi5data the Octopus env vars are still injected by the systemd `EnvironmentFile` at `/etc/adaptive-heating-mvp.env`, but the InfluxDB token is no longer passed via environment.
 
-### Ad-hoc InfluxDB Queries from Dev Machine
+### Ad-hoc PostgreSQL Queries from Dev Machine
 
-Query InfluxDB on pi5data from WSL using `ak get influxdb` for the token. InfluxDB v2 Flux API at `http://pi5data:8086`, org `home`, bucket `energy`.
+Query TimescaleDB on pi5data from WSL using `TIMESCALEDB_CONNINFO`. PostgreSQL is the intended operator query surface for this repo.
 
-See [[constraints#InfluxDB-First Analysis]]: all filtering, aggregation, pivoting, and arithmetic belong in Flux — client code is for formatting only.
+See [[constraints#PostgreSQL-First Analysis]]: all filtering, aggregation, windowing, and arithmetic belong in SQL — client code is for formatting only.
 
 ```bash
-# Good: Flux does the heavy lifting, client just prints
-INFLUX_TOKEN=$(ak get influxdb)
-curl -s -H "Authorization: Token $INFLUX_TOKEN" \
-  "http://pi5data:8086/api/v2/query?org=home" \
-  -H "Content-Type: application/vnd.flux" \
-  -H "Accept: application/csv" \
-  --data-raw '
-    from(bucket:"energy")
-      |> range(start: -12h)
-      |> filter(fn: (r) => r._measurement == "adaptive_heating_mvp")
-      |> filter(fn: (r) => r._field == "target_flow_c" or r._field == "leather_temp_c" or r._field == "outside_temp_c")
-      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-      |> keep(columns: ["_time", "action", "target_flow_c", "leather_temp_c", "outside_temp_c"])
-      |> sort(columns: ["_time"])
-      |> group()
-  '
+# Good: SQL does the heavy lifting, client just prints
+export TIMESCALEDB_CONNINFO='host=pi5data dbname=energy user=... password=...'
+psql "$TIMESCALEDB_CONNINFO" -c "
+  SELECT time, action, target_flow_c, leather_temp_c, outside_temp_c
+  FROM adaptive_heating_mvp
+  WHERE time >= now() - interval '12 hours'
+  ORDER BY time;
+"
 ```
 
-Key measurements: `ebusd` (heat pump / VRC 700), `ebusd_poll` (polled registers), `zigbee` (room sensors, `_field="temperature"`), `adaptive_heating_mvp` (controller decisions — `action` is a tag), `emon` (emonpi2 CTs, tesla Powerwall, multical heat meter, emonth2 room sensor), `dhw_inflection` / `dhw_capacity` (DHW sessions).
+Representative tables: `ebusd` (heat pump / VRC 700), `ebusd_poll` (numeric polled registers), `ebusd_poll_text` (string-valued polled registers), `zigbee` (room sensors), `adaptive_heating_mvp` (controller decisions), `multical` (heat meter + DHW meter fields), `dhw_inflection`, and `dhw_capacity`.
+
+If a verification task still requires raw Flux or profiler output, treat that as migration-tail work tracked in [[tsdb-migration]] rather than the default operator path.
 
 ## VRC 700 Baseline Settings
 
@@ -147,7 +147,7 @@ DHW timer windows aligned to Cosy tariff. All end times use `-:-` not `00:00`.
 | HwcTempDesired | 45°C | Optimal per analysis |
 | HwcSFMode | auto | Must be auto for timers. Boost = `load`, should auto-revert |
 | HwcMode (hmu) | eco / normal | Readable via eBUS for status and scheduler inputs, but read-only from external masters |
-| HwcTimer (all days) | 04:00;07:00;13:00;16:00;22:00;23:59 | Three Cosy windows matching tariff. `sync_morning_dhw_timer` may rewrite one weekday to `13:00;16:00;22:00;23:59;-:-;-:-` when predicted T1 at 07:00 is ≥40°C. Dedup state cleared on write failure and on startup |
+| HwcTimer (all days) | 04:00;07:00;13:00;16:00;22:00;-:- | Three Cosy windows matching tariff. Runtime slot matching may still normalize imported evening tariff windows to `23:59` for same-day comparisons, but anything written to the VRC 700 must encode end-of-day as `-:-`. `sync_morning_dhw_timer` may rewrite one weekday to `13:00;16:00;22:00;-:-;-:-;-:-` when predicted T1 at 07:00 is ≥40°C. Dedup state cleared on write failure and on startup |
 | CylinderChargeHyst | 5K | Triggers at 40°C |
 | MaxCylinderChargeTime | 120 min | |
 | HwcLockTime | 60 min | Anti-cycle lockout |

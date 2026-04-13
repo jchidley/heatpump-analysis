@@ -2,6 +2,26 @@
 
 This file keeps older review snapshots so [[plan]] can carry the live item descriptions plus the newest dated review only.
 
+## 2026-04-12 22:55 BST DHW / Timer Boundary Snapshot
+
+This snapshot records the evening DHW investigation that immediately followed the live volume-budget rollout.
+
+### DHW Scheduling
+
+The apparent 22:00 DHW miss was traced to a tariff/timer boundary regression rather than the new remaining-litres guardrail.
+
+At 22:13 BST the controller still classified the period as `standard` and logged `action:"hold"`, while later rows showed `Warm_Water_Compressor_active`. The key evidence was an evening timer/tariff end arriving as `00:00`, which is invalid for VRC 700 end-of-day encoding and also prevented same-day slot matching. The follow-up fix hardened both paths: imported `00:00` now normalizes to `23:59` for runtime matching, and anything written to `HwcTimer_*` now normalizes to `-:-` before it reaches the controller.
+
+### Deployment
+
+The same evening also exposed a deploy-path gap: `scripts/sync-to-pi5data.sh` had not been copying `Cargo.toml` / `Cargo.lock`, so remote builds failed when dependencies changed.
+
+That sync script was updated, the release was rebuilt on `pi5data`, and `adaptive-heating-mvp` was restarted successfully at 22:47 BST. Immediate checks showed fresh startup logs, HTTP listener recovery on port 3031, and successful startup eBUS writes.
+
+A later TSDB-verification follow-up exposed a second deploy-path mismatch on `pi5data`: the cut-down remote project still builds `target/release/heatpump-analysis` by default, while systemd and the verifier scripts execute `target/release/adaptive-heating-mvp`. The staged verifier only started exercising the new code once the fresh package-named artifact was copied onto the controller-specific path after stopping the live service.
+
+That same verification thread also showed an operator lesson: phone-app DHW boost requests were still being accepted by `z2m-hub` during the test window. In this case the overlap was deliberate and understood by the operator, but it is still useful context when interpreting mixed behaviour during future live verification windows.
+
 ## 2026-04-10 08:11 BST Review Snapshot
 
 This snapshot captures the controller/data review that immediately preceded the current `plan.md` refresh.

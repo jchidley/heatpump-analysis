@@ -101,7 +101,7 @@ WWHR on shower drain: 41% effectiveness, +9°C steady-state lift. ~3 min delay. 
 
 The [[src/thermal/dhw_sessions.rs]] CLI analyses draws at 2s Multical resolution with HWC state tracking.
 
-Classifies draws by type (bath/shower/tap), detects draws during HP charging. Writes `dhw_inflection` + `dhw_capacity` to InfluxDB. z2m-hub autoloads `recommended_full_litres` on startup. The Multical `dhw_flow` is tap-side (independent of HP circuit) — draws must be tracked regardless of charging state.
+Classifies draws by type (bath/shower/tap), detects draws during HP charging, and treats PostgreSQL/TimescaleDB as the target store for migrated consumers. Legacy InfluxDB writes remain only as migration compatibility; any final removal or proof work belongs in [[tsdb-migration]]. The Multical `dhw_flow` is tap-side (independent of HP circuit) — draws must be tracked regardless of charging state.
 
 ### DHW Scheduling
 
@@ -117,7 +117,7 @@ VRC 700 timer windows aligned to Cosy tariff. DHW timing difference is <0.3p/sho
 
 ⚠ Timer end times use `-:-` (TTM byte `0x90`), never `00:00`. See [[constraints#eBUS Timer Encoding]].
 
-Overnight strategy: charge at 22:00 Cosy, then only schedule a further DHW event if predicted T1 / practical capacity at 07:00 falls below the comfort floor. The controller now scores the active launch slot (22:00 bank, battery-backed overnight pre-emptive launch, 04:00 Cosy launch, later afternoon fallback) and triggers `HwcSFMode=load` when that slot is preferred. Overnight battery-backed launches now use the explicit `energy-hub` topic `emon/tesla/discretionary_headroom_to_next_cosy_kWh`, which represents spare discretionary battery kWh before the next Cosy window. The controller compares that headroom with the expected DHW event kWh for eco vs normal mode. `HwcTimer_<Weekday>` rewrites remain in place as fallback envelopes rather than the primary decision maker. On clean crossover nights, morning DHW is unnecessary (T1 ≈43°C at 07:00 >> 40°C floor).
+Overnight strategy: charge at 22:00 Cosy, then only schedule a further DHW event if predicted T1 / practical capacity at 07:00 falls below the comfort floor. The controller now scores the active launch slot (22:00 bank, battery-backed overnight pre-emptive launch, 04:00 Cosy launch, later afternoon fallback) and triggers `HwcSFMode=load` when that slot is preferred. Overnight battery-backed launches now use the explicit `energy-hub` topic `emon/tesla/discretionary_headroom_to_next_cosy_kWh`, which represents spare discretionary battery kWh before the next Cosy window. The controller compares that headroom with the expected DHW event kWh for eco vs normal mode. It also uses `dhw.remaining_litres` as a practical-volume signal, capped by the latest `dhw_capacity.recommended_full_litres`, then compared against slot draw budgets (morning 89L, afternoon 72L, overnight 62L). That guards against the known failure mode where T1 still looks warm enough but the usable hot-water budget has already been consumed by real draws. `HwcTimer_<Weekday>` rewrites remain in place as fallback envelopes rather than the primary decision maker. On clean crossover nights, morning DHW is unnecessary (T1 ≈43°C at 07:00 >> 40°C floor).
 
 ### HP Contention with Heating
 

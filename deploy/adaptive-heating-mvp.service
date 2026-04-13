@@ -10,7 +10,6 @@ WorkingDirectory=/home/jack/adaptive-heating-mvp
 Environment=RUST_LOG=adaptive_heating_mvp=info
 Environment=PATH=/home/jack/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=-/etc/adaptive-heating-mvp.env
-LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token
 ExecStart=/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp --config /home/jack/adaptive-heating-mvp/model/adaptive-heating-mvp.toml run
 ExecStop=/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp --config /home/jack/adaptive-heating-mvp/model/adaptive-heating-mvp.toml restore-baseline
 Restart=on-failure

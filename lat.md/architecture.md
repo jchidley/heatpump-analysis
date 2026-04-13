@@ -1,6 +1,6 @@
 # Architecture
 
-Three Rust binaries sharing a thermal solver library. Data flows from emoncms/InfluxDB through analysis and modelling to live VRC 700 control.
+Three Rust binaries sharing a thermal solver library. Data flows from emoncms and TSDB-backed house telemetry through analysis and modelling to live VRC 700 control.
 
 ## Binaries
 
@@ -33,7 +33,8 @@ adaptive-heating-mvp.rs (separate binary)
   ├── heatpump_analysis::thermal (library crate)
   ├── model/adaptive-heating-mvp.toml (own config)
   ├── ebusd TCP :8888 (VRC 700 reads/writes)
-  ├── InfluxDB HTTP :8086 (room temps, decision logs)
+  ├── TimescaleDB / PostgreSQL (target latest-value reads + decision-log mirror)
+  ├── InfluxDB HTTP :8086 (legacy coexistence / migration tail)
   ├── Open-Meteo HTTP (hourly forecast)
   └── Axum HTTP :3031 (status/mode/kill API)
 ```
@@ -54,19 +55,23 @@ SQLite → [[src/db.rs#load_dataframe]] → [[src/analysis.rs#enrich]] → analy
 
 ### Thermal Model Path
 
-InfluxDB (pi5data, bucket "energy") → `thermal/influx.rs` → calibration/validation/operational → `artifacts/thermal/*.json`. Room temps from Zigbee, outside from eBUS, HP state from BuildingCircuitFlow, MWT from FlowTemp/ReturnTemp, PV from P3 CT.
+The thermal model reads through `thermal/influx.rs`, a shared TSDB seam that preserves typed contracts while PostgreSQL replaces the old Influx-first paths.
+
+On pi5data the path is TSDB store → `thermal/influx.rs` → calibration/validation/operational → `artifacts/thermal/*.json`. Room temps come from Zigbee, outside from eBUS, HP state from BuildingCircuitFlow, MWT from FlowTemp/ReturnTemp, and PV from P3 CT.
 
 ### Live Control Path
 
 Open-Meteo forecast drives the outer loop, which solves for minimum-electrical-input flow temp via the thermal model and may launch DHW based on T1 plus Powerwall telemetry.
 
-The path is: Open-Meteo forecast → outer loop → trajectory-aware [[src/thermal/display.rs#bisect_mwt_for_room]] solve → target flow → inner loop → eBUS `Hc1HeatCurve` write. The same outer loop queries Influx for DHW T1 plus the `energy-hub` headroom topic `emon/tesla/discretionary_headroom_to_next_cosy_kWh` (alongside raw Powerwall telemetry for observability) and logs decisions to InfluxDB + local JSONL.
+The path is: Open-Meteo forecast → outer loop → trajectory-aware [[src/thermal/display.rs#bisect_mwt_for_room]] solve → target flow → inner loop → eBUS `Hc1HeatCurve` write. The controller now requires PostgreSQL for latest-value reads and mirrors each decision row into TimescaleDB, with local JSONL logging side-by-side.
 
 Mobile controls: phone → z2m-hub (:3030) `/api/heating/*` → HTTP proxy → adaptive-heating-mvp (:3031) `/mode/*`, `/status`, `/kill`.
 
 ### History Evidence Path
 
-InfluxDB compact queries → [[src/thermal/history.rs#heating_history_summary]] / [[src/thermal/history.rs#dhw_history_summary]] → fused evidence summaries. `history-review` ([[src/main.rs#run_history_review]]) adds heuristic verdicts and optional day-rounded `dhw_sessions` context.
+`thermal/history.rs` now uses the shared TSDB seam, with PostgreSQL as the intended path for representative history reads when `[postgres]` is configured.
+
+`history-review` ([[src/main.rs#run_history_review]]) adds heuristic verdicts and optional day-rounded `dhw_sessions` context. Any remaining profiling/raw Flux compatibility tail is explicit migration work tracked in [[tsdb-migration]].
 
 ## Configuration
 
@@ -75,8 +80,8 @@ Four active config artifacts define four separate concerns.
 | File | Used by | Concern |
 |------|---------|---------|
 | `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators, battery coverage assumption, Octopus data path |
-| `model/thermal-config.toml` | Thermal model + history commands | InfluxDB, test nights, calibration bounds |
-| `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, InfluxDB, fallback Cosy windows, baseline, inner loop tuning |
+| `model/thermal-config.toml` | Thermal model + history commands | Influx connection plus PostgreSQL conninfo for the TSDB seam, test nights, calibration bounds |
+| `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, legacy Influx compatibility settings plus PostgreSQL conninfo, fallback Cosy windows, baseline, inner loop tuning |
 | `artifacts/thermal/regression-thresholds.toml` | `thermal-regression-check` | Artifact regression gates |
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
@@ -91,7 +96,7 @@ Markdown in this repo has distinct roles to avoid conflicting truths.
 - `plan.md` carries the newest operational truth for active items; older review snapshots move to [[reviews]], and any operational fact that remains relevant should eventually be reconciled back into the appropriate thematic `lat.md/` file
 - `docs/` and top-level markdown provide human explanations, runbooks, reference evidence, and historical audits; they should point back to `lat.md/` for live facts
 - when first-party docs are condensed, durable operator/reference detail should stay in the active docs and old wording can be recovered from git history rather than a permanent mirror
-- `docs/code-truth/` maps implementation structure from source and is useful for file discovery, not for live operating policy
+- `docs/implementation-maps/` preserves the retired code-truth snapshots for human onboarding and file discovery, while `lat.md/src/` holds any file-level source pages that the project keeps alongside the thematic graph; otherwise use the source tree directly for implementation discovery
 - vendored submodule docs remain upstream references and are not reconciled against project `lat.md/`
 
 ## Implicit Contracts
@@ -102,9 +107,11 @@ Assumptions that are not enforced by the type system but will break the system i
 
 ebusd must be running on localhost:8888. If down: reads error → `missing_core = true` → control skipped. No retry beyond cycle interval.
 
-### InfluxDB Topic Naming
+### TSDB Topic and Field Naming
 
-Room temperature topics must match between Telegraf MQTT→InfluxDB config, `adaptive-heating-mvp.toml` `[topics]`, and `thermal-config.toml` sensor_topics. The emonth2 uses `_field = "value"` while Zigbee sensors use `_field = "temperature"`.
+Room temperature topics must match between Telegraf/MQTT ingest, `adaptive-heating-mvp.toml` `[topics]`, and `thermal-config.toml` sensor_topics.
+
+The emonth2 uses the `value` field while Zigbee sensors use `temperature`; PostgreSQL routing preserves that distinction from the legacy Influx schema.
 
 ### VRC 700 Baseline Safety
 
@@ -120,7 +127,11 @@ Since Phase 1b, `adaptive-heating-mvp` calls `bisect_mwt_for_room()` directly fr
 
 Dev on laptop (fast `cargo check`), release build natively on pi5data (correct glibc). Cross-compile from WSL2 fails due to glibc version mismatch (host 2.39 vs pi5data bookworm 2.36).
 
-`scripts/sync-to-pi5data.sh` syncs sources: `src/bin/adaptive-heating-mvp.rs` → `src/main.rs`, thermal modules, `lib.rs`, `thermal_geometry.json`, config, `src/octopus_tariff.rs`, and the full `~/github/octopus-tariff/` path dependency to `~/github/octopus-tariff/` on pi5data. Then `cargo build --release` on pi5data (~33s incremental). The pi5data project (`~/adaptive-heating-mvp/Cargo.toml`) has a cut-down `Cargo.toml` with only controller dependencies (no polars, no rusqlite) plus `octopus-tariff = { path = "/home/jack/github/octopus-tariff" }`. Service restart: `sudo systemctl restart adaptive-heating-mvp`.
+`scripts/sync-to-pi5data.sh` syncs sources: `src/bin/adaptive-heating-mvp.rs` → `src/main.rs`, thermal modules, `lib.rs`, `thermal_geometry.json`, config, `src/octopus_tariff.rs`, and the full `~/github/octopus-tariff/` path dependency to `~/github/octopus-tariff/` on pi5data. Then `cargo build --release` on pi5data (~33s incremental) and copy `target/release/heatpump-analysis` to `target/release/adaptive-heating-mvp`, because the cut-down remote project still builds the package-named binary by default while systemd executes the controller-specific path. The pi5data project (`~/adaptive-heating-mvp/Cargo.toml`) has a cut-down `Cargo.toml` with only controller dependencies (no polars, no rusqlite) plus `octopus-tariff = { path = "/home/jack/github/octopus-tariff" }`. Service restart: `sudo systemctl restart adaptive-heating-mvp`.
+
+For TSDB migration rehearsals that must not touch the live service, `scripts/stage-controller-tsdb-verify.sh` layers on top of that workflow: it syncs, preserves the previous release binary on `pi5data`, builds the current release, writes a separate `model/adaptive-heating-mvp.postgres-verify.toml`, and runs a read-only PostgreSQL predeploy check against the freshly built `target/release/heatpump-analysis` artifact without restarting systemd.
+
+When a real runtime window is required, `scripts/run-controller-tsdb-verify-window.sh` performs the next-safe step: it temporarily stops the main service, copies the freshly built remote `target/release/heatpump-analysis` artifact onto the controller-specific `target/release/adaptive-heating-mvp` path, launches the staged config in a transient systemd unit with PostgreSQL conninfo only, then restores baseline and restarts the main service so the verification path is exercised without changing the permanent systemd unit or checked-in config.
 
 ### History Review Session Scope
 
