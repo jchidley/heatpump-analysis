@@ -8,7 +8,7 @@ use super::artifact::{config_sha256, git_meta, ArtifactCalibrationParams, FitDia
 use super::calibration::{
     avg_room_temps_in_window, avg_series_in_window, build_room_series, calibrate_model,
 };
-use super::config::resolve_influx_token;
+use super::config::{resolve_influx_token, resolve_postgres_conninfo};
 use super::error::{ThermalError, ThermalResult};
 use super::geometry::build_doorways;
 use super::influx;
@@ -83,12 +83,14 @@ pub fn fit_diagnostics(config_path: &Path) -> ThermalResult<()> {
 
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
     let token = resolve_influx_token(cfg)?;
+    let pg_conninfo = resolve_postgres_conninfo(cfg)?;
 
     let room_rows = influx::query_room_temps(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &sensor_topics,
         &range_start,
         &range_end,
@@ -98,6 +100,7 @@ pub fn fit_diagnostics(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &range_start,
         &range_end,
     )?;
@@ -106,6 +109,7 @@ pub fn fit_diagnostics(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &range_start,
         &range_end,
     )?;

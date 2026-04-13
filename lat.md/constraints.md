@@ -26,15 +26,16 @@ Invariants that protect system integrity. Violating these risks silent data corr
 - No runtime learning — `room_offset` EMA ran away to +2.18°C overnight (learned cooling trend as "model error", suppressed preheat by ~8°C). Static calibration only.
 - **During a Cosy window, battery SoC / headroom must never gate heating or DHW decisions.** Grid electricity is at its cheapest — it's the best time to run either. The headroom signal only gates decisions in non-Cosy windows (00:00–04:00, 07:00–13:00, 16:00–22:00). The energy-hub headroom value is also unreliable during Cosy because it projects base-load drain from current SoC without accounting for active grid charging.
 
-## InfluxDB-First Analysis
+## PostgreSQL-First Analysis
 
-All ad-hoc data analysis must push filtering, aggregation, pivoting, and arithmetic into Flux queries. Client-side code (Python, shell) handles only final formatting and display.
+All ad-hoc data analysis must push filtering, aggregation, windowing, and arithmetic into PostgreSQL/TimescaleDB queries. Client-side code (Python, shell) handles only final formatting and display.
 
-- **Filter and aggregate in Flux**: `filter()`, `aggregateWindow()`, `pivot()`, `map()`, `group()`, `sort()`, `difference()`, `movingAverage()` — use these server-side, not after fetching raw rows.
-- **Return only the columns you need**: use `keep()` / `drop()` to minimise transfer. Don't fetch all fields then ignore half in Python.
-- **Compute derived values in Flux where possible**: COP (`yield / elec`), ΔT (`flow - return`), rates of change (`derivative()`) — Flux can do these.
-- **Client code is for presentation only**: formatting tables, adding emoji markers, printing summaries. If you're writing a `for` loop that filters or aggregates fetched rows, move that logic into the Flux query.
-- **Why**: InfluxDB indexes time-series data and evaluates Flux on compressed blocks. Pulling raw 15-second data to the client then filtering wastes bandwidth and is fragile (CSV column ordering, tag vs field confusion, empty-string handling). Flux queries are also self-documenting and reproducible.
+- **Filter and aggregate in SQL**: use `WHERE`, `GROUP BY`, CTEs, window functions, `time_bucket()`, and related TimescaleDB helpers server-side, not after fetching raw rows.
+- **Return only the columns you need**: project the exact output columns instead of selecting wide rows and discarding half the data in Python.
+- **Compute derived values in SQL where possible**: COP (`yield / elec`), ΔT (`flow - return`), rates of change, lag/lead comparisons, and bucketed summaries should stay in the database query.
+- **Client code is for presentation only**: formatting tables, adding markers, and printing summaries. If you're writing a client-side loop that filters or aggregates fetched rows, move that logic into SQL.
+- **Why**: PostgreSQL is the migration target and the durable query surface. Keeping work server-side avoids transport-specific parser contracts, reduces bandwidth, and makes the final cutover path reproducible.
+- **Migration tail rule**: if a diagnostic still needs raw Flux or profiler output, treat it as explicit migration-tail work tracked in [[tsdb-migration]] rather than the default operator path.
 
 ## Code Gotchas
 

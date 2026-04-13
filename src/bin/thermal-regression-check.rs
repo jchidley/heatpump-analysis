@@ -644,7 +644,11 @@ mod tests {
         "[global]\nenforce_command_match = true\nenforce_config_sha256_match = true\n"
     }
 
-    fn fit_diagnostics_json(config_sha: &str, records_count: usize, true_cooling_n: usize) -> String {
+    fn fit_diagnostics_json(
+        config_sha: &str,
+        records_count: usize,
+        true_cooling_n: usize,
+    ) -> String {
         let records = (0..records_count)
             .map(|i| format!("{{\"idx\":{i}}}"))
             .collect::<Vec<_>>()
@@ -712,8 +716,11 @@ mod tests {
     // @lat: [[tests#Thermal regression gates#Fit diagnostics med_ratio gate skips null values]]
     #[test]
     fn fit_diagnostics_allows_null_med_ratio_when_other_gates_pass() {
-        let thresholds =
-            write_temp_file("fit-regression-thresholds", "toml", default_thresholds_toml());
+        let thresholds = write_temp_file(
+            "fit-regression-thresholds",
+            "toml",
+            default_thresholds_toml(),
+        );
         let baseline = write_temp_file(
             "fit-regression-baseline",
             "json",
@@ -736,8 +743,7 @@ mod tests {
     // @lat: [[tests#Thermal regression gates#Drop gates skip zero-sized baselines]]
     #[test]
     fn fit_diagnostics_drop_gates_skip_zero_sized_baselines() {
-        let thresholds =
-            write_temp_file("fit-zero-thresholds", "toml", default_thresholds_toml());
+        let thresholds = write_temp_file("fit-zero-thresholds", "toml", default_thresholds_toml());
         let baseline = write_temp_file(
             "fit-zero-baseline",
             "json",

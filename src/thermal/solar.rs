@@ -205,8 +205,14 @@ mod tests {
         let pos = solar_position(dt(2024, 6, 21, 12, 0), 51.5, 0.0);
         let alt_deg = pos.0.to_degrees();
         // Summer midday in London: altitude should be roughly 55-65 degrees
-        assert!(alt_deg > 45.0, "altitude {alt_deg} should be > 45 deg at summer midday");
-        assert!(alt_deg < 75.0, "altitude {alt_deg} should be < 75 deg at London latitude");
+        assert!(
+            alt_deg > 45.0,
+            "altitude {alt_deg} should be > 45 deg at summer midday"
+        );
+        assert!(
+            alt_deg < 75.0,
+            "altitude {alt_deg} should be < 75 deg at London latitude"
+        );
     }
 
     #[test]
@@ -214,7 +220,10 @@ mod tests {
         // London, 21 June, midnight
         let pos = solar_position(dt(2024, 6, 21, 0, 0), 51.5, 0.0);
         let alt_deg = pos.0.to_degrees();
-        assert!(alt_deg < 0.0, "altitude {alt_deg} should be negative at midnight");
+        assert!(
+            alt_deg < 0.0,
+            "altitude {alt_deg} should be negative at midnight"
+        );
     }
 
     #[test]
@@ -234,7 +243,10 @@ mod tests {
         // Azimuth should always be in [0, 2*PI)
         for hour in [6, 9, 12, 15, 18] {
             let (_, az) = solar_position(dt(2024, 6, 21, hour, 0), 51.5, 0.0);
-            assert!(az >= 0.0 && az < std::f64::consts::TAU, "azimuth {az} out of range");
+            assert!(
+                az >= 0.0 && az < std::f64::consts::TAU,
+                "azimuth {az} out of range"
+            );
         }
     }
 
@@ -259,12 +271,15 @@ mod tests {
         let result = surface_irradiance(
             500.0,
             100.0,
-            0.8,                              // ~46 deg altitude
-            std::f64::consts::PI,              // south azimuth
+            0.8,                  // ~46 deg altitude
+            std::f64::consts::PI, // south azimuth
             TILT_VERTICAL,
             AZ_SW,
         );
-        assert!(result > 0.0, "irradiance {result} should be positive with positive inputs");
+        assert!(
+            result > 0.0,
+            "irradiance {result} should be positive with positive inputs"
+        );
     }
 
     #[test]
@@ -272,7 +287,10 @@ mod tests {
         // On a horizontal surface (tilt=0), SVF = 1.0, so diffuse component = dhi
         let dhi = 200.0;
         let result = surface_irradiance(0.0, dhi, 0.5, 3.0, TILT_HORIZONTAL, AZ_SW);
-        assert!((result - dhi).abs() < 1e-10, "horizontal surface should get full DHI");
+        assert!(
+            (result - dhi).abs() < 1e-10,
+            "horizontal surface should get full DHI"
+        );
     }
 
     // --- avg_irradiance_in_window tests ---
@@ -293,14 +311,17 @@ mod tests {
     #[test]
     fn avg_irradiance_full_window() {
         let data = make_solar_data();
-        let (sw, ne, ne_h, se) = avg_irradiance_in_window(
-            &data,
-            dt(2024, 6, 21, 9, 0),
-            dt(2024, 6, 21, 14, 0),
-        );
+        let (sw, ne, ne_h, se) =
+            avg_irradiance_in_window(&data, dt(2024, 6, 21, 9, 0), dt(2024, 6, 21, 14, 0));
         // sw: 100,200,300,400,500,600 -> mean 350
-        assert!((sw - 350.0).abs() < 1e-10, "sw_vertical avg should be 350, got {sw}");
-        assert!((ne - 175.0).abs() < 1e-10, "ne_vertical avg should be 175, got {ne}");
+        assert!(
+            (sw - 350.0).abs() < 1e-10,
+            "sw_vertical avg should be 350, got {sw}"
+        );
+        assert!(
+            (ne - 175.0).abs() < 1e-10,
+            "ne_vertical avg should be 175, got {ne}"
+        );
         assert!((ne_h - 200.0).abs() < 1e-10);
         assert!((se - 75.0).abs() < 1e-10);
     }
@@ -309,35 +330,32 @@ mod tests {
     fn avg_irradiance_partial_window() {
         let data = make_solar_data();
         // Window covers hours 11 and 12 (indices 2 and 3)
-        let (sw, _, _, _) = avg_irradiance_in_window(
-            &data,
-            dt(2024, 6, 21, 11, 0),
-            dt(2024, 6, 21, 12, 0),
-        );
+        let (sw, _, _, _) =
+            avg_irradiance_in_window(&data, dt(2024, 6, 21, 11, 0), dt(2024, 6, 21, 12, 0));
         // sw at h=11: 300, h=12: 400 -> mean 350
-        assert!((sw - 350.0).abs() < 1e-10, "partial window sw avg should be 350, got {sw}");
+        assert!(
+            (sw - 350.0).abs() < 1e-10,
+            "partial window sw avg should be 350, got {sw}"
+        );
     }
 
     #[test]
     fn avg_irradiance_empty_window_uses_nearest() {
         let data = make_solar_data();
         // Window entirely outside data range; nearest to midpoint should be used
-        let (sw, _, _, _) = avg_irradiance_in_window(
-            &data,
-            dt(2024, 6, 21, 20, 0),
-            dt(2024, 6, 21, 22, 0),
-        );
+        let (sw, _, _, _) =
+            avg_irradiance_in_window(&data, dt(2024, 6, 21, 20, 0), dt(2024, 6, 21, 22, 0));
         // Nearest to midpoint (21:00) is hour 14 (last point) -> sw = 600
-        assert!((sw - 600.0).abs() < 1e-10, "should use nearest point, got {sw}");
+        assert!(
+            (sw - 600.0).abs() < 1e-10,
+            "should use nearest point, got {sw}"
+        );
     }
 
     #[test]
     fn avg_irradiance_no_data_returns_zeros() {
-        let (sw, ne, ne_h, se) = avg_irradiance_in_window(
-            &[],
-            dt(2024, 6, 21, 9, 0),
-            dt(2024, 6, 21, 14, 0),
-        );
+        let (sw, ne, ne_h, se) =
+            avg_irradiance_in_window(&[], dt(2024, 6, 21, 9, 0), dt(2024, 6, 21, 14, 0));
         assert_eq!(sw, 0.0);
         assert_eq!(ne, 0.0);
         assert_eq!(ne_h, 0.0);

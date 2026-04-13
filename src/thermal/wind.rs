@@ -143,7 +143,10 @@ mod tests {
             dt(2024, 1, 15, 10, 0),
             dt(2024, 1, 15, 12, 0),
         );
-        assert!((mult - 1.0).abs() < 1e-10, "zero wind should give mult=1.0, got {mult}");
+        assert!(
+            (mult - 1.0).abs() < 1e-10,
+            "zero wind should give mult=1.0, got {mult}"
+        );
         assert!((avg).abs() < 1e-10);
     }
 
@@ -174,7 +177,10 @@ mod tests {
             dt(2024, 1, 15, 10, 0),
             dt(2024, 1, 15, 11, 0),
         );
-        assert!((mult - 2.5).abs() < 1e-10, "mult should be clamped to 2.5, got {mult}");
+        assert!(
+            (mult - 2.5).abs() < 1e-10,
+            "mult should be clamped to 2.5, got {mult}"
+        );
     }
 
     #[test]

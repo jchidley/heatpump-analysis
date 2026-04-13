@@ -3,16 +3,99 @@
 //! Queries InfluxDB at 10s resolution for event detection, then 2s for per-draw
 //! inflection analysis. Classifies draws by type (bath/shower/tap), tracks
 //! HwcStorageTemp during draws, detects draws during HP charging.
-//! Writes `dhw_inflection` + `dhw_capacity` to InfluxDB (z2m-hub autoloads on startup).
+//! Writes `dhw_inflection` to InfluxDB and, when configured, mirrors `dhw_capacity`
+//! to TimescaleDB so z2m-hub startup autoload can read the migrated store.
 
 use std::collections::HashMap;
 use std::fmt;
 
 use chrono::{DateTime, FixedOffset, Offset, TimeDelta, TimeZone, Utc};
+use postgres::{Client as PgClient, NoTls};
 use reqwest::blocking::Client;
 
-use super::error::ThermalResult;
+use super::error::{ThermalError, ThermalResult};
 use super::influx::query_flux_csv_pub;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MeasurementRoute {
+    Multical { column: String },
+    EbusdPoll { field: String },
+}
+
+fn measurement_route(measurement: &str, field: &str) -> Option<MeasurementRoute> {
+    match measurement {
+        "emon" if field.starts_with("dhw_") => {
+            let column = if field == "dhw_volume_V1" {
+                "dhw_volume_v1".to_string()
+            } else {
+                field.to_string()
+            };
+            Some(MeasurementRoute::Multical { column })
+        }
+        "ebusd_poll" => Some(MeasurementRoute::EbusdPoll {
+            field: field.to_string(),
+        }),
+        _ => None,
+    }
+}
+
+fn pg_client(conninfo: &str) -> ThermalResult<PgClient> {
+    PgClient::connect(conninfo, NoTls).map_err(ThermalError::PostgresConnect)
+}
+
+fn query_pg_series(
+    conninfo: &str,
+    route: &MeasurementRoute,
+    start: &DateTime<FixedOffset>,
+    stop: &DateTime<FixedOffset>,
+    aggregate: Option<(&str, &str)>,
+) -> ThermalResult<TsVal> {
+    let mut client = pg_client(conninfo)?;
+    let rows = match (route, aggregate) {
+        (MeasurementRoute::Multical { column }, Some((interval, "max"))) => {
+            let sql = format!(
+                "SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, MAX(\"{column}\") AS value FROM multical WHERE time >= $1 AND time < $2 AND \"{column}\" IS NOT NULL GROUP BY bucket ORDER BY bucket"
+            );
+            client.query(&sql, &[start, stop])
+        }
+        (MeasurementRoute::Multical { column }, Some((interval, "last"))) => {
+            let sql = format!(
+                "SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, \"{column}\" AS value FROM multical WHERE time >= $1 AND time < $2 AND \"{column}\" IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket"
+            );
+            client.query(&sql, &[start, stop])
+        }
+        (MeasurementRoute::Multical { column }, None) => {
+            let sql = format!(
+                "SELECT time, \"{column}\" AS value FROM multical WHERE time >= $1 AND time < $2 AND \"{column}\" IS NOT NULL ORDER BY time"
+            );
+            client.query(&sql, &[start, stop])
+        }
+        (MeasurementRoute::EbusdPoll { field }, Some((interval, "last"))) => client.query(
+            &format!(
+                "SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket"
+            ),
+            &[field, start, stop],
+        ),
+        (MeasurementRoute::EbusdPoll { field }, None) => client.query(
+            "SELECT time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time",
+            &[field, start, stop],
+        ),
+        (_, Some((_interval, other))) => {
+            unreachable!("unsupported PostgreSQL aggregate for dhw_sessions: {other}");
+        }
+    }
+    .map_err(ThermalError::PostgresQuery)?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                row.get::<_, f64>(1),
+            )
+        })
+        .collect())
+}
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -195,6 +278,62 @@ fn query_ts(url: &str, org: &str, token: &str, flux: &str) -> ThermalResult<TsVa
     Ok(parse_ts_val(&rows))
 }
 
+fn query_measurement_series(
+    url: &str,
+    org: &str,
+    token: &str,
+    pg_conninfo: Option<&str>,
+    bucket: &str,
+    measurement: &str,
+    field: &str,
+    start: &DateTime<FixedOffset>,
+    stop: &DateTime<FixedOffset>,
+    aggregate: Option<(&str, &str)>,
+) -> ThermalResult<TsVal> {
+    if let Some(conninfo) = pg_conninfo {
+        if let Some(route) = measurement_route(measurement, field) {
+            return query_pg_series(conninfo, &route, start, stop, aggregate);
+        }
+    }
+
+    let flux = match (measurement, field, aggregate) {
+        ("emon", field, Some((every, agg))) => format!(
+            r#"from(bucket: "{bucket}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "emon" and r._field == "value" and r.field == "{field}")
+  |> aggregateWindow(every: {every}, fn: {agg}, createEmpty: false)"#,
+            start = start.to_rfc3339(),
+            stop = stop.to_rfc3339(),
+        ),
+        ("emon", field, None) => format!(
+            r#"from(bucket: "{bucket}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "emon" and r.field == "{field}")"#,
+            start = start.to_rfc3339(),
+            stop = stop.to_rfc3339(),
+        ),
+        ("ebusd_poll", field, Some((every, agg))) => format!(
+            r#"from(bucket: "{bucket}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "{field}")
+  |> aggregateWindow(every: {every}, fn: {agg}, createEmpty: false)"#,
+            start = start.to_rfc3339(),
+            stop = stop.to_rfc3339(),
+        ),
+        ("ebusd_poll", field, None) => format!(
+            r#"from(bucket: "{bucket}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "{field}")"#,
+            start = start.to_rfc3339(),
+            stop = stop.to_rfc3339(),
+        ),
+        _ => {
+            unreachable!("unsupported dhw measurement route: {measurement}.{field}");
+        }
+    };
+    query_ts(url, org, token, &flux)
+}
+
 /// Convert time series to sorted vec of (epoch, value) for last-known-value lookup.
 fn to_sorted(data: &TsVal) -> Vec<(i64, f64)> {
     let mut v: Vec<(i64, f64)> = data
@@ -246,70 +385,80 @@ fn find_events(
     url: &str,
     org: &str,
     token: &str,
+    pg_conninfo: Option<&str>,
     bucket: &str,
     days: u32,
 ) -> ThermalResult<(Vec<ChargeEvent>, Vec<DrawEvent>)> {
     eprintln!("Finding events in last {days} days...");
 
+    let utc = chrono::FixedOffset::east_opt(0).unwrap();
+    let stop = Utc::now().with_timezone(&utc);
+    let start = stop - TimeDelta::days(days as i64);
+
     // Query at 10s resolution (raw for eBUS ~30s, 10s aggregate for 2s Multical)
-    let flow_data = query_ts(
+    let flow_data = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: -{days}d)
-  |> filter(fn: (r) => r._measurement == "emon" and r._field == "value" and r.field == "dhw_flow")
-  |> aggregateWindow(every: 10s, fn: max, createEmpty: false)"#
-        ),
+        pg_conninfo,
+        bucket,
+        "emon",
+        "dhw_flow",
+        &start,
+        &stop,
+        Some(("10s", "max")),
     )?;
 
-    let vol_data = query_ts(
+    let vol_data = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: -{days}d)
-  |> filter(fn: (r) => r._measurement == "emon" and r._field == "value" and r.field == "dhw_volume_V1")
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-        ),
+        pg_conninfo,
+        bucket,
+        "emon",
+        "dhw_volume_V1",
+        &start,
+        &stop,
+        Some(("10s", "last")),
     )?;
 
-    let bc_data = query_ts(
+    let bc_data = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: -{days}d)
-  |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "BuildingCircuitFlow")
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-        ),
+        pg_conninfo,
+        bucket,
+        "ebusd_poll",
+        "BuildingCircuitFlow",
+        &start,
+        &stop,
+        Some(("10s", "last")),
     )?;
 
-    let t1_data = query_ts(
+    let t1_data = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: -{days}d)
-  |> filter(fn: (r) => r._measurement == "emon" and r._field == "value" and r.field == "dhw_t1")
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-        ),
+        pg_conninfo,
+        bucket,
+        "emon",
+        "dhw_t1",
+        &start,
+        &stop,
+        Some(("10s", "last")),
     )?;
 
-    let hwc_data = query_ts(
+    let hwc_data = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: -{days}d)
-  |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "HwcStorageTemp")
-  |> aggregateWindow(every: 10s, fn: last, createEmpty: false)"#
-        ),
+        pg_conninfo,
+        bucket,
+        "ebusd_poll",
+        "HwcStorageTemp",
+        &start,
+        &stop,
+        Some(("10s", "last")),
     )?;
 
     let flow = to_sorted(&flow_data);
@@ -460,62 +609,65 @@ fn analyse_draw(
     url: &str,
     org: &str,
     token: &str,
+    pg_conninfo: Option<&str>,
     bucket: &str,
     draw: &DrawEvent,
 ) -> ThermalResult<Option<InflectionResult>> {
-    let start_iso = (draw.start - TimeDelta::minutes(2))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
-    let end_iso = (draw.end + TimeDelta::minutes(2))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+    let start = draw.start - TimeDelta::minutes(2);
+    let end = draw.end + TimeDelta::minutes(2);
 
-    let t1_raw = query_ts(
+    let t1_raw = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: {start_iso}, stop: {end_iso})
-  |> filter(fn: (r) => r._measurement == "emon" and r.field == "dhw_t1")"#
-        ),
+        pg_conninfo,
+        bucket,
+        "emon",
+        "dhw_t1",
+        &start,
+        &end,
+        None,
     )?;
 
-    let flow_raw = query_ts(
+    let flow_raw = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: {start_iso}, stop: {end_iso})
-  |> filter(fn: (r) => r._measurement == "emon" and r.field == "dhw_flow")"#
-        ),
+        pg_conninfo,
+        bucket,
+        "emon",
+        "dhw_flow",
+        &start,
+        &end,
+        None,
     )?;
 
-    let t2_raw = query_ts(
+    let t2_raw = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: {start_iso}, stop: {end_iso})
-  |> filter(fn: (r) => r._measurement == "emon" and r.field == "dhw_t2")"#
-        ),
+        pg_conninfo,
+        bucket,
+        "emon",
+        "dhw_t2",
+        &start,
+        &end,
+        None,
     )?;
 
     // Also fetch HwcStorageTemp — extend window to +5 min to catch post-draw settling
-    let hwc_end_iso = (draw.end + TimeDelta::minutes(5))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
-    let hwc_raw = query_ts(
+    let hwc_end = draw.end + TimeDelta::minutes(5);
+    let hwc_raw = query_measurement_series(
         url,
         org,
         token,
-        &format!(
-            r#"from(bucket: "{bucket}")
-  |> range(start: {start_iso}, stop: {hwc_end_iso})
-  |> filter(fn: (r) => r._measurement == "ebusd_poll" and r.field == "HwcStorageTemp")"#
-        ),
+        pg_conninfo,
+        bucket,
+        "ebusd_poll",
+        "HwcStorageTemp",
+        &start,
+        &hwc_end,
+        None,
     )?;
 
     if t1_raw.len() < 10 || flow_raw.len() < 10 {
@@ -759,15 +911,103 @@ fn compute_recommended_capacity(capacity: &[&InflectionResult]) -> CapacityRecom
     }
 }
 
-// ── InfluxDB writes ─────────────────────────────────────────────────────────
+// ── InfluxDB / PostgreSQL writes ───────────────────────────────────────────
 
-fn write_results_to_influx(
+struct DhwInflectionWriteRow {
+    time: DateTime<Utc>,
+    category: String,
+    crossover: bool,
+    draw_type: String,
+    cumulative_volume: f64,
+    draw_volume: f64,
+    gap_hours: f64,
+    t1_start: f64,
+    t1_at_inflection: f64,
+    mains_temp: f64,
+    flow_rate: f64,
+    rate: f64,
+    hwc_pre: f64,
+    hwc_min: f64,
+    hwc_drop: f64,
+}
+
+fn dhw_inflection_write_row(r: &InflectionResult) -> DhwInflectionWriteRow {
+    DhwInflectionWriteRow {
+        time: r.draw.start.with_timezone(&Utc),
+        category: r.inflection_category().to_string(),
+        crossover: r
+            .draw
+            .preceding_charge
+            .as_ref()
+            .map(|c| c.crossover)
+            .unwrap_or(false),
+        draw_type: r.draw_type().to_string(),
+        cumulative_volume: r.definitive_cumulative.unwrap_or(0.0),
+        draw_volume: r.definitive_draw_vol.unwrap_or(0.0),
+        gap_hours: r.draw.gap_hours,
+        t1_start: r.t1_start,
+        t1_at_inflection: r.t1_at_definitive.unwrap_or(0.0),
+        mains_temp: r.mains_temp,
+        flow_rate: r.peak_flow_rate,
+        rate: r.definitive_rate.unwrap_or(0.0),
+        hwc_pre: r.hwc_pre,
+        hwc_min: r.hwc_min,
+        hwc_drop: r.hwc_drop,
+    }
+}
+
+fn write_dhw_inflection_to_postgres(
+    conninfo: &str,
+    rows: &[&InflectionResult],
+) -> ThermalResult<()> {
+    let mut client = PgClient::connect(conninfo, NoTls).map_err(ThermalError::PostgresConnect)?;
+    for result in rows {
+        let row = dhw_inflection_write_row(result);
+        client
+            .execute(
+                "INSERT INTO dhw_inflection (time, category, crossover, draw_type, cumulative_volume, draw_volume, gap_hours, t1_start, t1_at_inflection, mains_temp, flow_rate, rate, hwc_pre, hwc_min, hwc_drop) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                &[
+                    &row.time,
+                    &row.category,
+                    &row.crossover,
+                    &row.draw_type,
+                    &row.cumulative_volume,
+                    &row.draw_volume,
+                    &row.gap_hours,
+                    &row.t1_start,
+                    &row.t1_at_inflection,
+                    &row.mains_temp,
+                    &row.flow_rate,
+                    &row.rate,
+                    &row.hwc_pre,
+                    &row.hwc_min,
+                    &row.hwc_drop,
+                ],
+            )
+            .map_err(ThermalError::PostgresQuery)?;
+    }
+    Ok(())
+}
+
+fn write_dhw_capacity_to_postgres(conninfo: &str, val: f64, method: &str) -> ThermalResult<()> {
+    let mut client = PgClient::connect(conninfo, NoTls).map_err(ThermalError::PostgresConnect)?;
+    client
+        .execute(
+            "INSERT INTO dhw_capacity (time, recommended_full_litres, method) VALUES ($1, $2, $3)",
+            &[&Utc::now(), &val, &method],
+        )
+        .map_err(ThermalError::PostgresQuery)?;
+    Ok(())
+}
+
+fn write_results(
     url: &str,
     org: &str,
     token: &str,
     bucket: &str,
+    pg_conninfo: Option<&str>,
     results: &[InflectionResult],
-) {
+) -> ThermalResult<()> {
     let to_write: Vec<_> = results
         .iter()
         .filter(|r| r.definitive_cumulative.is_some())
@@ -775,39 +1015,42 @@ fn write_results_to_influx(
 
     if to_write.is_empty() {
         eprintln!("No inflection measurements to write.");
-        return;
+        return Ok(());
     }
 
     eprintln!("Writing {} measurements to InfluxDB...", to_write.len());
     for r in &to_write {
-        let ts = r.draw.start.timestamp();
-        let cat = r.inflection_category();
-        let draw_type = r.draw_type();
-        let crossover = r
-            .draw
-            .preceding_charge
-            .as_ref()
-            .map(|c| c.crossover)
-            .unwrap_or(false);
+        let row = dhw_inflection_write_row(r);
+        let ts = row.time.timestamp();
         let line = format!(
-            "dhw_inflection,category={cat},crossover={crossover},draw_type={draw_type} \
+            "dhw_inflection,category={},crossover={},draw_type={} \
              cumulative_volume={:.1},draw_volume={:.1},gap_hours={:.2},\
              t1_start={:.2},t1_at_inflection={:.2},mains_temp={:.1},\
              flow_rate={:.0},rate={:.5},hwc_pre={:.1},hwc_min={:.1},\
              hwc_drop={:.1} {ts}",
-            r.definitive_cumulative.unwrap_or(0.0),
-            r.definitive_draw_vol.unwrap_or(0.0),
-            r.draw.gap_hours,
-            r.t1_start,
-            r.t1_at_definitive.unwrap_or(0.0),
-            r.mains_temp,
-            r.peak_flow_rate,
-            r.definitive_rate.unwrap_or(0.0),
-            r.hwc_pre,
-            r.hwc_min,
-            r.hwc_drop,
+            row.category,
+            row.crossover,
+            row.draw_type,
+            row.cumulative_volume,
+            row.draw_volume,
+            row.gap_hours,
+            row.t1_start,
+            row.t1_at_inflection,
+            row.mains_temp,
+            row.flow_rate,
+            row.rate,
+            row.hwc_pre,
+            row.hwc_min,
+            row.hwc_drop,
         );
         write_influx_line(url, org, token, bucket, &line);
+    }
+
+    if let Some(conninfo) = pg_conninfo {
+        write_dhw_inflection_to_postgres(conninfo, &to_write)?;
+        eprintln!("  Mirrored inflection rows to TimescaleDB.");
+    } else {
+        eprintln!("  TimescaleDB dhw_inflection mirror skipped (no [postgres] config).");
     }
 
     // Write recommended capacity
@@ -827,10 +1070,17 @@ fn write_results_to_influx(
                 rec.method
             ),
         );
+        if let Some(conninfo) = pg_conninfo {
+            write_dhw_capacity_to_postgres(conninfo, val, &rec.method)?;
+            eprintln!("  Mirrored recommended capacity to TimescaleDB.");
+        } else {
+            eprintln!("  TimescaleDB dhw_capacity mirror skipped (no [postgres] config).");
+        }
         eprintln!("  Recommended capacity: {val}L ({})", rec.method);
     }
 
     eprintln!("  Done.");
+    Ok(())
 }
 
 // ── JSON output ─────────────────────────────────────────────────────────────
@@ -1109,12 +1359,13 @@ fn analyse_sessions(
 ) -> ThermalResult<Vec<InflectionResult>> {
     let (_cfg_text, cfg) = super::config::load_thermal_config(std::path::Path::new(config_path))?;
     let token = super::config::resolve_influx_token(&cfg)?;
+    let pg_conninfo = super::config::resolve_postgres_conninfo(&cfg)?;
 
     let url = &cfg.influx.url;
     let org = &cfg.influx.org;
     let bucket = &cfg.influx.bucket;
 
-    let (_charges, draws) = find_events(url, org, &token, bucket, days)?;
+    let (_charges, draws) = find_events(url, org, &token, pg_conninfo.as_deref(), bucket, days)?;
 
     let mut results: Vec<InflectionResult> = Vec::new();
     for (i, draw) in draws.iter().enumerate() {
@@ -1124,7 +1375,8 @@ fn analyse_sessions(
             draws.len(),
             draw.start.format("%d/%m %H:%M")
         );
-        if let Some(result) = analyse_draw(url, org, &token, bucket, draw)? {
+        if let Some(result) = analyse_draw(url, org, &token, pg_conninfo.as_deref(), bucket, draw)?
+        {
             results.push(result);
         }
     }
@@ -1133,7 +1385,7 @@ fn analyse_sessions(
     }
 
     if !no_write {
-        write_results_to_influx(url, org, &token, bucket, &results);
+        write_results(url, org, &token, bucket, pg_conninfo.as_deref(), &results)?;
     }
 
     Ok(results)
@@ -1176,10 +1428,7 @@ mod tests {
     use chrono::{Duration, Offset, TimeZone, Utc};
 
     fn sample_time(offset_seconds: i64) -> DateTime<FixedOffset> {
-        Utc.fix()
-            .with_ymd_and_hms(2026, 4, 1, 6, 0, 0)
-            .unwrap()
-            + Duration::seconds(offset_seconds)
+        Utc.fix().with_ymd_and_hms(2026, 4, 1, 6, 0, 0).unwrap() + Duration::seconds(offset_seconds)
     }
 
     fn sample_draw() -> DrawEvent {
@@ -1325,12 +1574,12 @@ mod tests {
     fn lkv_finds_nearest_preceding() {
         let sorted = vec![(100, 1.0), (200, 2.0), (300, 3.0)];
 
-        assert_eq!(lkv(&sorted, 50), None);       // before all
-        assert_eq!(lkv(&sorted, 100), Some(1.0));  // exact match
-        assert_eq!(lkv(&sorted, 150), Some(1.0));  // between
-        assert_eq!(lkv(&sorted, 300), Some(3.0));  // exact last
-        assert_eq!(lkv(&sorted, 400), Some(3.0));  // after all
-        assert_eq!(lkv(&[], 100), None);           // empty
+        assert_eq!(lkv(&sorted, 50), None); // before all
+        assert_eq!(lkv(&sorted, 100), Some(1.0)); // exact match
+        assert_eq!(lkv(&sorted, 150), Some(1.0)); // between
+        assert_eq!(lkv(&sorted, 300), Some(3.0)); // exact last
+        assert_eq!(lkv(&sorted, 400), Some(3.0)); // after all
+        assert_eq!(lkv(&[], 100), None); // empty
     }
 
     // @lat: [[tests#DHW session analysis#To sorted deduplicates and orders by timestamp]]
@@ -1355,16 +1604,24 @@ mod tests {
         let rows = vec![
             // standard RFC3339
             [("_time", "2026-04-10T07:00:00+00:00"), ("_value", "42.5")]
-                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             // Z suffix (needs replace fallback)
             [("_time", "2026-04-10T08:00:00Z"), ("_value", "43.0")]
-                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             // alternative column names
             [("time", "2026-04-10T09:00:00+00:00"), ("value", "44.0")]
-                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             // bad value → skipped
             [("_time", "2026-04-10T10:00:00+00:00"), ("_value", "nope")]
-                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         ];
         let result = parse_ts_val(&rows);
         assert_eq!(result.len(), 3);
@@ -1390,7 +1647,10 @@ mod tests {
     #[test]
     fn epoch_to_dt_converts_unix_epoch() {
         let dt = epoch_to_dt(1712739600); // 2024-04-10 09:00:00 UTC
-        assert_eq!(dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "2024-04-10T09:00:00");
+        assert_eq!(
+            dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            "2024-04-10T09:00:00"
+        );
     }
 
     // @lat: [[tests#DHW session analysis#Empty capacity input returns no_data recommendation]]
@@ -1434,7 +1694,10 @@ mod tests {
         // result = max(185, 130).round() = 185
         assert!(rec.method.starts_with("regression"));
         let val = rec.recommended_full_litres.unwrap();
-        assert!(val > 130.0, "regression should extrapolate above 130, got {val}");
+        assert!(
+            val > 130.0,
+            "regression should extrapolate above 130, got {val}"
+        );
         assert!((val - 185.0).abs() < 1.0, "expected ~185, got {val}");
     }
 
@@ -1442,7 +1705,7 @@ mod tests {
     #[test]
     fn json_summary_serialises_capacity_and_draw_counts() {
         let results = vec![
-            sample_result(10.0, 120.0),  // Capacity (crossover=true, t1_end=44)
+            sample_result(10.0, 120.0), // Capacity (crossover=true, t1_end=44)
         ];
         let json = json_summary(&results);
 
@@ -1512,28 +1775,29 @@ mod tests {
             hwc_drop: 12.0,
         };
 
-        let cat = r.inflection_category();
-        let draw_type = r.draw_type();
-        let crossover = r.draw.preceding_charge.as_ref().map(|c| c.crossover).unwrap_or(false);
-        let ts = r.draw.start.timestamp();
+        let row = dhw_inflection_write_row(&r);
+        let ts = row.time.timestamp();
 
         let line = format!(
-            "dhw_inflection,category={cat},crossover={crossover},draw_type={draw_type} \
+            "dhw_inflection,category={},crossover={},draw_type={} \
              cumulative_volume={:.1},draw_volume={:.1},gap_hours={:.2},\
              t1_start={:.2},t1_at_inflection={:.2},mains_temp={:.1},\
              flow_rate={:.0},rate={:.5},hwc_pre={:.1},hwc_min={:.1},\
              hwc_drop={:.1} {ts}",
-            r.definitive_cumulative.unwrap_or(0.0),
-            r.definitive_draw_vol.unwrap_or(0.0),
-            r.draw.gap_hours,
-            r.t1_start,
-            r.t1_at_definitive.unwrap_or(0.0),
-            r.mains_temp,
-            r.peak_flow_rate,
-            r.definitive_rate.unwrap_or(0.0),
-            r.hwc_pre,
-            r.hwc_min,
-            r.hwc_drop,
+            row.category,
+            row.crossover,
+            row.draw_type,
+            row.cumulative_volume,
+            row.draw_volume,
+            row.gap_hours,
+            row.t1_start,
+            row.t1_at_inflection,
+            row.mains_temp,
+            row.flow_rate,
+            row.rate,
+            row.hwc_pre,
+            row.hwc_min,
+            row.hwc_drop,
         );
 
         // Verify measurement name
@@ -1546,9 +1810,17 @@ mod tests {
 
         // Verify all field names match TimescaleDB dhw_inflection columns
         let pg_columns = [
-            "cumulative_volume", "draw_volume", "gap_hours",
-            "t1_start", "t1_at_inflection", "mains_temp",
-            "flow_rate", "rate", "hwc_pre", "hwc_min", "hwc_drop",
+            "cumulative_volume",
+            "draw_volume",
+            "gap_hours",
+            "t1_start",
+            "t1_at_inflection",
+            "mains_temp",
+            "flow_rate",
+            "rate",
+            "hwc_pre",
+            "hwc_min",
+            "hwc_drop",
         ];
         for col in &pg_columns {
             assert!(
@@ -1567,12 +1839,16 @@ mod tests {
         // PostgreSQL may return timestamps as naive ISO without offset.
         // parse_ts_val already has a NaiveDateTime fallback for "%Y-%m-%dT%H:%M:%S".
         // This test verifies that path works for the migration.
-        let rows = vec![
-            [("_time", "2026-04-10T07:00:00"), ("_value", "42.5")]
-                .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect::<HashMap<String,String>>(),
-        ];
+        let rows = vec![[("_time", "2026-04-10T07:00:00"), ("_value", "42.5")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect::<HashMap<String, String>>()];
         let result = parse_ts_val(&rows);
-        assert_eq!(result.len(), 1, "Naive ISO timestamp should parse via fallback");
+        assert_eq!(
+            result.len(),
+            1,
+            "Naive ISO timestamp should parse via fallback"
+        );
         assert!((result[0].1 - 42.5).abs() < 0.01);
     }
 
@@ -1586,15 +1862,21 @@ mod tests {
             .map(|i| {
                 let ts = format!("2026-04-10T07:00:{:02}+00:00", i * 10);
                 [("_time", ts.as_str()), ("_value", "500.0")]
-                    .iter().map(|(k,v)| (k.to_string(), v.to_string())).collect()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect()
             })
             .collect();
         let result = parse_ts_val(&rows);
-        assert_eq!(result.len(), 6, "10s resolution should yield 6 samples per minute");
+        assert_eq!(
+            result.len(),
+            6,
+            "10s resolution should yield 6 samples per minute"
+        );
 
         // Verify 10s spacing
         for i in 1..result.len() {
-            let dt = result[i].0.timestamp() - result[i-1].0.timestamp();
+            let dt = result[i].0.timestamp() - result[i - 1].0.timestamp();
             assert_eq!(dt, 10, "Expected 10s spacing between samples");
         }
     }
@@ -1616,28 +1898,36 @@ mod tests {
     fn find_events_measurement_routing() {
         // find_events uses measurement-based filters (not topic-based like influx.rs).
         // The routing is: _measurement + field → PG table + column.
-        // This is different from influx.rs which routes by topic prefix.
-        let queries: Vec<(&str, &str, &str, &str)> = vec![
-            // (measurement, field, expected PG table, expected PG column)
-            ("emon", "dhw_flow", "multical", "dhw_flow"),
-            ("emon", "dhw_volume_V1", "multical", "dhw_volume_v1"),
-            ("emon", "dhw_t1", "multical", "dhw_t1"),
-            ("ebusd_poll", "BuildingCircuitFlow", "ebusd_poll", "value"),
-            ("ebusd_poll", "HwcStorageTemp", "ebusd_poll", "value"),
-        ];
-
-        for (measurement, field, expected_table, _expected_col) in &queries {
-            let table = match *measurement {
-                "emon" if field.starts_with("dhw_") => "multical",
-                "emon" => "emon",
-                "ebusd_poll" => "ebusd_poll",
-                m => panic!("unrouted measurement: {m}"),
-            };
-            assert_eq!(
-                table, *expected_table,
-                "find_events: measurement '{measurement}' + field '{field}' → table '{expected_table}'"
-            );
-        }
+        assert_eq!(
+            measurement_route("emon", "dhw_flow"),
+            Some(MeasurementRoute::Multical {
+                column: "dhw_flow".to_string()
+            })
+        );
+        assert_eq!(
+            measurement_route("emon", "dhw_volume_V1"),
+            Some(MeasurementRoute::Multical {
+                column: "dhw_volume_v1".to_string()
+            })
+        );
+        assert_eq!(
+            measurement_route("emon", "dhw_t1"),
+            Some(MeasurementRoute::Multical {
+                column: "dhw_t1".to_string()
+            })
+        );
+        assert_eq!(
+            measurement_route("ebusd_poll", "BuildingCircuitFlow"),
+            Some(MeasurementRoute::EbusdPoll {
+                field: "BuildingCircuitFlow".to_string()
+            })
+        );
+        assert_eq!(
+            measurement_route("ebusd_poll", "HwcStorageTemp"),
+            Some(MeasurementRoute::EbusdPoll {
+                field: "HwcStorageTemp".to_string()
+            })
+        );
     }
 
     // @lat: [[tests#DHW write contracts#find_events uses triple-field filter for emon measurements]]
@@ -1674,6 +1964,59 @@ mod tests {
         }
     }
 
+    // @lat: [[tests#DHW write contracts#Postgres inflection row maps all LP tags and fields to columns]]
+    #[test]
+    fn postgres_inflection_row_field_coverage() {
+        let r = InflectionResult {
+            draw: DrawEvent {
+                start: sample_time(0),
+                end: sample_time(600),
+                volume_register_start: 100.0,
+                volume_register_end: 130.0,
+                volume_drawn: 30.0,
+                preceding_charge: Some(ChargeEvent {
+                    start: sample_time(-7200),
+                    end: sample_time(-3600),
+                    t1_pre: 30.0,
+                    hwc_end: 50.0,
+                    t1_end: 48.0,
+                    crossover: true,
+                    volume_at_end: 100.0,
+                }),
+                cumulative_since_charge: 30.0,
+                gap_hours: 3.0,
+                during_charge: false,
+            },
+            hint_cumulative: Some(28.0),
+            definitive_cumulative: Some(29.5),
+            definitive_draw_vol: Some(29.5),
+            definitive_rate: Some(0.00123),
+            t1_start: 47.5,
+            t1_at_definitive: Some(42.0),
+            mains_temp: 12.5,
+            peak_flow_rate: 450.0,
+            hwc_pre: 50.0,
+            hwc_min: 38.0,
+            hwc_drop: 12.0,
+        };
+
+        let row = dhw_inflection_write_row(&r);
+        assert_eq!(row.category, "capacity");
+        assert!(row.crossover);
+        assert_eq!(row.draw_type, "shower");
+        assert!((row.cumulative_volume - 29.5).abs() < 0.001);
+        assert!((row.draw_volume - 29.5).abs() < 0.001);
+        assert!((row.gap_hours - 3.0).abs() < 0.001);
+        assert!((row.t1_start - 47.5).abs() < 0.001);
+        assert!((row.t1_at_inflection - 42.0).abs() < 0.001);
+        assert!((row.mains_temp - 12.5).abs() < 0.001);
+        assert!((row.flow_rate - 450.0).abs() < 0.001);
+        assert!((row.rate - 0.00123).abs() < 0.00001);
+        assert!((row.hwc_pre - 50.0).abs() < 0.001);
+        assert!((row.hwc_min - 38.0).abs() < 0.001);
+        assert!((row.hwc_drop - 12.0).abs() < 0.001);
+    }
+
     // @lat: [[tests#DHW write contracts#dhw_capacity LP line maps to TimescaleDB columns]]
     #[test]
     fn dhw_capacity_lp_field_coverage() {
@@ -1684,5 +2027,63 @@ mod tests {
         assert!(line.starts_with("dhw_capacity "));
         assert!(line.contains("recommended_full_litres=125.5"));
         assert!(line.contains("method=\"wwhr_direct\""));
+    }
+
+    // @lat: [[tests#DHW write contracts#Optional postgres conninfo is read from env when configured]]
+    #[test]
+    fn optional_postgres_conninfo_from_env() {
+        let cfg: super::super::config::ThermalConfig = toml::from_str(
+            r#"
+[influx]
+url = "http://pi5data:8086"
+org = "home"
+bucket = "energy"
+token_env = "INFLUX_TOKEN"
+
+[postgres]
+conninfo_env = "TEST_TSDB_CONNINFO"
+
+[test_nights]
+night1_start = "2026-03-24T23:10:00+00:00"
+night1_end = "2026-03-25T05:05:00+00:00"
+night2_start = "2026-03-25T23:10:00+00:00"
+night2_end = "2026-03-26T05:05:00+00:00"
+
+[objective]
+exclude_rooms = []
+prior_weight = 0.0
+
+[priors]
+landing_ach = 1.3
+doorway_cd = 0.2
+
+[bounds]
+leather_ach_min = 0.4
+leather_ach_max = 0.9
+leather_ach_step = 0.05
+landing_ach_min = 0.8
+landing_ach_max = 1.6
+landing_ach_step = 0.1
+conservatory_ach_min = 1.0
+conservatory_ach_max = 6.0
+conservatory_ach_step = 0.5
+office_ach_min = 0.8
+office_ach_max = 4.0
+office_ach_step = 0.2
+doorway_cd_min = 0.1
+doorway_cd_max = 0.35
+doorway_cd_step = 0.05
+"#,
+        )
+        .unwrap();
+
+        std::env::set_var("TEST_TSDB_CONNINFO", "host=pi5data dbname=energy user=test");
+        let conninfo = super::super::config::resolve_postgres_conninfo(&cfg).unwrap();
+        std::env::remove_var("TEST_TSDB_CONNINFO");
+
+        assert_eq!(
+            conninfo.as_deref(),
+            Some("host=pi5data dbname=energy user=test")
+        );
     }
 }

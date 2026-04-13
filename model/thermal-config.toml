@@ -8,6 +8,12 @@ bucket = "energy"
 # Token is read from this environment variable.
 token_env = "INFLUX_TOKEN"
 
+# Optional TimescaleDB conninfo for transitional dual-writes during the TSDB migration.
+# Keep the secret in the named environment variable, not in this file.
+[postgres]
+conninfo_env = "TIMESCALEDB_CONNINFO"
+# Example export (dev only): export TIMESCALEDB_CONNINFO='host=pi5data dbname=energy user=... password=...'
+
 [test_nights]
 # Controlled windows (space-heating OFF, DHW excluded)
 night1_start = "2026-03-24T23:10:00+00:00"

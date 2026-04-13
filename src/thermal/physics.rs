@@ -896,7 +896,10 @@ mod tests {
         // At dt=50 (the reference point), output should exactly equal t50.
         // This pins the exponent: 1500 * (50/50)^1.3 == 1500.
         let out = radiator_output(1500.0, 70.0, 20.0);
-        assert!((out - 1500.0).abs() < 1e-9, "at dt=50, output should equal t50");
+        assert!(
+            (out - 1500.0).abs() < 1e-9,
+            "at dt=50, output should equal t50"
+        );
 
         // At dt=25 (half reference), output depends on the exponent.
         // (25/50)^1.3 ≈ 0.406, so 1500 * 0.406 ≈ 609.

@@ -1,9 +1,10 @@
 use std::path::Path;
 
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, Utc};
+use postgres::{Client as PgClient, NoTls};
 use serde::Serialize;
 
-use super::config::{load_thermal_config, resolve_influx_token};
+use super::config::{load_thermal_config, resolve_influx_token, resolve_postgres_conninfo};
 use super::error::{ThermalError, ThermalResult};
 use super::influx::{parse_dt, query_flux_csv_pub, query_flux_raw_pub};
 
@@ -21,6 +22,7 @@ struct HistoryCtx {
     org: String,
     bucket: String,
     token: String,
+    pg_conninfo: Option<String>,
     profile_queries: bool,
 }
 
@@ -373,7 +375,9 @@ pub fn heating_history_summary(
     add_missing_summary_warning(&mut warnings, "actual flow", &actual_flow_summary);
     add_missing_summary_warning(&mut warnings, "return flow", &return_summary);
     if controller_rows.is_empty() {
-        warnings.push("adaptive_heating_mvp controller rows unavailable in InfluxDB".to_string());
+        warnings.push(
+            "adaptive_heating_mvp controller rows unavailable in the configured TSDB".to_string(),
+        );
     }
     if dhw_overlap_periods.is_empty() {
         warnings.push("no DHW overlap periods detected in this window".to_string());
@@ -734,6 +738,187 @@ fn summary_has_min_below(summary: &Option<NumericSummary>, threshold: f64) -> bo
         .unwrap_or(false)
 }
 
+fn pg_client(ctx: &HistoryCtx) -> ThermalResult<Option<PgClient>> {
+    let Some(conninfo) = &ctx.pg_conninfo else {
+        return Ok(None);
+    };
+    PgClient::connect(conninfo, NoTls)
+        .map(Some)
+        .map_err(ThermalError::PostgresConnect)
+}
+
+fn quoted_identifier(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+fn measurement_table_and_column(
+    measurement: &str,
+    field: &str,
+) -> Option<(String, String, Option<String>)> {
+    match measurement {
+        "emon" => {
+            if field.starts_with("dhw_") {
+                let col = if field == "dhw_volume_V1" {
+                    "dhw_volume_v1".to_string()
+                } else {
+                    field.to_string()
+                };
+                Some(("multical".to_string(), col, None))
+            } else {
+                None
+            }
+        }
+        "ebusd_poll" => Some((
+            "ebusd_poll".to_string(),
+            "value".to_string(),
+            Some(field.to_string()),
+        )),
+        "ebusd" => Some((
+            "ebusd".to_string(),
+            "value".to_string(),
+            Some(field.to_string()),
+        )),
+        other => Some((other.to_string(), field.to_string(), None)),
+    }
+}
+
+fn measurement_text_table_and_column(
+    measurement: &str,
+    field: &str,
+) -> Option<(String, String, Option<String>)> {
+    match (measurement, field) {
+        ("ebusd_poll", _) => Some((
+            "ebusd_poll_text".to_string(),
+            "value".to_string(),
+            Some(field.to_string()),
+        )),
+        ("ebusd", _) => Some((
+            "ebusd".to_string(),
+            "value".to_string(),
+            Some(field.to_string()),
+        )),
+        ("dhw", "charge_state") => Some(("dhw".to_string(), "charge_state".to_string(), None)),
+        ("dhw_capacity", "method") => {
+            Some(("dhw_capacity".to_string(), "method".to_string(), None))
+        }
+        ("dhw_inflection", "category") | ("dhw_inflection", "draw_type") => {
+            Some(("dhw_inflection".to_string(), field.to_string(), None))
+        }
+        ("adaptive_heating_mvp", "mode")
+        | ("adaptive_heating_mvp", "action")
+        | ("adaptive_heating_mvp", "tariff") => {
+            Some(("adaptive_heating_mvp".to_string(), field.to_string(), None))
+        }
+        _ => None,
+    }
+}
+
+fn topic_table_and_column(topic: &str, field: &str) -> Option<(String, String, Option<String>)> {
+    if let Some(device) = topic.strip_prefix("zigbee2mqtt/") {
+        return Some((
+            "zigbee".to_string(),
+            field.to_string(),
+            Some(device.to_string()),
+        ));
+    }
+    if topic == "emon/emonth2_23/temperature" {
+        return Some(("emonth".to_string(), "temperature".to_string(), None));
+    }
+    if let Some(name) = topic.strip_prefix("ebusd/poll/") {
+        return Some((
+            "ebusd_poll".to_string(),
+            "value".to_string(),
+            Some(name.to_string()),
+        ));
+    }
+    None
+}
+
+fn sql_interval(every: &str) -> &'static str {
+    match every {
+        "2s" => "2 seconds",
+        "10s" => "10 seconds",
+        "30s" => "30 seconds",
+        "1m" => "1 minute",
+        "5m" => "5 minutes",
+        _ => "1 minute",
+    }
+}
+
+fn aggregate_keyword(agg: &str) -> &'static str {
+    match agg {
+        "mean" => "AVG",
+        "max" => "MAX",
+        _ => "AVG",
+    }
+}
+
+fn rows_to_numeric_summary(rows: Vec<(DateTime<FixedOffset>, f64)>) -> Option<NumericSummary> {
+    if rows.is_empty() {
+        return None;
+    }
+    let samples = rows.len();
+    let start = rows.first().map(point_from_pair);
+    let end = rows.last().map(point_from_pair);
+    let min = rows
+        .iter()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(point_from_pair);
+    let max = rows
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(point_from_pair);
+    let latest = end.clone();
+    Some(NumericSummary {
+        samples,
+        start,
+        end,
+        min,
+        max,
+        latest,
+    })
+}
+
+fn periods_from_active_series(
+    since: &DateTime<FixedOffset>,
+    until: &DateTime<FixedOffset>,
+    baseline_active: bool,
+    min_duration_seconds: Option<i64>,
+    series: &[(DateTime<FixedOffset>, bool)],
+) -> Vec<Period> {
+    let mut periods = Vec::new();
+    let mut current_start = if baseline_active { Some(*since) } else { None };
+    let mut prev_active = baseline_active;
+    for (ts, active) in series {
+        if *active && !prev_active {
+            current_start.get_or_insert(*ts);
+        } else if !*active && prev_active {
+            if let Some(start) = current_start.take() {
+                let period = period_from_times(start, *ts);
+                if min_duration_seconds
+                    .map(|min| period_duration_seconds(&period) >= min)
+                    .unwrap_or(true)
+                {
+                    periods.push(period);
+                }
+            }
+        }
+        prev_active = *active;
+    }
+    if prev_active {
+        if let Some(start) = current_start.take() {
+            let period = period_from_times(start, *until);
+            if min_duration_seconds
+                .map(|min| period_duration_seconds(&period) >= min)
+                .unwrap_or(true)
+            {
+                periods.push(period);
+            }
+        }
+    }
+    periods
+}
+
 fn query_numeric_point_compact(
     ctx: &HistoryCtx,
     flux: &str,
@@ -869,6 +1054,61 @@ fn query_topic_numeric_summaries_compact(
     if specs.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
+    if let Some(mut client) = pg_client(ctx)? {
+        let mut out = std::collections::HashMap::new();
+        for spec in specs {
+            if let Some((table, column, extra)) = topic_table_and_column(spec.topic, spec.field) {
+                let summary = if table == "zigbee" {
+                    let sql = format!("SELECT time, {col} FROM {table} WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column), table = table);
+                    let rows = client
+                        .query(&sql, &[&extra.unwrap(), since, until])
+                        .map_err(ThermalError::PostgresQuery)?;
+                    let vals = rows
+                        .into_iter()
+                        .map(|r| {
+                            (
+                                r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                                r.get::<_, f64>(1),
+                            )
+                        })
+                        .collect();
+                    rows_to_numeric_summary(vals)
+                } else if table == "ebusd_poll" {
+                    let sql = "SELECT time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time";
+                    let rows = client
+                        .query(sql, &[&extra.unwrap(), since, until])
+                        .map_err(ThermalError::PostgresQuery)?;
+                    let vals = rows
+                        .into_iter()
+                        .map(|r| {
+                            (
+                                r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                                r.get::<_, f64>(1),
+                            )
+                        })
+                        .collect();
+                    rows_to_numeric_summary(vals)
+                } else {
+                    let sql = format!("SELECT time, {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column), table = table);
+                    let rows = client
+                        .query(&sql, &[since, until])
+                        .map_err(ThermalError::PostgresQuery)?;
+                    let vals = rows
+                        .into_iter()
+                        .map(|r| {
+                            (
+                                r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                                r.get::<_, f64>(1),
+                            )
+                        })
+                        .collect();
+                    rows_to_numeric_summary(vals)
+                };
+                out.insert(spec.label.to_string(), summary);
+            }
+        }
+        return Ok(out);
+    }
     let flux = batch_summary_union_flux(
         &specs
             .iter()
@@ -901,6 +1141,45 @@ fn query_measurement_numeric_summaries_compact(
 ) -> ThermalResult<std::collections::HashMap<String, Option<NumericSummary>>> {
     if specs.is_empty() {
         return Ok(std::collections::HashMap::new());
+    }
+    if let Some(mut client) = pg_client(ctx)? {
+        let mut out = std::collections::HashMap::new();
+        for spec in specs {
+            if let Some((table, column, extra)) =
+                measurement_table_and_column(spec.measurement, spec.field)
+            {
+                let summary = if table == "ebusd_poll" {
+                    let rows = client.query("SELECT time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time", &[&extra.unwrap(), since, until]).map_err(ThermalError::PostgresQuery)?;
+                    let vals = rows
+                        .into_iter()
+                        .map(|r| {
+                            (
+                                r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                                r.get::<_, f64>(1),
+                            )
+                        })
+                        .collect();
+                    rows_to_numeric_summary(vals)
+                } else {
+                    let sql = format!("SELECT time, {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column), table = table);
+                    let rows = client
+                        .query(&sql, &[since, until])
+                        .map_err(ThermalError::PostgresQuery)?;
+                    let vals = rows
+                        .into_iter()
+                        .map(|r| {
+                            (
+                                r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                                r.get::<_, f64>(1),
+                            )
+                        })
+                        .collect();
+                    rows_to_numeric_summary(vals)
+                };
+                out.insert(spec.label.to_string(), summary);
+            }
+        }
+        return Ok(out);
     }
     let flux = batch_summary_union_flux(
         &specs
@@ -935,6 +1214,26 @@ fn query_plain_measurement_numeric_summaries_compact(
     if specs.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
+    if let Some(mut client) = pg_client(ctx)? {
+        let mut out = std::collections::HashMap::new();
+        for spec in specs {
+            let sql = format!("SELECT time, {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(spec.field), table = spec.measurement);
+            let rows = client
+                .query(&sql, &[since, until])
+                .map_err(ThermalError::PostgresQuery)?;
+            let vals = rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                        r.get::<_, f64>(1),
+                    )
+                })
+                .collect();
+            out.insert(spec.label.to_string(), rows_to_numeric_summary(vals));
+        }
+        return Ok(out);
+    }
     let flux = batch_summary_union_flux(
         &specs
             .iter()
@@ -966,6 +1265,24 @@ fn query_topic_numeric_last_value_compact(
     topic: &str,
     field: &str,
 ) -> ThermalResult<Option<f64>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = topic_table_and_column(topic, field) {
+            let row = if table == "zigbee" {
+                let sql = format!("SELECT {col} FROM {table} WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1", col = quoted_identifier(&column), table = table);
+                client
+                    .query_opt(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else if table == "ebusd_poll" {
+                client.query_opt("SELECT value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time DESC LIMIT 1", &[&extra.unwrap(), since, until]).map_err(ThermalError::PostgresQuery)?
+            } else {
+                let sql = format!("SELECT {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1", col = quoted_identifier(&column), table = table);
+                client
+                    .query_opt(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(row.map(|r| r.get::<_, f64>(0)));
+        }
+    }
     let flux = format!(
         "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
         ctx.bucket,
@@ -984,6 +1301,19 @@ fn query_measurement_numeric_last_value_compact(
     measurement: &str,
     field: &str,
 ) -> ThermalResult<Option<f64>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = measurement_table_and_column(measurement, field) {
+            let row = if table == "ebusd_poll" {
+                client.query_opt("SELECT value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time DESC LIMIT 1", &[&extra.unwrap(), since, until]).map_err(ThermalError::PostgresQuery)?
+            } else {
+                let sql = format!("SELECT {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1", col = quoted_identifier(&column), table = table);
+                client
+                    .query_opt(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(row.map(|r| r.get::<_, f64>(0)));
+        }
+    }
     let flux = format!(
         "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
         ctx.bucket,
@@ -1017,6 +1347,61 @@ fn query_measurement_string_last_compact(
     measurement: &str,
     field: &str,
 ) -> ThermalResult<Option<String>> {
+    if measurement == "ebusd_poll" && field == "HwcSFMode" {
+        if let Some(mut client) = pg_client(ctx)? {
+            let row = client
+                .query_opt(
+                    "SELECT value FROM ebusd WHERE circuit = '700' AND field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time DESC LIMIT 1",
+                    &[&field, since, until],
+                )
+                .map_err(ThermalError::PostgresQuery)?;
+            return Ok(row.map(|r| r.get::<_, String>(0)));
+        }
+
+        let flux = format!(
+            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
+            ctx.bucket,
+            since.to_rfc3339(),
+            until.to_rfc3339(),
+            field,
+        );
+        let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
+        for row in rows {
+            if let Some(v) = row.get("_value") {
+                if !v.is_empty() && v != "_value" {
+                    return Ok(Some(v.clone()));
+                }
+            }
+        }
+        return Ok(None);
+    }
+
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = measurement_text_table_and_column(measurement, field)
+        {
+            let row = if extra.is_some() {
+                let sql = format!(
+                    "SELECT {col} FROM {table} WHERE field = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1",
+                    col = quoted_identifier(&column),
+                    table = table,
+                );
+                client
+                    .query_opt(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                let sql = format!(
+                    "SELECT {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1",
+                    col = quoted_identifier(&column),
+                    table = table,
+                );
+                client
+                    .query_opt(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(row.map(|r| r.get::<_, String>(0)));
+        }
+    }
+
     let flux = format!(
         "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
         ctx.bucket,
@@ -1054,6 +1439,20 @@ fn query_topic_below_threshold_periods_compact(
     .map(|v| v < threshold)
     .unwrap_or(false);
 
+    if ctx.pg_conninfo.is_some() {
+        let series = query_topic_numeric_series(ctx, since, until, topic, field, None, None)?;
+        let active = series
+            .into_iter()
+            .map(|(ts, v)| (ts, v < threshold))
+            .collect::<Vec<_>>();
+        return Ok(periods_from_active_series(
+            since,
+            until,
+            baseline_active,
+            None,
+            &active,
+        ));
+    }
     let flux = format!(
         "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> keep(columns:[\"_time\",\"_value\"]) |> map(fn: (r) => ({{ r with active: if r._value < {} then 1 else 0 }})) |> difference(columns:[\"active\"], keepFirst:false) |> filter(fn:(r) => r.active != 0) |> keep(columns:[\"_time\",\"active\"])",
         ctx.bucket,
@@ -1086,6 +1485,21 @@ fn query_measurement_above_threshold_periods_compact(
     .map(|v| v >= threshold)
     .unwrap_or(false);
 
+    if ctx.pg_conninfo.is_some() {
+        let series =
+            query_measurement_numeric_series(ctx, since, until, measurement, field, every, "last")?;
+        let active = series
+            .into_iter()
+            .map(|(ts, v)| (ts, v >= threshold))
+            .collect::<Vec<_>>();
+        return Ok(periods_from_active_series(
+            since,
+            until,
+            baseline_active,
+            min_duration_seconds,
+            &active,
+        ));
+    }
     let flux = format!(
         "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> aggregateWindow(every: {}, fn: last, createEmpty: false) |> map(fn: (r) => ({{ r with active: if r._value >= {} then 1 else 0 }})) |> difference(columns:[\"active\"], keepFirst:false) |> filter(fn:(r) => r.active != 0) |> keep(columns:[\"_time\",\"active\"])",
         ctx.bucket,
@@ -1237,6 +1651,99 @@ fn string_values_from_batch_rows(
     out
 }
 
+fn query_measurement_string_boundary_compact(
+    ctx: &HistoryCtx,
+    since: &DateTime<FixedOffset>,
+    until: &DateTime<FixedOffset>,
+    measurement: &str,
+    field: &str,
+    first_in_window: bool,
+) -> ThermalResult<Option<String>> {
+    if measurement == "ebusd_poll" && field == "HwcSFMode" {
+        if let Some(mut client) = pg_client(ctx)? {
+            let ordering = if first_in_window { "ASC" } else { "DESC" };
+            let row = client
+                .query_opt(
+                    &format!(
+                        "SELECT value FROM ebusd WHERE circuit = '700' AND field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time {ordering} LIMIT 1",
+                        ordering = ordering,
+                    ),
+                    &[&field, since, until],
+                )
+                .map_err(ThermalError::PostgresQuery)?;
+            return Ok(row.map(|r| r.get::<_, String>(0)));
+        }
+
+        let selector = if first_in_window { "first()" } else { "last()" };
+        let flux = format!(
+            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> {}",
+            ctx.bucket,
+            since.to_rfc3339(),
+            until.to_rfc3339(),
+            field,
+            selector,
+        );
+        let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
+        for row in rows {
+            if let Some(v) = row.get("_value") {
+                if !v.is_empty() && v != "_value" {
+                    return Ok(Some(v.clone()));
+                }
+            }
+        }
+        return Ok(None);
+    }
+
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = measurement_text_table_and_column(measurement, field)
+        {
+            let ordering = if first_in_window { "ASC" } else { "DESC" };
+            let row = if extra.is_some() {
+                let sql = format!(
+                    "SELECT {col} FROM {table} WHERE field = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time {ordering} LIMIT 1",
+                    col = quoted_identifier(&column),
+                    table = table,
+                    ordering = ordering,
+                );
+                client
+                    .query_opt(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                let sql = format!(
+                    "SELECT {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time {ordering} LIMIT 1",
+                    col = quoted_identifier(&column),
+                    table = table,
+                    ordering = ordering,
+                );
+                client
+                    .query_opt(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(row.map(|r| r.get::<_, String>(0)));
+        }
+    }
+
+    let selector = if first_in_window { "first()" } else { "last()" };
+    let flux = format!(
+        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> {}",
+        ctx.bucket,
+        since.to_rfc3339(),
+        until.to_rfc3339(),
+        measurement,
+        field,
+        selector,
+    );
+    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
+    for row in rows {
+        if let Some(v) = row.get("_value") {
+            if !v.is_empty() && v != "_value" {
+                return Ok(Some(v.clone()));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn query_dhw_charge_summaries_batched_compact(
     ctx: &HistoryCtx,
     periods: &[Period],
@@ -1247,21 +1754,135 @@ fn query_dhw_charge_summaries_batched_compact(
 
     let parsed_periods = periods
         .iter()
-        .enumerate()
-        .map(|(idx, period)| -> ThermalResult<_> {
-            Ok((
-                idx,
-                period,
-                parse_dt(&period.start)?,
-                parse_dt(&period.end)?,
-            ))
+        .map(|period| -> ThermalResult<_> {
+            Ok((period, parse_dt(&period.start)?, parse_dt(&period.end)?))
         })
         .collect::<ThermalResult<Vec<_>>>()?;
+
+    if ctx.pg_conninfo.is_some() {
+        return parsed_periods
+            .iter()
+            .map(|(period, start, end)| {
+                let start_before =
+                    *start - chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKBACK_SECONDS);
+                let end_after = *end + chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKAHEAD_SECONDS);
+
+                let t1_series = query_measurement_numeric_series(
+                    ctx, start, end, "emon", "dhw_t1", "30s", "last",
+                )?;
+                let hwc_series = query_measurement_numeric_series(
+                    ctx,
+                    start,
+                    end,
+                    "ebusd_poll",
+                    "HwcStorageTemp",
+                    "30s",
+                    "last",
+                )?;
+                let remaining_series = query_plain_measurement_numeric_series(
+                    ctx,
+                    &start_before,
+                    &end_after,
+                    "dhw",
+                    "remaining_litres",
+                    "30s",
+                    "last",
+                )?;
+
+                let t1_summary = summarize_numeric(&t1_series);
+                let hwc_summary = summarize_numeric(&hwc_series);
+                let t1_start = query_measurement_numeric_last_value_compact(
+                    ctx,
+                    &start_before,
+                    start,
+                    "emon",
+                    "dhw_t1",
+                )?;
+                let t1_end = query_measurement_numeric_series(
+                    ctx, end, &end_after, "emon", "dhw_t1", "30s", "last",
+                )?
+                .first()
+                .map(|(_, v)| *v);
+                let hwc_start = query_measurement_numeric_last_value_compact(
+                    ctx,
+                    &start_before,
+                    start,
+                    "ebusd_poll",
+                    "HwcStorageTemp",
+                )?;
+                let hwc_end = query_measurement_numeric_series(
+                    ctx,
+                    end,
+                    &end_after,
+                    "ebusd_poll",
+                    "HwcStorageTemp",
+                    "30s",
+                    "last",
+                )?
+                .first()
+                .map(|(_, v)| *v);
+                let remaining_start = remaining_series
+                    .iter()
+                    .filter(|(ts, _)| *ts < *start)
+                    .last()
+                    .map(|(_, v)| *v);
+                let remaining_end = remaining_series
+                    .iter()
+                    .find(|(ts, _)| *ts >= *end)
+                    .map(|(_, v)| *v);
+                let sfmode_start = query_measurement_string_boundary_compact(
+                    ctx,
+                    &start_before,
+                    start,
+                    "ebusd_poll",
+                    "HwcSFMode",
+                    false,
+                )?;
+                let sfmode_end = query_measurement_string_boundary_compact(
+                    ctx,
+                    end,
+                    &end_after,
+                    "ebusd_poll",
+                    "HwcSFMode",
+                    true,
+                )?;
+                let t1_peak = t1_summary
+                    .as_ref()
+                    .and_then(|s| s.max.as_ref())
+                    .map(|p| p.value);
+                let hwc_peak = hwc_summary
+                    .as_ref()
+                    .and_then(|s| s.max.as_ref())
+                    .map(|p| p.value);
+
+                Ok(DhwChargeSummary {
+                    start: period.start.clone(),
+                    end: period.end.clone(),
+                    duration_minutes: period.duration_minutes,
+                    t1_start_c: t1_start,
+                    t1_peak_c: t1_peak,
+                    t1_end_c: t1_end,
+                    hwc_start_c: hwc_start,
+                    hwc_peak_c: hwc_peak,
+                    hwc_end_c: hwc_end,
+                    remaining_litres_start: remaining_start,
+                    remaining_litres_end: remaining_end,
+                    sfmode_start,
+                    sfmode_end,
+                    crossover: match (t1_start, hwc_end) {
+                        (Some(t1_pre), Some(hwc_final)) => Some(hwc_final >= t1_pre),
+                        _ => None,
+                    },
+                })
+            })
+            .collect();
+    }
 
     let period_summary_flux = batch_summary_union_flux(
         &parsed_periods
             .iter()
-            .flat_map(|(idx, _, start, end)| {
+            .enumerate()
+            .flat_map(|(idx, (_, start, end))| {
                 [
                     (
                         format!("charge_{idx}_t1"),
@@ -1298,80 +1919,39 @@ fn query_dhw_charge_summaries_batched_compact(
     let numeric_boundary_flux = batch_metric_selector_union_flux(
         &parsed_periods
             .iter()
-            .flat_map(|(idx, _, start, end)| {
+            .enumerate()
+            .flat_map(|(idx, (_, start, end))| {
                 let start_before = *start - chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKBACK_SECONDS);
                 let end_after = *end + chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKAHEAD_SECONDS);
                 [
                     (
-                        format!("charge_{idx}_t1_start"),
-                        format!("charge_{idx}"),
-                        "t1_start".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            start_before.to_rfc3339(),
-                            start.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_t1_start"), format!("charge_{idx}"), "t1_start".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
                         "last()".to_string(),
                     ),
                     (
-                        format!("charge_{idx}_t1_end"),
-                        format!("charge_{idx}"),
-                        "t1_end".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            end.to_rfc3339(),
-                            end_after.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_t1_end"), format!("charge_{idx}"), "t1_end".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
                         "first()".to_string(),
                     ),
                     (
-                        format!("charge_{idx}_hwc_start"),
-                        format!("charge_{idx}"),
-                        "hwc_start".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            start_before.to_rfc3339(),
-                            start.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_hwc_start"), format!("charge_{idx}"), "hwc_start".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
                         "last()".to_string(),
                     ),
                     (
-                        format!("charge_{idx}_hwc_end"),
-                        format!("charge_{idx}"),
-                        "hwc_end".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            end.to_rfc3339(),
-                            end_after.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_hwc_end"), format!("charge_{idx}"), "hwc_end".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
                         "first()".to_string(),
                     ),
                     (
-                        format!("charge_{idx}_remaining_start"),
-                        format!("charge_{idx}"),
-                        "remaining_start".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"dhw\" and r._field == \"remaining_litres\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            start_before.to_rfc3339(),
-                            start.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_remaining_start"), format!("charge_{idx}"), "remaining_start".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"dhw\" and r._field == \"remaining_litres\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
                         "last()".to_string(),
                     ),
                     (
-                        format!("charge_{idx}_remaining_end"),
-                        format!("charge_{idx}"),
-                        "remaining_end".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"dhw\" and r._field == \"remaining_litres\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            end.to_rfc3339(),
-                            end_after.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_remaining_end"), format!("charge_{idx}"), "remaining_end".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"dhw\" and r._field == \"remaining_litres\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
                         "first()".to_string(),
                     ),
                 ]
@@ -1389,32 +1969,19 @@ fn query_dhw_charge_summaries_batched_compact(
     let string_boundary_flux = batch_metric_selector_union_flux(
         &parsed_periods
             .iter()
-            .flat_map(|(idx, _, start, end)| {
+            .enumerate()
+            .flat_map(|(idx, (_, start, end))| {
                 let start_before = *start - chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKBACK_SECONDS);
                 let end_after = *end + chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKAHEAD_SECONDS);
                 [
                     (
-                        format!("charge_{idx}_sfmode_start"),
-                        format!("charge_{idx}"),
-                        "sfmode_start".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            start_before.to_rfc3339(),
-                            start.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_sfmode_start"), format!("charge_{idx}"), "sfmode_start".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
                         "last()".to_string(),
                     ),
                     (
-                        format!("charge_{idx}_sfmode_end"),
-                        format!("charge_{idx}"),
-                        "sfmode_end".to_string(),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            end.to_rfc3339(),
-                            end_after.to_rfc3339(),
-                        ),
+                        format!("charge_{idx}_sfmode_end"), format!("charge_{idx}"), "sfmode_end".to_string(),
+                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
                         "first()".to_string(),
                     ),
                 ]
@@ -1431,7 +1998,8 @@ fn query_dhw_charge_summaries_batched_compact(
 
     parsed_periods
         .iter()
-        .map(|(idx, period, _, _)| {
+        .enumerate()
+        .map(|(idx, (period, _, _))| {
             let charge_key = format!("charge_{idx}");
             let t1 = period_summaries
                 .get(&format!("charge_{idx}_t1"))
@@ -1496,6 +2064,25 @@ fn query_dhw_max_divergence_compact(
     since: &DateTime<FixedOffset>,
     until: &DateTime<FixedOffset>,
 ) -> ThermalResult<Option<f64>> {
+    if ctx.pg_conninfo.is_some() {
+        let t1 =
+            query_measurement_numeric_series(ctx, since, until, "emon", "dhw_t1", "30s", "last")?;
+        let hwc = query_measurement_numeric_series(
+            ctx,
+            since,
+            until,
+            "ebusd_poll",
+            "HwcStorageTemp",
+            "30s",
+            "last",
+        )?;
+        let hwc_by_ts = hwc.into_iter().collect::<std::collections::HashMap<_, _>>();
+        let max_diff = t1
+            .into_iter()
+            .filter_map(|(ts, t1v)| hwc_by_ts.get(&ts).map(|hwcv| (t1v - *hwcv).abs()))
+            .max_by(|a, b| a.total_cmp(b));
+        return Ok(max_diff);
+    }
     let flux = format!(
         "t1 = from(bucket: \"{bucket}\") |> range(start: {start}, stop: {stop}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> aggregateWindow(every: 30s, fn: last, createEmpty: false) |> keep(columns:[\"_time\",\"_value\"]) |> set(key: \"series\", value: \"t1\")\n\nhwc = from(bucket: \"{bucket}\") |> range(start: {start}, stop: {stop}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> aggregateWindow(every: 30s, fn: last, createEmpty: false) |> keep(columns:[\"_time\",\"_value\"]) |> set(key: \"series\", value: \"hwc\")\n\nunion(tables:[t1, hwc]) |> pivot(rowKey:[\"_time\"], columnKey:[\"series\"], valueColumn:\"_value\") |> map(fn:(r)=> ({{ r with diff: if r.t1 > r.hwc then r.t1 - r.hwc else r.hwc - r.t1 }})) |> keep(columns:[\"_time\",\"diff\"]) |> rename(columns: {{diff: \"_value\"}}) |> max()",
         bucket = ctx.bucket,
@@ -1514,6 +2101,7 @@ fn load_ctx_and_window(
 ) -> ThermalResult<(HistoryCtx, DateTime<FixedOffset>, DateTime<FixedOffset>)> {
     let (_, cfg) = load_thermal_config(config_path)?;
     let token = resolve_influx_token(&cfg)?;
+    let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let since_dt = parse_dt(since)?;
     let until_dt = parse_dt(until)?;
     Ok((
@@ -1522,6 +2110,7 @@ fn load_ctx_and_window(
             org: cfg.influx.org,
             bucket: cfg.influx.bucket,
             token,
+            pg_conninfo,
             profile_queries,
         },
         since_dt,
@@ -1590,6 +2179,76 @@ fn query_string_series(
     Ok(out)
 }
 
+fn query_topic_numeric_series(
+    ctx: &HistoryCtx,
+    since: &DateTime<FixedOffset>,
+    until: &DateTime<FixedOffset>,
+    topic: &str,
+    field: &str,
+    every: Option<&str>,
+    agg: Option<&str>,
+) -> ThermalResult<Vec<(DateTime<FixedOffset>, f64)>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = topic_table_and_column(topic, field) {
+            let sql = if let Some(every) = every {
+                let agg_name = agg.unwrap_or("mean");
+                if agg_name == "last" {
+                    if table == "zigbee" {
+                        format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column))
+                    } else if table == "ebusd_poll" {
+                        format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every))
+                    } else {
+                        format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column), table = table)
+                    }
+                } else {
+                    let agg_fn = aggregate_keyword(agg_name);
+                    if table == "zigbee" {
+                        format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column), agg_fn = agg_fn)
+                    } else if table == "ebusd_poll" {
+                        format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}(value) AS value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn)
+                    } else {
+                        format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn, col = quoted_identifier(&column), table = table)
+                    }
+                }
+            } else if table == "zigbee" {
+                format!("SELECT time, {col} FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column))
+            } else if table == "ebusd_poll" {
+                "SELECT time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time".to_string()
+            } else {
+                format!("SELECT time, {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column), table = table)
+            };
+            let rows = if table == "zigbee" || table == "ebusd_poll" {
+                client
+                    .query(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                client
+                    .query(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                        r.get::<_, f64>(1),
+                    )
+                })
+                .collect());
+        }
+    }
+    let flux = format!(
+        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\"){}\n  |> keep(columns: [\"_time\", \"_value\"])",
+        ctx.bucket,
+        since.to_rfc3339(),
+        until.to_rfc3339(),
+        topic,
+        field,
+        every.map(|e| format!("\n  |> aggregateWindow(every: {e}, fn: {}, createEmpty: false)", agg.unwrap_or("mean"))).unwrap_or_default(),
+    );
+    query_numeric_series(ctx, &flux)
+}
+
 fn query_measurement_numeric_series(
     ctx: &HistoryCtx,
     since: &DateTime<FixedOffset>,
@@ -1599,6 +2258,42 @@ fn query_measurement_numeric_series(
     every: &str,
     agg: &str,
 ) -> ThermalResult<Vec<(DateTime<FixedOffset>, f64)>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = measurement_table_and_column(measurement, field) {
+            let sql = if agg == "last" {
+                if table == "ebusd_poll" {
+                    format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every))
+                } else {
+                    format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column), table = table)
+                }
+            } else {
+                let agg_fn = aggregate_keyword(agg);
+                if table == "ebusd_poll" {
+                    format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}(value) AS value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn)
+                } else {
+                    format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn, col = quoted_identifier(&column), table = table)
+                }
+            };
+            let rows = if table == "ebusd_poll" {
+                client
+                    .query(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                client
+                    .query(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                        r.get::<_, f64>(1),
+                    )
+                })
+                .collect());
+        }
+    }
     let flux = format!(
         "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\")\n  |> aggregateWindow(every: {}, fn: {}, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
         ctx.bucket,
@@ -1621,6 +2316,26 @@ fn query_plain_measurement_numeric_series(
     every: &str,
     agg: &str,
 ) -> ThermalResult<Vec<(DateTime<FixedOffset>, f64)>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        let sql = if agg == "last" {
+            format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(field), table = measurement)
+        } else {
+            let agg_fn = aggregate_keyword(agg);
+            format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn, col = quoted_identifier(field), table = measurement)
+        };
+        let rows = client
+            .query(&sql, &[since, until])
+            .map_err(ThermalError::PostgresQuery)?;
+        return Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                    r.get::<_, f64>(1),
+                )
+            })
+            .collect());
+    }
     let flux = format!(
         "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r._field == \"{}\")\n  |> aggregateWindow(every: {}, fn: {}, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
         ctx.bucket,
@@ -1642,6 +2357,76 @@ fn query_measurement_string_series(
     field: &str,
     every: &str,
 ) -> ThermalResult<Vec<(DateTime<FixedOffset>, String)>> {
+    if measurement == "ebusd_poll" && field == "HwcSFMode" {
+        if let Some(mut client) = pg_client(ctx)? {
+            let sql = format!(
+                "SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, value FROM ebusd WHERE circuit = '700' AND field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket",
+                interval = sql_interval(every),
+            );
+            let rows = client
+                .query(&sql, &[&field, since, until])
+                .map_err(ThermalError::PostgresQuery)?;
+            return Ok(rows
+                .into_iter()
+                .map(|row| {
+                    (
+                        row.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                        row.get::<_, String>(1),
+                    )
+                })
+                .collect());
+        }
+
+        let flux = format!(
+            "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\")\n  |> aggregateWindow(every: {}, fn: last, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
+            ctx.bucket,
+            since.to_rfc3339(),
+            until.to_rfc3339(),
+            field,
+            every,
+        );
+        return query_string_series(ctx, &flux);
+    }
+
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = measurement_text_table_and_column(measurement, field)
+        {
+            let sql = if extra.is_some() {
+                format!(
+                    "SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM {table} WHERE field = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket",
+                    interval = sql_interval(every),
+                    col = quoted_identifier(&column),
+                    table = table,
+                )
+            } else {
+                format!(
+                    "SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket",
+                    interval = sql_interval(every),
+                    col = quoted_identifier(&column),
+                    table = table,
+                )
+            };
+            let rows = if extra.is_some() {
+                client
+                    .query(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                client
+                    .query(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(rows
+                .into_iter()
+                .map(|row| {
+                    (
+                        row.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                        row.get::<_, String>(1),
+                    )
+                })
+                .collect());
+        }
+    }
+
     let flux = format!(
         "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\")\n  |> aggregateWindow(every: {}, fn: last, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
         ctx.bucket,
@@ -1745,6 +2530,27 @@ fn query_controller_rows(
     since: &DateTime<FixedOffset>,
     until: &DateTime<FixedOffset>,
 ) -> ThermalResult<Vec<ControllerRow>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        let rows = client
+            .query(
+                "SELECT time, COALESCE(mode, 'unknown'), COALESCE(action, 'unknown'), COALESCE(tariff, 'unknown'), target_flow_c, curve_after, flow_desired_c FROM adaptive_heating_mvp WHERE time >= $1 AND time < $2 AND (target_flow_c IS NOT NULL OR curve_after IS NOT NULL OR flow_desired_c IS NOT NULL) ORDER BY time",
+                &[since, until],
+            )
+            .map_err(ThermalError::PostgresQuery)?;
+        return Ok(rows
+            .into_iter()
+            .map(|row| ControllerRow {
+                ts: row.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                mode: row.get::<_, String>(1),
+                action: row.get::<_, String>(2),
+                tariff: row.get::<_, String>(3),
+                target_flow_c: row.get(4),
+                curve_after: row.get(5),
+                flow_desired_c: row.get(6),
+            })
+            .collect());
+    }
+
     let flux = format!(
         "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"adaptive_heating_mvp\")\n  |> filter(fn: (r) => r._field == \"target_flow_c\" or r._field == \"curve_after\" or r._field == \"flow_desired_c\")\n  |> map(fn: (r) => ({{ r with mode: if exists r.mode then r.mode else \"unknown\", action: if exists r.action then r.action else \"unknown\", tariff: if exists r.tariff then r.tariff else \"unknown\" }}))\n  |> pivot(rowKey: [\"_time\", \"mode\", \"action\", \"tariff\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> keep(columns: [\"_time\", \"mode\", \"action\", \"tariff\", \"target_flow_c\", \"curve_after\", \"flow_desired_c\"])",
         ctx.bucket,
@@ -2490,8 +3296,14 @@ mod tests {
         let summary = summarize_numeric(&series).unwrap();
 
         assert_eq!(summary.samples, 3);
-        assert_eq!(summary.start.as_ref().unwrap().ts, dt(2026, 4, 10, 6, 0).to_rfc3339());
-        assert_eq!(summary.end.as_ref().unwrap().ts, dt(2026, 4, 10, 6, 30).to_rfc3339());
+        assert_eq!(
+            summary.start.as_ref().unwrap().ts,
+            dt(2026, 4, 10, 6, 0).to_rfc3339()
+        );
+        assert_eq!(
+            summary.end.as_ref().unwrap().ts,
+            dt(2026, 4, 10, 6, 30).to_rfc3339()
+        );
         assert_eq!(summary.latest.as_ref().unwrap().value, 19.25);
         assert_eq!(summary.min.as_ref().unwrap().value, 17.0);
         assert_eq!(summary.max.as_ref().unwrap().value, 19.25);
@@ -2536,10 +3348,13 @@ mod tests {
 
         add_missing_numeric_warning(&mut warnings, "flow", &[]);
         add_missing_summary_warning(&mut warnings, "return", &None);
-        assert_eq!(warnings, vec![
-            "flow unavailable in this window".to_string(),
-            "return unavailable in this window".to_string(),
-        ]);
+        assert_eq!(
+            warnings,
+            vec![
+                "flow unavailable in this window".to_string(),
+                "return unavailable in this window".to_string(),
+            ]
+        );
     }
 
     // @lat: [[tests#History evidence helpers#Period from times computes correct duration]]
@@ -2581,7 +3396,10 @@ mod tests {
     }
 
     fn row(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     // @lat: [[tests#History evidence helpers#summaries_from_batch_rows pivots metrics into NumericSummary]]
@@ -2590,11 +3408,26 @@ mod tests {
         let ts = "2026-04-10T07:00:00+00:00";
         let rows = vec![
             row(&[("series", "leather"), ("metric", "count"), ("_value", "42")]),
-            row(&[("series", "leather"), ("metric", "min"), ("_time", ts), ("_value", "18.5")]),
-            row(&[("series", "leather"), ("metric", "max"), ("_time", ts), ("_value", "21.0")]),
+            row(&[
+                ("series", "leather"),
+                ("metric", "min"),
+                ("_time", ts),
+                ("_value", "18.5"),
+            ]),
+            row(&[
+                ("series", "leather"),
+                ("metric", "max"),
+                ("_time", ts),
+                ("_value", "21.0"),
+            ]),
             // Single-sample series must also be retained (count > 0, not > 1)
             row(&[("series", "outside"), ("metric", "count"), ("_value", "1")]),
-            row(&[("series", "outside"), ("metric", "min"), ("_time", ts), ("_value", "5.0")]),
+            row(&[
+                ("series", "outside"),
+                ("metric", "min"),
+                ("_time", ts),
+                ("_value", "5.0"),
+            ]),
         ];
         let out = summaries_from_batch_rows(rows).unwrap();
         let s = out.get("leather").unwrap().as_ref().unwrap();
@@ -2612,9 +3445,12 @@ mod tests {
     fn summaries_from_batch_rows_drops_zero_sample_series() {
         // Series with no count row → samples stays 0 → dropped by retain
         let ts = "2026-04-10T07:00:00+00:00";
-        let rows = vec![
-            row(&[("series", "empty"), ("metric", "min"), ("_time", ts), ("_value", "20.0")]),
-        ];
+        let rows = vec![row(&[
+            ("series", "empty"),
+            ("metric", "min"),
+            ("_time", ts),
+            ("_value", "20.0"),
+        ])];
         let out = summaries_from_batch_rows(rows).unwrap();
         assert!(out.is_empty(), "zero-sample series should be dropped");
     }
@@ -2640,9 +3476,17 @@ mod tests {
     #[test]
     fn string_values_from_batch_rows_skips_empties() {
         let rows = vec![
-            row(&[("series", "mode"), ("metric", "last"), ("_value", "heating")]),
+            row(&[
+                ("series", "mode"),
+                ("metric", "last"),
+                ("_value", "heating"),
+            ]),
             row(&[("series", "mode"), ("metric", "first"), ("_value", "")]),
-            row(&[("series", "mode"), ("metric", "header"), ("_value", "_value")]),
+            row(&[
+                ("series", "mode"),
+                ("metric", "header"),
+                ("_value", "_value"),
+            ]),
         ];
         let out = string_values_from_batch_rows(rows);
         assert_eq!(out.len(), 1);
@@ -2746,9 +3590,11 @@ mod tests {
     // @lat: [[tests#History evidence helpers#batch_summary_union_flux builds union with all metrics]]
     #[test]
     fn batch_summary_union_flux_builds_union() {
-        let vars = vec![
-            ("s1".to_string(), "leather".to_string(), "base_query_1".to_string()),
-        ];
+        let vars = vec![(
+            "s1".to_string(),
+            "leather".to_string(),
+            "base_query_1".to_string(),
+        )];
         let result = batch_summary_union_flux(&vars);
         assert!(result.contains("s1 = base_query_1"));
         assert!(result.contains("s1_count"));
@@ -2765,8 +3611,20 @@ mod tests {
     #[test]
     fn batch_metric_selector_union_flux_builds_union() {
         let specs = vec![
-            ("v1".to_string(), "flow".to_string(), "max".to_string(), "base1".to_string(), "max()".to_string()),
-            ("v2".to_string(), "temp".to_string(), "min".to_string(), "base2".to_string(), "min()".to_string()),
+            (
+                "v1".to_string(),
+                "flow".to_string(),
+                "max".to_string(),
+                "base1".to_string(),
+                "max()".to_string(),
+            ),
+            (
+                "v2".to_string(),
+                "temp".to_string(),
+                "min".to_string(),
+                "base2".to_string(),
+                "min()".to_string(),
+            ),
         ];
         let result = batch_metric_selector_union_flux(&specs);
         assert!(result.contains("v1 = base1"));
@@ -2814,6 +3672,80 @@ mod tests {
         assert!((series[0].1 - 35.0).abs() < 0.01);
     }
 
+    fn history_parity_window_override() -> Option<(DateTime<FixedOffset>, DateTime<FixedOffset>)> {
+        let since = std::env::var("HISTORY_PARITY_SINCE_RFC3339").ok();
+        let until = std::env::var("HISTORY_PARITY_UNTIL_RFC3339").ok();
+        match (since, until) {
+            (None, None) => None,
+            (Some(since), Some(until)) => {
+                let since = DateTime::parse_from_rfc3339(&since)
+                    .expect("parse HISTORY_PARITY_SINCE_RFC3339 as RFC3339");
+                let until = DateTime::parse_from_rfc3339(&until)
+                    .expect("parse HISTORY_PARITY_UNTIL_RFC3339 as RFC3339");
+                assert!(until > since, "HISTORY_PARITY_UNTIL_RFC3339 must be after HISTORY_PARITY_SINCE_RFC3339");
+                Some((since, until))
+            }
+            _ => panic!("set both HISTORY_PARITY_SINCE_RFC3339 and HISTORY_PARITY_UNTIL_RFC3339, or neither"),
+        }
+    }
+
+    fn real_history_ctxs() -> Option<(HistoryCtx, HistoryCtx, DateTime<FixedOffset>, DateTime<FixedOffset>)> {
+        let (_, cfg) = load_thermal_config(Path::new("model/thermal-config.toml")).ok()?;
+        let token = std::env::var(&cfg.influx.token_env).ok()?;
+        let conninfo = cfg.postgres.as_ref().and_then(|pg| std::env::var(&pg.conninfo_env).ok())?;
+        let (since, until) = history_parity_window_override().unwrap_or_else(|| {
+            let until = chrono::Utc::now().fixed_offset();
+            let since = until - chrono::TimeDelta::hours(24);
+            (since, until)
+        });
+        let flux_ctx = HistoryCtx {
+            url: cfg.influx.url.clone(),
+            org: cfg.influx.org.clone(),
+            bucket: cfg.influx.bucket.clone(),
+            token: token.clone(),
+            pg_conninfo: None,
+            profile_queries: false,
+        };
+        let pg_ctx = HistoryCtx {
+            url: cfg.influx.url,
+            org: cfg.influx.org,
+            bucket: cfg.influx.bucket,
+            token,
+            pg_conninfo: Some(conninfo),
+            profile_queries: false,
+        };
+        Some((flux_ctx, pg_ctx, since, until))
+    }
+
+    // @lat: [[tests#History evidence helpers#Controller rows match between Flux and PostgreSQL on a representative window]]
+    #[test]
+    #[ignore]
+    fn controller_rows_match_between_flux_and_postgres_on_representative_window() {
+        let Some((flux_ctx, pg_ctx, since, until)) = real_history_ctxs() else {
+            eprintln!("skipping: INFLUX_TOKEN or TIMESCALEDB_CONNINFO missing");
+            return;
+        };
+
+        let flux_rows = query_controller_rows(&flux_ctx, &since, &until).expect("query controller rows from Flux");
+        let pg_rows = query_controller_rows(&pg_ctx, &since, &until).expect("query controller rows from PostgreSQL");
+
+        assert!(
+            !flux_rows.is_empty(),
+            "representative window should contain controller rows"
+        );
+        assert_eq!(pg_rows.len(), flux_rows.len(), "PG and Flux row counts differ");
+
+        for (pg_row, flux_row) in pg_rows.iter().zip(flux_rows.iter()) {
+            assert_eq!(pg_row.ts, flux_row.ts, "timestamp mismatch");
+            assert_eq!(pg_row.mode, flux_row.mode, "mode mismatch at {}", pg_row.ts);
+            assert_eq!(pg_row.action, flux_row.action, "action mismatch at {}", pg_row.ts);
+            assert_eq!(pg_row.tariff, flux_row.tariff, "tariff mismatch at {}", pg_row.ts);
+            assert_eq!(pg_row.target_flow_c, flux_row.target_flow_c, "target_flow mismatch at {}", pg_row.ts);
+            assert_eq!(pg_row.curve_after, flux_row.curve_after, "curve_after mismatch at {}", pg_row.ts);
+            assert_eq!(pg_row.flow_desired_c, flux_row.flow_desired_c, "flow_desired mismatch at {}", pg_row.ts);
+        }
+    }
+
     // ── Filter variant routing (migration regression) ──────────────────────
     // history.rs uses three distinct InfluxDB filter patterns. Each maps to
     // a different PostgreSQL table routing strategy. These tests document the
@@ -2822,61 +3754,127 @@ mod tests {
     // @lat: [[tests#History filter variant routing#Topic filter routes by topic prefix and field name]]
     #[test]
     fn topic_filter_routing_contract() {
-        // TopicSummarySpec uses: r.topic == X and r._field == Y
-        // The topic string determines both the PG table AND the value column.
-        let specs: Vec<(&str, &str, &str)> = vec![
-            // (topic, _field, expected PG table)
-            ("emon/emonth2_23/temperature", "value", "emonth"),
-            ("zigbee2mqtt/aldora_temp_humid", "temperature", "zigbee"),
-        ];
-
-        for (topic, field, expected_table) in &specs {
-            // Verify topic→table routing
-            let table = if topic.starts_with("zigbee2mqtt/") {
-                "zigbee"
-            } else if topic.starts_with("emon/emonth2_23/") {
-                "emonth"
-            } else {
-                panic!("unrouted topic: {topic}");
-            };
-            assert_eq!(table, *expected_table, "topic '{topic}' should route to '{expected_table}'");
-
-            // Verify field name distinction
-            if topic.starts_with("emon/emonth2_23/") {
-                assert_eq!(*field, "value", "emonth2_23 uses _field='value'");
-            } else {
-                assert_eq!(*field, "temperature", "zigbee uses _field='temperature'");
-            }
-        }
+        assert_eq!(
+            topic_table_and_column("emon/emonth2_23/temperature", "value"),
+            Some(("emonth".to_string(), "temperature".to_string(), None))
+        );
+        assert_eq!(
+            topic_table_and_column("zigbee2mqtt/aldora_temp_humid", "temperature"),
+            Some((
+                "zigbee".to_string(),
+                "temperature".to_string(),
+                Some("aldora_temp_humid".to_string()),
+            ))
+        );
     }
 
     // @lat: [[tests#History filter variant routing#Measurement filter routes by measurement name and field tag]]
     #[test]
     fn measurement_filter_routing_contract() {
-        // MeasurementSummarySpec uses: r._measurement == X and r.field == Y
-        // The _measurement determines the PG table, r.field determines the column.
-        let specs: Vec<(&str, &str, &str)> = vec![
-            // (measurement, field, expected PG table)
-            ("ebusd_poll", "OutsideTemp", "ebusd_poll"),
-            ("ebusd_poll", "Hc1HeatCurve", "ebusd_poll"),
-            ("ebusd_poll", "FlowTemp", "ebusd_poll"),
-            ("ebusd_poll", "ReturnTemp", "ebusd_poll"),
-            ("emon", "dhw_t1", "multical"),  // emon measurement, dhw field → multical table
-        ];
+        assert_eq!(
+            measurement_table_and_column("ebusd_poll", "OutsideTemp"),
+            Some((
+                "ebusd_poll".to_string(),
+                "value".to_string(),
+                Some("OutsideTemp".to_string()),
+            ))
+        );
+        assert_eq!(
+            measurement_table_and_column("ebusd_poll", "Hc1HeatCurve"),
+            Some((
+                "ebusd_poll".to_string(),
+                "value".to_string(),
+                Some("Hc1HeatCurve".to_string()),
+            ))
+        );
+        assert_eq!(
+            measurement_table_and_column("emon", "dhw_t1"),
+            Some(("multical".to_string(), "dhw_t1".to_string(), None))
+        );
+    }
 
-        for (measurement, field, expected_table) in &specs {
-            let table = match *measurement {
-                "ebusd_poll" => "ebusd_poll",
-                // emon measurement with dhw_ prefix fields → multical table
-                "emon" if field.starts_with("dhw_") => "multical",
-                "emon" => "emon",
-                m => panic!("unrouted measurement: {m}"),
-            };
-            assert_eq!(
-                table, *expected_table,
-                "measurement '{measurement}' + field '{field}' should route to '{expected_table}'"
-            );
-        }
+    // @lat: [[tests#History filter variant routing#Measurement filter routing covers live ebusd fields]]
+    #[test]
+    fn measurement_filter_routing_covers_live_ebusd_fields() {
+        assert_eq!(
+            measurement_table_and_column("ebusd", "HwcSFMode"),
+            Some((
+                "ebusd".to_string(),
+                "value".to_string(),
+                Some("HwcSFMode".to_string()),
+            ))
+        );
+    }
+
+    // @lat: [[tests#History filter variant routing#Text ebusd_poll fields route to ebusd_poll_text]]
+    #[test]
+    fn text_ebusd_poll_routes_to_text_table() {
+        assert_eq!(
+            measurement_text_table_and_column("ebusd_poll", "Statuscode"),
+            Some((
+                "ebusd_poll_text".to_string(),
+                "value".to_string(),
+                Some("Statuscode".to_string()),
+            ))
+        );
+    }
+
+    // @lat: [[tests#History filter variant routing#Native text measurements route to their direct tables]]
+    #[test]
+    fn native_text_measurements_route_to_direct_tables() {
+        assert_eq!(
+            measurement_text_table_and_column("dhw", "charge_state"),
+            Some(("dhw".to_string(), "charge_state".to_string(), None))
+        );
+        assert_eq!(
+            measurement_text_table_and_column("dhw_capacity", "method"),
+            Some(("dhw_capacity".to_string(), "method".to_string(), None))
+        );
+        assert_eq!(
+            measurement_text_table_and_column("dhw_inflection", "category"),
+            Some(("dhw_inflection".to_string(), "category".to_string(), None))
+        );
+        assert_eq!(
+            measurement_text_table_and_column("dhw_inflection", "draw_type"),
+            Some(("dhw_inflection".to_string(), "draw_type".to_string(), None))
+        );
+        assert_eq!(
+            measurement_text_table_and_column("adaptive_heating_mvp", "mode"),
+            Some(("adaptive_heating_mvp".to_string(), "mode".to_string(), None))
+        );
+        assert_eq!(
+            measurement_text_table_and_column("adaptive_heating_mvp", "action"),
+            Some(("adaptive_heating_mvp".to_string(), "action".to_string(), None))
+        );
+        assert_eq!(
+            measurement_text_table_and_column("adaptive_heating_mvp", "tariff"),
+            Some(("adaptive_heating_mvp".to_string(), "tariff".to_string(), None))
+        );
+    }
+
+    // @lat: [[tests#History filter variant routing#HwcSFMode reads use ebusd live field semantics]]
+    #[test]
+    fn hwcsfmode_history_queries_use_live_ebusd_field() {
+        let flux = format!(
+            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
+            "energy",
+            "2026-03-22T13:45:00Z",
+            "2026-03-22T14:00:00Z",
+            "HwcSFMode",
+        );
+        assert!(flux.contains("r._measurement == \"ebusd\""));
+        assert!(flux.contains("r.circuit == \"700\""));
+        assert!(flux.contains("r.field == \"HwcSFMode\""));
+
+        let boundary_flux = format!(
+            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])",
+            "energy",
+            "2026-03-22T13:40:00Z",
+            "2026-03-22T13:45:00Z",
+        );
+        assert!(boundary_flux.contains("r._measurement == \"ebusd\""));
+        assert!(boundary_flux.contains("r.circuit == \"700\""));
+        assert!(boundary_flux.contains("r.field == \"HwcSFMode\""));
     }
 
     // @lat: [[tests#History filter variant routing#Plain measurement filter uses underscore field]]
@@ -2902,5 +3900,72 @@ mod tests {
                 "field name must be non-empty for column mapping"
             );
         }
+    }
+
+    // @lat: [[tests#History filter variant routing#Active-series periods respect baseline carry and minimum duration]]
+    #[test]
+    fn active_series_periods_respect_baseline_carry_and_minimum_duration() {
+        let since = DateTime::parse_from_rfc3339("2026-04-10T00:00:00+00:00").unwrap();
+        let until = DateTime::parse_from_rfc3339("2026-04-10T01:00:00+00:00").unwrap();
+        let series = vec![
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:05:00+00:00").unwrap(),
+                false,
+            ),
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:10:00+00:00").unwrap(),
+                true,
+            ),
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:12:00+00:00").unwrap(),
+                false,
+            ),
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:20:00+00:00").unwrap(),
+                true,
+            ),
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:35:00+00:00").unwrap(),
+                false,
+            ),
+        ];
+
+        let periods = periods_from_active_series(&since, &until, true, Some(300), &series);
+        assert_eq!(periods.len(), 2);
+        assert_eq!(periods[0].start, "2026-04-10T00:00:00+00:00");
+        assert_eq!(periods[0].end, "2026-04-10T00:05:00+00:00");
+        assert_eq!(periods[1].start, "2026-04-10T00:20:00+00:00");
+        assert_eq!(periods[1].end, "2026-04-10T00:35:00+00:00");
+    }
+
+    // @lat: [[tests#History filter variant routing#Numeric summaries choose extrema by value not recency]]
+    #[test]
+    fn numeric_summaries_choose_extrema_by_value_not_recency() {
+        let rows = vec![
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:00:00+00:00").unwrap(),
+                10.0,
+            ),
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:10:00+00:00").unwrap(),
+                5.0,
+            ),
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:20:00+00:00").unwrap(),
+                12.0,
+            ),
+            (
+                DateTime::parse_from_rfc3339("2026-04-10T00:30:00+00:00").unwrap(),
+                8.0,
+            ),
+        ];
+
+        let summary = rows_to_numeric_summary(rows).expect("summary");
+        assert_eq!(summary.samples, 4);
+        assert_eq!(summary.start.as_ref().unwrap().value, 10.0);
+        assert_eq!(summary.end.as_ref().unwrap().value, 8.0);
+        assert_eq!(summary.min.as_ref().unwrap().value, 5.0);
+        assert_eq!(summary.max.as_ref().unwrap().value, 12.0);
+        assert_eq!(summary.latest.as_ref().unwrap().value, 8.0);
     }
 }

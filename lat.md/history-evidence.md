@@ -1,12 +1,14 @@
 # History Evidence
 
-High-resolution history commands reconstruct fused heating and DHW evidence from InfluxDB for retrospective analysis and regression anchors.
+High-resolution history commands reconstruct fused heating and DHW evidence from the shared TSDB seam, with PostgreSQL as the intended primary store for retrospective analysis and regression anchors.
 
 ## Purpose
 
 These commands answer historical questions that live status cannot. They summarise compact evidence first, then support narrow event drilldowns only when needed.
 
 The default investigation shape is a rolling 7-day window ending now. Use exact windows only for named anchors, regression checks, or one already-identified event.
+
+Most representative history readers already have PostgreSQL routes. Any remaining raw Flux/profile-only diagnostics are migration-tail work tracked in [[tsdb-migration]].
 
 ## Heating History
 

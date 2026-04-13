@@ -7,7 +7,7 @@ use super::artifact::{build_artifact, write_artifact};
 use super::calibration::{
     calibrate_model, measured_rates, parse_validation_windows, predict_rates,
 };
-use super::config::resolve_influx_token;
+use super::config::{resolve_influx_token, resolve_postgres_conninfo};
 use super::error::{ThermalError, ThermalResult};
 use super::geometry::build_doorways;
 use super::influx;
@@ -117,12 +117,14 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
 
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
     let token = resolve_influx_token(cfg)?;
+    let pg_conninfo = resolve_postgres_conninfo(cfg)?;
 
     let room_rows = influx::query_room_temps(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &sensor_topics,
         &earliest_val,
         &latest_val,
@@ -133,6 +135,7 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &earliest_val,
         &latest_val,
     )?;
@@ -458,14 +461,8 @@ mod tests {
             ("excluded".to_string(), 2.0),
             ("missing_pred".to_string(), 3.0),
         ]);
-        let predicted = HashMap::from([
-            ("kept".to_string(), 1.5),
-            ("excluded".to_string(), 1.0),
-        ]);
-        let masses = HashMap::from([
-            ("kept".to_string(), 10.0),
-            ("excluded".to_string(), 20.0),
-        ]);
+        let predicted = HashMap::from([("kept".to_string(), 1.5), ("excluded".to_string(), 1.0)]);
+        let masses = HashMap::from([("kept".to_string(), 10.0), ("excluded".to_string(), 20.0)]);
         let exclude = HashSet::from(["excluded".to_string()]);
 
         let residuals = residuals_for_rooms(&measured, &predicted, Some(&exclude), &masses);

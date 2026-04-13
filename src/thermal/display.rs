@@ -3,7 +3,7 @@ use std::path::Path;
 
 use chrono::Utc;
 
-use super::config::{load_thermal_config, resolve_influx_token};
+use super::config::{load_thermal_config, resolve_influx_token, resolve_postgres_conninfo};
 use super::error::ThermalResult;
 use super::geometry::{build_connections, build_doorways, build_rooms};
 use super::influx;
@@ -91,6 +91,7 @@ pub fn print_connections() -> ThermalResult<()> {
 pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
     let (_, cfg) = load_thermal_config(config_path)?;
     let token = resolve_influx_token(&cfg)?;
+    let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let rooms = build_rooms()?;
     let connections = build_connections()?;
     let doorways = build_doorways()?;
@@ -108,6 +109,7 @@ pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &sensor_topics,
         &start,
         &now,
@@ -118,6 +120,7 @@ pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &start,
         &now,
     )?;
@@ -127,6 +130,7 @@ pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &start,
         &now,
     )?;
@@ -156,26 +160,28 @@ pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
     let ne_horiz = 0.0;
 
     // Query HP heat output and electrical consumption
-    let hp_heat = query_latest_ebusd(
+    let hp_heat = influx::query_latest_topic_value(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         "ebusd/hmu/CurrentYieldPower",
         &start,
         &now,
-    )
+    )?
     .unwrap_or(0.0)
         * 1000.0; // kW → W
-    let hp_elec = query_latest_ebusd(
+    let hp_elec = influx::query_latest_topic_value(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         "ebusd/hmu/RunDataElectricPowerConsumption",
         &start,
         &now,
-    )
+    )?
     .unwrap_or(0.0);
 
     println!("{}", "=".repeat(110));
@@ -278,27 +284,6 @@ pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
     );
 
     Ok(())
-}
-
-/// Query a single latest value from an ebusd topic.
-fn query_latest_ebusd(
-    influx_url: &str,
-    org: &str,
-    bucket: &str,
-    token: &str,
-    topic: &str,
-    start: &chrono::DateTime<chrono::FixedOffset>,
-    stop: &chrono::DateTime<chrono::FixedOffset>,
-) -> Option<f64> {
-    let flux = format!(
-        "from(bucket: \"{bucket}\") |> range(start: {start}, stop: {stop}) |> filter(fn: (r) => r.topic == \"{topic}\") |> last() |> keep(columns: [\"_value\"])",
-        bucket = bucket,
-        start = start.to_rfc3339(),
-        stop = stop.to_rfc3339(),
-        topic = topic,
-    );
-    let rows = influx::query_flux_csv_pub(influx_url, org, token, &flux).ok()?;
-    rows.last()?.get("_value")?.parse().ok()
 }
 
 /// Pure equilibrium solver: returns a map of room name → equilibrium temperature.
@@ -483,6 +468,7 @@ pub fn print_equilibrium(
 ) -> ThermalResult<()> {
     let (_, cfg) = load_thermal_config(config_path)?;
     let token = resolve_influx_token(&cfg)?;
+    let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let rooms = build_rooms()?;
     let connections = build_connections()?;
     let doorways = build_doorways()?;
@@ -500,6 +486,7 @@ pub fn print_equilibrium(
             &cfg.influx.org,
             &cfg.influx.bucket,
             &token,
+            pg_conninfo.as_deref(),
             &start,
             &now,
         )?;
@@ -514,6 +501,7 @@ pub fn print_equilibrium(
             &cfg.influx.org,
             &cfg.influx.bucket,
             &token,
+            pg_conninfo.as_deref(),
             &start,
             &now,
         )?;
@@ -715,6 +703,7 @@ fn fetch_outside_humidity(avg_outside: f64) -> (f64, f64) {
 pub fn print_moisture(config_path: &Path) -> ThermalResult<()> {
     let (_, cfg) = load_thermal_config(config_path)?;
     let token = resolve_influx_token(&cfg)?;
+    let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let rooms = build_rooms()?;
 
     // Query last 24h of data for overnight analysis
@@ -730,17 +719,19 @@ pub fn print_moisture(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &sensor_topics,
         &start_24h,
         &now,
     )?;
 
     // Also query humidity — need to build humidity queries
-    let humidity_rows = query_room_humidity(
+    let humidity_rows = influx::query_room_humidity(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &sensor_topics,
         &start_24h,
         &now,
@@ -751,6 +742,7 @@ pub fn print_moisture(config_path: &Path) -> ThermalResult<()> {
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &start_24h,
         &now,
     )?;
@@ -946,73 +938,6 @@ pub fn print_moisture(config_path: &Path) -> ThermalResult<()> {
     Ok(())
 }
 
-/// Query room humidity from InfluxDB (parallel to query_room_temps but for humidity field).
-fn query_room_humidity(
-    influx_url: &str,
-    org: &str,
-    bucket: &str,
-    token: &str,
-    sensor_topics: &[&str],
-    start: &chrono::DateTime<chrono::FixedOffset>,
-    stop: &chrono::DateTime<chrono::FixedOffset>,
-) -> ThermalResult<Vec<(chrono::DateTime<chrono::FixedOffset>, String, f64)>> {
-    let mut conditions = Vec::new();
-    for t in sensor_topics {
-        if *t == "emon/emonth2_23/temperature" {
-            // emonth2 doesn't have humidity via this topic — skip
-            continue;
-        }
-        conditions.push(format!(
-            "(r.topic == \"{}\" and r._field == \"humidity\")",
-            t
-        ));
-    }
-    if conditions.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let flux = format!(
-        "from(bucket: \"{bucket}\")\n  |> range(start: {start}, stop: {stop})\n  |> filter(fn: (r) => {cond})\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"topic\", \"_value\"])",
-        bucket = bucket,
-        start = start.to_rfc3339(),
-        stop = stop.to_rfc3339(),
-        cond = conditions.join(" or ")
-    );
-
-    let rows = influx::query_flux_csv_pub(influx_url, org, token, &flux)?;
-    let mut out = Vec::new();
-    for row in rows {
-        let time_str = row
-            .get("_time")
-            .ok_or(super::error::ThermalError::MissingColumn {
-                column: "_time",
-                context: "humidity row",
-            })?;
-        let t = influx::parse_dt(time_str)?;
-        let topic = row
-            .get("topic")
-            .ok_or(super::error::ThermalError::MissingColumn {
-                column: "topic",
-                context: "humidity row",
-            })?
-            .to_string();
-        let value: f64 = row
-            .get("_value")
-            .ok_or(super::error::ThermalError::MissingColumn {
-                column: "_value",
-                context: "humidity row",
-            })?
-            .parse()
-            .map_err(|_| super::error::ThermalError::FloatParse {
-                context: "humidity _value",
-                value: row.get("_value").unwrap().clone(),
-            })?;
-        out.push((t, topic, value));
-    }
-    out.sort_by_key(|(t, _, _)| *t);
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1103,10 +1028,16 @@ mod tests {
     fn absolute_humidity_rises_with_temperature() {
         let low = absolute_humidity(10.0, 50.0);
         let high = absolute_humidity(20.0, 50.0);
-        assert!(high > low, "warmer air holds more moisture: {low} vs {high}");
+        assert!(
+            high > low,
+            "warmer air holds more moisture: {low} vs {high}"
+        );
         // Known reference: ~20°C, 50% RH → ~8.6 g/m³
         let ref_val = absolute_humidity(20.0, 50.0);
-        assert!(ref_val > 7.0 && ref_val < 10.0, "reference check: {ref_val}");
+        assert!(
+            ref_val > 7.0 && ref_val < 10.0,
+            "reference check: {ref_val}"
+        );
     }
 
     // @lat: [[tests#Thermal physics primitives#Surface RH reaches 100 pct at dew point]]
@@ -1185,12 +1116,16 @@ mod tests {
         let mut conditions = Vec::new();
         for t in sensor_topics {
             if *t == "emon/emonth2_23/temperature" {
-                continue;  // skip — no humidity
+                continue; // skip — no humidity
             }
             conditions.push(format!("topic={t}"));
         }
 
-        assert_eq!(conditions.len(), 2, "emonth2_23 must be skipped for humidity");
+        assert_eq!(
+            conditions.len(),
+            2,
+            "emonth2_23 must be skipped for humidity"
+        );
         assert!(conditions[0].contains("Leather"));
         assert!(conditions[1].contains("Aldora"));
     }
@@ -1204,6 +1139,9 @@ mod tests {
         let topic = "zigbee2mqtt/Leather";
         let field = "humidity";
         let condition = format!("(r.topic == \"{topic}\" and r._field == \"{field}\")");
-        assert!(condition.contains("humidity"), "humidity query must use humidity field");
+        assert!(
+            condition.contains("humidity"),
+            "humidity query must use humidity field"
+        );
     }
 }

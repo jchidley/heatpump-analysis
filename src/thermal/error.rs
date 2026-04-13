@@ -36,6 +36,10 @@ pub enum ThermalError {
         status: reqwest::StatusCode,
         body: String,
     },
+    #[error("postgres connect failed: {0}")]
+    PostgresConnect(postgres::Error),
+    #[error("postgres query failed: {0}")]
+    PostgresQuery(postgres::Error),
     #[error("csv parse error: {0}")]
     CsvParse(#[from] csv::Error),
     #[error("missing column '{column}' in row for {context}")]

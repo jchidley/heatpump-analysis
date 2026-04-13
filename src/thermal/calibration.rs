@@ -222,12 +222,14 @@ pub(crate) fn prepare_calibration(cfg: &ThermalConfig) -> ThermalResult<Calibrat
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
     let token = std::env::var(&cfg.influx.token_env)
         .map_err(|_| ThermalError::MissingEnv(cfg.influx.token_env.clone()))?;
+    let pg_conninfo = super::config::resolve_postgres_conninfo(cfg)?;
 
     let room_rows = influx::query_room_temps(
         &cfg.influx.url,
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &sensor_topics,
         &earliest,
         &latest,
@@ -238,6 +240,7 @@ pub(crate) fn prepare_calibration(cfg: &ThermalConfig) -> ThermalResult<Calibrat
         &cfg.influx.org,
         &cfg.influx.bucket,
         &token,
+        pg_conninfo.as_deref(),
         &earliest,
         &latest,
     )?;
@@ -662,10 +665,7 @@ mod tests {
                     (dt(2026, 4, 10, 0, 20), 20.5),
                 ],
             ),
-            (
-                "sparse".to_string(),
-                vec![(dt(2026, 4, 10, 1, 0), 19.5)],
-            ),
+            ("sparse".to_string(), vec![(dt(2026, 4, 10, 1, 0), 19.5)]),
         ]);
         let outside = vec![
             (dt(2026, 4, 10, 0, 0), 5.0),
@@ -724,7 +724,12 @@ mod tests {
         ]);
 
         assert!((avg_series_in_window(&series, start, end, 99.0) - 15.0).abs() < 1e-9);
-        assert!((avg_series_in_window(&series, dt(2026, 4, 10, 9, 0), dt(2026, 4, 10, 10, 0), 99.0) - 99.0).abs() < 1e-9);
+        assert!(
+            (avg_series_in_window(&series, dt(2026, 4, 10, 9, 0), dt(2026, 4, 10, 10, 0), 99.0)
+                - 99.0)
+                .abs()
+                < 1e-9
+        );
 
         let room_avgs = avg_room_temps_in_window(&room_series, start, end);
         assert_eq!(room_avgs.len(), 1);
@@ -775,12 +780,12 @@ mod tests {
         let series: TempSeries = HashMap::from([
             (
                 "room_a".to_string(),
-                vec![(dt(2026, 4, 10, 7, 0), 10.0), (dt(2026, 4, 10, 7, 30), 20.0)],
+                vec![
+                    (dt(2026, 4, 10, 7, 0), 10.0),
+                    (dt(2026, 4, 10, 7, 30), 20.0),
+                ],
             ),
-            (
-                "room_b".to_string(),
-                vec![(dt(2026, 4, 10, 7, 15), 30.0)],
-            ),
+            ("room_b".to_string(), vec![(dt(2026, 4, 10, 7, 15), 30.0)]),
         ]);
         let avgs = avg_room_temps_in_window(&series, start, end);
         assert_eq!(avgs.len(), 2);
@@ -866,6 +871,9 @@ mod tests {
         assert_eq!(series[&leather_name][0].0, dt(2026, 4, 10, 7, 0));
         assert_eq!(series[&leather_name][1].0, dt(2026, 4, 10, 7, 30));
         assert_eq!(series[&office_name].len(), 1);
-        assert!(!series.values().flatten().any(|(_, v)| (*v - 99.0).abs() < 1e-9));
+        assert!(!series
+            .values()
+            .flatten()
+            .any(|(_, v)| (*v - 99.0).abs() < 1e-9));
     }
 }

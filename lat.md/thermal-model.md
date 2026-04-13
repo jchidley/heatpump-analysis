@@ -1,6 +1,6 @@
 # Thermal Model
 
-13-room thermal network calibrated from Zigbee sensors and InfluxDB data. Powers the adaptive controller via `bisect_mwt_for_room()`.
+13-room thermal network calibrated from Zigbee sensors and house telemetry from the shared TSDB seam. Powers the adaptive controller via `bisect_mwt_for_room()`.
 
 ## Purpose
 
@@ -191,7 +191,7 @@ The thermal model spans 17 Rust source files in `src/thermal/`.
 | `snapshot.rs` | Export/import manifests with human signoff |
 | `display.rs` | CLI output, **equilibrium solver**, **MWT bisection** |
 | `report.rs` | Table printer and RMSE |
-| `influx.rs` | InfluxDB query builders ([[src/thermal/influx.rs#query_room_temps]]) |
+| `influx.rs` | Shared TSDB query builders under the historical module name ([[src/thermal/influx.rs#query_room_temps]]) |
 | `history.rs` | Heating/DHW history reconstruction. Comfort miss detection clipped to waking hours (07:00–23:00) via [[src/thermal/history.rs#clip_period_to_waking_hours]] — overnight cooling is expected, not a miss |
 | `dhw_sessions.rs` | DHW draw/charge session analysis |
 | `error.rs` | `ThermalError` enum (thiserror) |
