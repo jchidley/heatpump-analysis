@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "queue_id": "5dec774c-controller-unsupported-topic-route-pass",
+  "repo_root": "/home/jack/projects/heatpump-analysis",
+  "generated_at": "2026-04-16T07:09:05Z",
+  "checkpoint_basis": {
+    "git_head": "5dec774cff212b49a7c2528137f812191a57fa77",
+    "worktree_mode": "dirty",
+    "lat_fingerprint": "lat:tests-controller-unsupported-topic-route-2026-04-16"
+  },
+  "progress": {
+    "current_index": 1,
+    "counts": {
+      "todo": 0,
+      "done": 1,
+      "partial": 0,
+      "blocked": 0,
+      "remaining": 0
+    },
+    "next_seam_id": null
+  },
+  "highest_risk_grounded_excluded_contract": null,
+  "reopened_without_rerank_warning": null,
+  "seams": [
+    {
+      "seam_id": "adaptive-heating-write-contracts.unsupported-latest-topic-route-errors",
+      "boundary": "adaptive heating write contracts",
+      "summary": "Unsupported controller latest-value topics must fail before PostgreSQL connect and must name the offending topic in the route error.",
+      "risk_tier": "Significant",
+      "priority": 1,
+      "coverage_state": "covered",
+      "mutation_state": "strong",
+      "semantic_classes_covered": [
+        "guard",
+        "presence"
+      ],
+      "rerank_artifact_id": "2026-04-16-controller-unsupported-topic-route-micro-hardening",
+      "workflow_status": "done",
+      "lat_refs": [
+        "tests#Adaptive heating write contracts"
+      ],
+      "source_refs": [
+        "src/bin/adaptive-heating-mvp.rs#query_latest_topic_value_pg"
+      ],
+      "primary_contract_proven": true
+    }
+  ]
+}
