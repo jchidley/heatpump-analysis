@@ -411,7 +411,6 @@ enum Mode {
 struct RuntimeState {
     mode: Mode,
     away_until: Option<DateTime<Utc>>,
-    updated_at: DateTime<Utc>,
     last_reason: String,
     /// Phase 1a: target flow temp set by outer loop, consumed by inner loop
     #[serde(default)]
@@ -438,7 +437,6 @@ impl Default for RuntimeState {
         Self {
             mode: Mode::Occupied,
             away_until: None,
-            updated_at: Utc::now(),
             last_reason: "default startup".to_string(),
             target_flow_c: None,
             last_calc_outside_c: None,
@@ -454,7 +452,6 @@ impl Default for RuntimeState {
 struct StatusResponse {
     mode: Mode,
     away_until: Option<DateTime<Utc>>,
-    updated_at: DateTime<Utc>,
     last_reason: String,
     target_flow_c: Option<f64>,
 }
@@ -472,7 +469,6 @@ struct StatusSnapshot {
 struct StatusService {
     state_file: String,
     jsonl_log_file: String,
-    runtime_age_minutes: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -2110,7 +2106,6 @@ fn run_outer_cycle(
     }
 
     // Save updated state
-    state.updated_at = Utc::now();
     {
         let mut guard = runtime.lock().unwrap();
         guard.target_flow_c = state.target_flow_c;
@@ -2412,14 +2407,7 @@ fn build_status_snapshot(config: &Config, runtime: RuntimeState) -> StatusSnapsh
         .to_lowercase()
         .contains("warm_water");
 
-    let runtime_age_minutes = (Utc::now() - runtime.updated_at).num_minutes();
     let mut warnings = Vec::new();
-    if runtime_age_minutes > 60 {
-        warnings.push(format!(
-            "runtime state is {} minutes old",
-            runtime_age_minutes
-        ));
-    }
     if leather_c.is_none() {
         warnings.push("leather temperature unavailable".to_string());
     }
@@ -2438,7 +2426,6 @@ fn build_status_snapshot(config: &Config, runtime: RuntimeState) -> StatusSnapsh
         service: StatusService {
             state_file: config.state_file.display().to_string(),
             jsonl_log_file: config.jsonl_log_file.display().to_string(),
-            runtime_age_minutes,
         },
         heating: StatusHeating {
             current_curve,
@@ -2471,7 +2458,6 @@ async fn api_status(State(state): State<ServiceState>) -> Json<StatusResponse> {
     Json(StatusResponse {
         mode: runtime.mode,
         away_until: runtime.away_until,
-        updated_at: runtime.updated_at,
         last_reason: runtime.last_reason,
         target_flow_c: runtime.target_flow_c,
     })
@@ -2507,7 +2493,6 @@ async fn set_mode(
     let mut runtime = state.runtime.lock().unwrap();
     runtime.mode = mode;
     runtime.away_until = away_until;
-    runtime.updated_at = Utc::now();
     runtime.last_reason = reason.to_string();
     // Clear DHW dedup state on mode change so timers re-evaluate
     if is_activating {
@@ -2667,7 +2652,6 @@ mod tests {
 
         let runtime = RuntimeState {
             mode,
-            updated_at: Utc::now(),
             ..RuntimeState::default()
         };
 
@@ -4174,7 +4158,6 @@ async fn main() -> Result<()> {
                 println!("Adaptive heating status");
                 println!("-----------------------");
                 println!("mode: {:?}", snapshot.runtime.mode);
-                println!("updated_at: {}", snapshot.runtime.updated_at);
                 println!("last_reason: {}", snapshot.runtime.last_reason);
                 if let Some(v) = snapshot.heating.current_curve {
                     println!("current_curve: {:.2}", v);
@@ -4221,10 +4204,6 @@ async fn main() -> Result<()> {
                 if let Some(v) = snapshot.dhw.battery_headroom_to_next_cosy_kwh {
                     println!("battery_headroom_to_next_cosy_kwh: {:.2}", v);
                 }
-                println!(
-                    "runtime_age_minutes: {}",
-                    snapshot.service.runtime_age_minutes
-                );
                 if snapshot.warnings.is_empty() {
                     println!("warnings: none");
                 } else {
