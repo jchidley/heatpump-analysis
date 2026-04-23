@@ -20,7 +20,22 @@ This snapshot is the shortest current-state handoff for the remaining migration 
 
 Repo-local migration blockers are now closed.
 
-The remaining work is shared Phase 5 platform shutdown in `~/github/energy-hub/lat.md/tsdb-migration.md`, plus optional local cleanup that can happen after InfluxDB v2 is retired.
+The remaining work is shared Phase 5 platform shutdown in `~/github/energy-hub/lat.md/tsdb-migration.md`, plus the explicit repo-local follow-up items below that were previously described as optional, accepted, or post-cutover cleanup.
+
+## Explicitly deferred repo-local follow-up items
+
+These are not migration blockers for the shared cutover, but they are real unfinished work and should be fixed deliberately rather than left implied.
+
+1. **Controller `/status.updated_at` bug**
+   - Current behaviour: `/status` still reports the old mode-change timestamp (`2026-04-07T12:30:00Z`) even while fresh PostgreSQL rows and JSONL actions continue to land.
+   - Why it was tolerated: it does not affect control decisions, PostgreSQL writes, or Phase 5 readiness.
+   - Fix target: make the status payload expose a genuinely current controller-state timestamp, or split the field into explicit `mode_updated_at` and `last_cycle_at` semantics.
+2. **Remaining Flux/CSV compatibility tail**
+   - Remaining code/docs still called out in this file: `src/thermal/influx.rs`, the remaining Influx block in `model/thermal-config.toml` / `src/thermal/config.rs`, and any history-reader parity helpers that survive only for migration symmetry.
+   - Fix target: remove Flux-era parser/query paths command-by-command once their PostgreSQL equivalents are authoritative, then retire the linked migration-tail tests.
+3. **Migration-tail tests to retire**
+   - Remaining sections already listed below under “Migration-tail test coverage to retire after cutover” are not optional documentation clutter; they are an explicit cleanup queue.
+   - Fix target: remove those specs only when the matching Flux/LP compatibility code is actually deleted, so `tests.md` returns to PostgreSQL-only current-state truth.
 
 ## Completion-critical next actions
 
