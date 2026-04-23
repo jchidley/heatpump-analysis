@@ -1,6 +1,6 @@
 # Plan
 
-Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-23**. The previous review snapshot lives in [[reviews]].
+Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-23 17:30 BST**. The previous review snapshot lives in [[reviews]].
 
 The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/tsdb-migration.md`.
 
@@ -14,7 +14,7 @@ Detailed status and proof now live in [[tsdb-migration]], especially [[tsdb-migr
 
 Only actions still required to finish this repo's PostgreSQL migration belong here.
 
-1. Run the remaining representative PostgreSQL parity/integration windows for history outputs, DHW outputs, and controller evidence, then record the proof windows in [[tsdb-migration]].
+1. Re-run the representative PostgreSQL parity/integration windows for history outputs, DHW outputs, and controller evidence now that the shared Zigbee schema blocker is fixed, then record the proof windows in [[tsdb-migration]].
 2. Rehearse and record the rollback path for the now-live PostgreSQL-only `adaptive-heating-mvp` service on `pi5data` until restore confidence is explicit rather than inferred.
 3. Update the shared migration tracker to mark this repo complete once the parity and rollback evidence is recorded.
 
