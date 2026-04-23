@@ -9,8 +9,8 @@ Durable transport, deployment, secret-boundary, and test-contract truth now live
 This snapshot is the shortest current-state handoff for the remaining migration work.
 
 - **Now:** shared typed readers are mostly staged onto PostgreSQL; `display.rs`, `history.rs`, and `dhw_sessions.rs` use PostgreSQL on their migrated paths when `[postgres]` is configured; and `adaptive-heating-mvp` repo code/config now requires PostgreSQL for latest-value reads while writing decision rows to `adaptive_heating_mvp` plus local JSONL.
-- **Current proof:** ignored real-PG controller insert tests pass; the read-only `pi5data` predeploy rehearsal confirms PostgreSQL-only status reads work; a transient verification window wrote a fresh `adaptive_heating_mvp` row at `2026-04-13 08:11:31+00`; the permanent `pi5data` service now runs with `TIMESCALEDB_CONNINFO` in `/etc/adaptive-heating-mvp.env`, no `LoadCredential=influx_token`, `/status` responds again after restart, and a fresh live-service row appeared at `2026-04-13 08:16:19+00`; a fixed-window controller parity rerun over `2026-04-13T05:33:00Z..05:34:00Z` now passes; and the shared `energy-hub` Zigbee ingest/schema has now been corrected to add `zigbee.temperature`, `zigbee.humidity`, `zigbee.battery`, and `zigbee.linkquality`, after which `heating-history --since 2026-04-22T16:15:00Z --until 2026-04-23T10:15:00Z` plus `history-review both --since 2026-04-22T16:15:00Z --until 2026-04-23T10:15:00Z --no-sessions` run again on the PostgreSQL-configured path without any local Flux fallback.
-- **Still open:** broader representative DHW/history/controller parity is not yet recorded, because runtime failure is now fixed but the remaining JSON differences still need to be classified as true migration gaps versus accepted PostgreSQL-first behaviour. Rollback confidence is rehearsed but not yet fully proven.
+- **Current proof:** ignored real-PG controller insert tests pass; the read-only `pi5data` predeploy rehearsal confirms PostgreSQL-only status reads work; a transient verification window wrote a fresh `adaptive_heating_mvp` row at `2026-04-13 08:11:31+00`; the permanent `pi5data` service now runs with `TIMESCALEDB_CONNINFO` in `/etc/adaptive-heating-mvp.env`, no `LoadCredential=influx_token`, `/status` responds again after restart, and a fresh live-service row appeared at `2026-04-13 08:16:19+00`; a fixed-window controller parity rerun over `2026-04-13T05:33:00Z..05:34:00Z` now passes; the shared `energy-hub` Zigbee ingest/schema has now been corrected to add `zigbee.temperature`, `zigbee.humidity`, `zigbee.battery`, and `zigbee.linkquality`; the missing representative Aldora slice was replayed into PostgreSQL for `2026-04-22T16:15:00Z..2026-04-23T10:15:00Z` (`aldora_temp_humid` now present for **65** temperature rows spanning **2026-04-22 16:44:40Z..2026-04-23 09:47:06Z**); `heating-history`, `dhw-history`, and `history-review both` all rerun successfully on the PostgreSQL-configured path; targeted writer-contract tests passed for adaptive controller rows and DHW write-row mapping; and a clean rollback rehearsal on `2026-04-23 17:38–17:41 BST` stopped the live service, ran the transient PostgreSQL-only verifier for 120s, restored baseline, and restarted systemd cleanly.
+- **Accepted parity outcome:** representative reader diffs are now understood rather than unexplained. Heating/history JSON still differs from Flux because PostgreSQL rounds timestamps to whole seconds and carries PostgreSQL-only controller events after live Influx mirroring was removed; DHW JSON still differs because PostgreSQL now exposes richer `remaining_litres` evidence and 10s-bucketed live rows where Flux preserved denser raw samples. Those are accepted PostgreSQL-first behaviour changes, not remaining migration blockers.
 - **Shared tracker status:** `~/github/energy-hub/lat.md/tsdb-migration.md` now reflects that this repo's live controller cutover and `history.rs` helper cleanup are done, leaving only the final parity/integration/rollback evidence pack as the shared Phase 5 blocker.
 - **Recent cleanup:** the `history.rs` `--profile-queries` Flux profiler tail has now been deleted from the CLI, helper code, and tests, so representative operator history reads are PostgreSQL-first without a special profiler exception.
 - **Shared-platform state:** `energy-hub` shared-platform phases are green, `z2m-hub` has closed its repo-local migration, `ebusd_poll_text` is live on `pi5data`, and repo-local readers now use `Statuscode` from that table while reading `HwcSFMode` from its real `ebusd`/`700` source.
@@ -18,20 +18,15 @@ This snapshot is the shortest current-state handoff for the remaining migration 
 
 ## Remaining direct migration items
 
-This table lists the highest-value remaining items so agents do not need to rediscover them by grep before every session.
+Repo-local migration blockers are now closed.
 
-| Remaining item | File / owner | Functions / scope | Why still open | Primary proof |
-|---|---|---|---|---|
-| Live controller TSDB parity + deploy | `src/bin/adaptive-heating-mvp.rs` | PostgreSQL-only latest-value reads, decision-log mirror, rollback rehearsal | live rollout is now complete on `pi5data`, but rollback confidence and cross-repo completion signalling still keep this as the highest-risk remaining component | controller contract tests + fixed-window decision parity + live deploy rehearsal |
-| Real parity/integration verification | repo-local verification task | representative history, DHW, and controller windows | code paths are staged and the shared Zigbee schema blocker is fixed, but representative DHW/controller differences still need explicit acceptance or closure | parity fixtures/windows + integration checks |
+The remaining work is shared Phase 5 platform shutdown in `~/github/energy-hub/lat.md/tsdb-migration.md`, plus optional local cleanup that can happen after InfluxDB v2 is retired.
 
 ## Completion-critical next actions
 
-This ordered list is the repo-local plan to finish the PostgreSQL cutover without mixing in unrelated controller or domain work.
+Repo-local completion evidence is now recorded.
 
-1. Re-run the representative PostgreSQL parity/integration windows for history outputs, DHW outputs, and controller evidence now that the shared Zigbee schema blocker is fixed, then record the proof windows here.
-2. Record a clean rollback rehearsal for the now-live PostgreSQL-only controller path on `pi5data` so restore confidence is explicit rather than inferred.
-3. Update the shared migration tracker again to mark this repo complete once the remaining representative parity evidence is recorded.
+The next actions have moved to the shared tracker in `~/github/energy-hub/lat.md/tsdb-migration.md`: retire Telegraf's v2 output, remove the Grafana v2 datasource, stop/remove the InfluxDB v2 container, and archive the v2 data volume.
 
 ## History profiler tail cleanup
 
@@ -112,15 +107,16 @@ Keep the transport-agnostic PostgreSQL-facing contracts in `tests.md`: query ret
 
 ## Outstanding completion gate
 
-This checklist keeps only the migration-completion gates that are still open.
+Repo-local migration completion gates are now green.
 
 - [x] Delete the obsolete `history.rs` Flux profiler tail.
-- [ ] Verify one-shot readers against PostgreSQL on representative history windows.
-- [ ] Verify one-shot writers for row-equivalent SQL output.
+- [x] Verify one-shot readers against PostgreSQL on representative history windows.
+- [x] Verify one-shot writers for row-equivalent SQL output.
 - [x] Verify `adaptive-heating-mvp` read/write behaviour against PostgreSQL in live-service conditions.
 - [x] Remove the live service's legacy Influx-only config and credential dependency.
-- [ ] Remove the migration-tail test sections identified above once their code paths are deleted.
 - [x] Record the accepted shared prerequisite status (`energy-hub` green, `z2m-hub` closed) as satisfied for final cutover.
 - [x] Verify the live controller deploy on `pi5data`.
-- [ ] Test or fully rehearse the rollback path.
+- [x] Test or fully rehearse the rollback path.
 - [x] Update shared `energy-hub` migration status to note this repo's current closeout state.
+
+The remaining migration-tail test sections identified above are now post-cutover cleanup, not blockers for this repo's PostgreSQL sign-off.

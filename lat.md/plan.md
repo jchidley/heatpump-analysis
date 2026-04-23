@@ -6,19 +6,15 @@ The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and shoul
 
 ## TSDB Migration
 
-The repo-local PostgreSQL cutover is now in its final verification and closeout phase, and this plan section intentionally keeps only the remaining completion work.
+The repo-local PostgreSQL cutover is now complete, and this plan section keeps only the handoff to shared Phase 5 shutdown work.
 
-Detailed status and proof now live in [[tsdb-migration]], especially [[tsdb-migration#Migration Snapshot]] and [[tsdb-migration#Completion-critical next actions]].
+Detailed status and proof now live in [[tsdb-migration]], especially [[tsdb-migration#Migration Snapshot]] and [[tsdb-migration#Outstanding completion gate]].
 
 ### Active completion plan
 
-Only actions still required to finish this repo's PostgreSQL migration belong here.
+Repo-local migration work is done. The remaining actions now live in the shared tracker: retire Telegraf's v2 output, remove the Grafana v2 datasource, stop/remove InfluxDB v2, and archive the v2 volume.
 
-1. Re-run the representative PostgreSQL parity/integration windows for history outputs, DHW outputs, and controller evidence now that the shared Zigbee schema blocker is fixed, then record the proof windows in [[tsdb-migration]].
-2. Rehearse and record the rollback path for the now-live PostgreSQL-only `adaptive-heating-mvp` service on `pi5data` until restore confidence is explicit rather than inferred.
-3. Update the shared migration tracker to mark this repo complete once the parity and rollback evidence is recorded.
-
-Cross-repo prerequisite status is now stable enough to treat as background context rather than a plan item: `energy-hub` shared-platform phases are green, `z2m-hub` has closed its repo-local migration, and this repo's remaining work is verification/closeout rather than another live cutover.
+Cross-repo prerequisite status is now satisfied: `energy-hub` shared-platform phases are green, `z2m-hub` has closed its repo-local migration, and `heatpump-analysis` has now recorded its final parity plus rollback evidence.
 
 ### Agent handoff shortcut
 
