@@ -118,8 +118,8 @@ Operationally, the important rule is:
 
 - each emon host publishes to local Mosquitto
 - bridges send required topics to central Mosquitto on `pi5data`
-- Telegraf on `pi5data` writes to InfluxDB
-- controller and thermal tooling query InfluxDB directly
+- `energy-hub-timescaledb-ingest` on `pi5data` writes to PostgreSQL/TimescaleDB
+- controller and thermal tooling use the PostgreSQL-backed path
 
 Useful topic families to remember:
 

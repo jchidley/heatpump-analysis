@@ -56,7 +56,7 @@ All operating thresholds, feed IDs, house data, and reference data are in `confi
 | `all` | Run summary + cop-by-temp + hourly + daily + degree-days |
 | `thermal-rooms` | Room summary table (geometry, thermal mass, radiators, pipes) |
 | `thermal-connections` | Inter-room connections and doorway exchanges |
-| `thermal-analyse` | Live TSDB-backed energy balance (per-room heat flows; PostgreSQL-first, legacy Influx compatibility remains in migration tail) |
+| `thermal-analyse` | Live TSDB-backed energy balance (per-room heat flows; PostgreSQL-first) |
 | `thermal-equilibrium` | Solve for equilibrium room temperatures at given conditions |
 | `thermal-moisture` | Condensation risk + overnight humidity balance |
 | `thermal-calibrate` | Calibrate thermal model from house telemetry cooldown data via the shared TSDB seam |

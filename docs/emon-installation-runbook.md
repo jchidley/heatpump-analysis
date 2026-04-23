@@ -54,7 +54,7 @@ Required checks:
 - `emonhub` active
 - `mosquitto` active
 - Zigbee2MQTT container healthy
-- CT data and DS18B20 data visible in InfluxDB on `pi5data`
+- CT data and DS18B20 data visible in PostgreSQL/TimescaleDB on `pi5data`
 
 ### emonhp
 
@@ -241,7 +241,7 @@ EOF
 - `mosquitto` active
 - `emonhub` active
 - Zigbee2MQTT healthy
-- CT and DS18B20 data visible in InfluxDB
+- CT and DS18B20 data visible in PostgreSQL/TimescaleDB
 
 ### emonhp
 
@@ -249,7 +249,7 @@ EOF
 - SSH key auth works
 - `mosquitto` active
 - `emonhub` active
-- heat pump telemetry visible in InfluxDB
+- heat pump telemetry visible in PostgreSQL/TimescaleDB
 - emoncms.org feed updates confirmed
 
 ### emondhw
@@ -259,7 +259,7 @@ EOF
 - `/dev/ttyMULTICAL` resolves
 - `mosquitto` active
 - `emonhub` active
-- `emon/multical/*` data visible in InfluxDB
+- `emon/multical/*` data visible in PostgreSQL/TimescaleDB
 
 ### pi5data
 

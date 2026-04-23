@@ -74,7 +74,7 @@ Useful operator details retained here:
 - binary path on `pi5data`: `/home/jack/adaptive-heating-mvp/target/release/adaptive-heating-mvp`
 - state file: `/home/jack/.local/state/adaptive-heating-mvp/state.toml`
 - JSONL decision log: `/home/jack/.local/state/adaptive-heating-mvp/actions.jsonl`
-- metrics are also written to the `adaptive_heating_mvp` InfluxDB measurement
+- metrics are written to the `adaptive_heating_mvp` PostgreSQL table and to the local JSONL action log
 
 Typical rebuild on `pi5data`:
 

@@ -379,7 +379,7 @@ in the VRC 700 and VWZ AI traffic. Phase 3 quantifies this.
 
 ### Phase 4: WiFi + MQTT
 
-Publish telegrams to pi5data. Decoder service writes to InfluxDB.
+Publish telegrams to pi5data. Decoder service writes to PostgreSQL/TimescaleDB.
 Verify completeness against ebusd.
 
 ### Phase 5: Active sending
