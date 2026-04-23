@@ -546,7 +546,7 @@ This spec verifies that target-flow series extraction drops rows where target_fl
 
 This ignored integration spec verifies that `query_controller_rows` returns the same controller events from Flux and PostgreSQL over one representative live window.
 
-It preserves timestamps, labels, and numeric optionals during the staged adaptive-heating-mvp reader migration.
+It preserves timestamps, labels, and numeric optionals while the legacy adaptive-heating-mvp reader path still exists.
 
 ### numeric_points_from_series maps DateTime-f64 pairs
 
@@ -792,7 +792,7 @@ This spec verifies that the emon/EmonPi2/P3 topic is decomposed into source=Emon
 
 ## Timestamp migration contracts
 
-These tests pin timestamp handling constraints that the PostgreSQL/TimescaleDB path must preserve, including legacy-compatibility edges still present during cutover.
+These tests pin timestamp handling constraints that the PostgreSQL/TimescaleDB path must preserve while the remaining legacy Flux/Influx compatibility tail still exists.
 
 ### Microsecond truncation preserves 10s-interval data
 
@@ -912,7 +912,7 @@ This spec verifies that unsupported latest-value topic errors include the exact 
 
 ## History filter variant routing
 
-These tests document the three history.rs filter patterns and their PostgreSQL table routing implications during the PostgreSQL cutover. Remaining Flux-backed paths here are compatibility/parity tail work rather than the default operator route.
+These tests document the three history.rs filter patterns and their PostgreSQL table routing implications. Remaining Flux-backed paths here are compatibility/parity tail work rather than the default operator route.
 
 ### Topic filter routes by topic prefix and field name
 

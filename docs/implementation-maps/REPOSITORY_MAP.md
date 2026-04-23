@@ -81,7 +81,7 @@ Room-level thermal network: 13 rooms, fabric U×A, radiators, ventilation, doorw
 | `influx.rs` | 352 | Flux query builders |
 | `display.rs` | 1014 | CLI output, **equilibrium solver**, **MWT bisection**, **control table generation** |
 | `report.rs` | 44 | Table printer and RMSE |
-| `history.rs` | ~2259 | Heating/DHW history reconstruction from InfluxDB. Comfort miss detection (clipped to 07:00–23:00 waking hours), DHW overlap detection, controller event extraction |
+| `history.rs` | ~2259 | Heating/DHW history reconstruction from the shared TSDB seam, with PostgreSQL-first reads plus a remaining legacy Flux compatibility tail. Comfort miss detection (clipped to 07:00–23:00 waking hours), DHW overlap detection, controller event extraction |
 | `dhw_sessions.rs` | ~1169 | DHW draw/charge session analysis: inflection detection, draw type classification (bath/shower/tap), HWC tracking, during-charge draw detection |
 
 ## Standalone Binaries
@@ -113,8 +113,8 @@ Compares fresh thermal artifacts against baseline JSON files. 4 artifact types.
 | File | Used by | Concern |
 |------|---------|---------|
 | `config.toml` | `src/main.rs`, `src/config.rs`, most modules | Domain constants, thresholds, feed IDs, battery-coverage assumption for tariff blending |
-| `model/thermal-config.toml` | `src/thermal/config.rs` | InfluxDB, test nights, calibration bounds |
-| `model/adaptive-heating-mvp.toml` | `src/bin/adaptive-heating-mvp.rs` | eBUS host, InfluxDB, Cosy windows, baseline values, room topics, inner loop tuning |
+| `model/thermal-config.toml` | `src/thermal/config.rs` | PostgreSQL + legacy Flux/Influx tail settings, test nights, calibration bounds |
+| `model/adaptive-heating-mvp.toml` | `src/bin/adaptive-heating-mvp.rs` | eBUS host, PostgreSQL conninfo, Cosy windows, baseline values, room topics, inner loop tuning |
 | `model/control-table.json` | **No longer loaded** | Legacy MWT lookup table (replaced by live solver in Phase 1b) |
 | `artifacts/thermal/regression-thresholds.toml` | `src/bin/thermal-regression-check.rs` | Regression gates |
 | `data/canonical/thermal_geometry.json` | `src/thermal/geometry.rs` | Room geometry single source of truth |
@@ -168,7 +168,7 @@ Validated by `lat check`. Cross-linked with `[[wiki refs]]` to source code.
 | Thermal physics / energy balance | `src/thermal/physics.rs` and `src/thermal/operational.rs` |
 | Equilibrium solver / MWT bisection | `src/thermal/display.rs::solve_equilibrium_temps()`, `bisect_mwt_for_room()` |
 | Solar gain model | `src/thermal/solar.rs` |
-| InfluxDB queries (thermal) | `src/thermal/influx.rs` |
+| Legacy Flux/Influx queries (thermal compatibility tail) | `src/thermal/influx.rs` |
 | Artifact schema / output | `src/thermal/artifact.rs` |
 | Regression CI gates | `src/bin/thermal-regression-check.rs` + `artifacts/thermal/regression-thresholds.toml` |
 | **V2 control logic (outer loop)** | `src/bin/adaptive-heating-mvp.rs::run_outer_cycle()` |

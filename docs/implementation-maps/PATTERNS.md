@@ -18,7 +18,7 @@ All domain constants live in `config.toml` and are accessed via `config::config(
 
 ## Configuration: Separate TOML (adaptive heating MVP)
 
-`adaptive-heating-mvp` loads its own `Config` from `model/adaptive-heating-mvp.toml`. Fully independent of both `config.rs` and `ThermalConfig`. Includes baseline values, eBUS host, InfluxDB connection, room topics, inner loop tuning parameters, and configurable Cosy windows for DHW scheduling/logging.
+`adaptive-heating-mvp` loads its own `Config` from `model/adaptive-heating-mvp.toml`. Fully independent of both `config.rs` and `ThermalConfig`. Includes baseline values, eBUS host, PostgreSQL connection, room topics, inner loop tuning parameters, and configurable Cosy windows for DHW scheduling/logging, plus a remaining legacy Influx compatibility tail where still present in code.
 
 **Cost to break**: Config remains separate, but the binary now depends on the thermal solver via `src/lib.rs`. Changing thermal module APIs (especially `bisect_mwt_for_room` signature or `thermal_geometry.json` schema) requires updating both the analysis CLI and the adaptive controller.
 
@@ -91,9 +91,9 @@ Structured documentation in `lat.md/` validated by `lat check`. Sections cross-l
 
 **Cost to break**: All wiki links must be updated if section headings or source function names change. `lat check` catches broken links.
 
-## Logging: Dual Sink (InfluxDB + JSONL)
+## Logging: Dual Sink (PostgreSQL + JSONL)
 
-Every control decision is logged to both InfluxDB (for dashboards/analysis) and local JSONL (for agent inspection/audit/replay). Missing sensor values are omitted from InfluxDB line protocol (not written as 0).
+Every control decision is logged to PostgreSQL (for dashboards/analysis) and local JSONL (for agent inspection/audit/replay). Legacy Influx decision logging has been removed from the live stack.
 
 **Cost to break**: Low — the two sinks are independent. Either can be removed or replaced.
 
@@ -101,7 +101,7 @@ Every control decision is logged to both InfluxDB (for dashboards/analysis) and 
 
 Each `DecisionLog` captures the complete before-state (curve, room temps, HP state, compressor, power, yield, flow, return, tariff period, forecast conditions) and the after-state (what was written, target_flow, model calculations). This enables post-hoc analysis of every decision's context and effect.
 
-**Cost to break**: Adding a new logged field requires updating the struct, the InfluxDB write, and the JSONL serialisation. All in one file.
+**Cost to break**: Adding a new logged field requires updating the struct, the PostgreSQL write, and the JSONL serialisation. All in one file.
 
 ## VRC 700 Heat Curve Formula
 

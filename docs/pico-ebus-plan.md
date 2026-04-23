@@ -3,8 +3,9 @@
 ## Goal
 
 Replace ebusd and john30's closed-source ESP32 firmware with our own
-Rust/Embassy firmware on a Pi Pico W. Log all raw eBUS telegrams to
-InfluxDB via MQTT. Send commands via MQTT when needed. No ebusd dependency.
+Rust/Embassy firmware on a Pi Pico W. Log all raw eBUS telegrams to the
+shared PostgreSQL/TimescaleDB path via MQTT. Send commands via MQTT when
+needed. No ebusd dependency.
 
 ## Current related truth in `lat.md`
 
@@ -42,13 +43,13 @@ on a single-core ESP32. The Pico W solves this with dual cores and PIO.
 |---|---|
 | Auto-scan 25 master addresses | We know our 4 devices (3 Vaillant + ebusd) |
 | Config CDN (downloads CSVs by scan result) | ~30 commands hardcoded |
-| Message caching + HTTP API | InfluxDB + Grafana |
+| Message caching + HTTP API | PostgreSQL/TimescaleDB + Grafana |
 | Poll scheduling | Most values broadcast passively; rest via MQTT timer |
 | KNX bridge | Don't have KNX |
 | HA MQTT Discovery | Use Grafana, not HA for this |
 | Multi-client TCP (port 8888) | MQTT handles fan-out |
 | ACL access control | Single-purpose device |
-| Hex dump/replay | `ebus/raw` MQTT topic + InfluxDB |
+| Hex dump/replay | `ebus/raw` MQTT topic + PostgreSQL/TimescaleDB |
 
 **One thing to handle**: Some values are not broadcast passively — the VRC 700
 and HMU only exchange them when polled. Phase 3 discovers which values need
@@ -74,7 +75,7 @@ Vaillant eBUS (2-wire, 20V)
         │ WiFi / MQTT
         ▼
 ┌────────────────────┐
-│ pi5data            │  Mosquitto → decoder service → InfluxDB → Grafana
+│ pi5data            │  Mosquitto → decoder service → TimescaleDB/PostgreSQL → Grafana
 │ (10.0.1.230)       │  Sends commands to ebus/send topic
 └────────────────────┘
 ```
@@ -315,9 +316,9 @@ Core 0                          Core 1
 
 ## Decoding (on pi5data, not on Pico)
 
-Small Rust service or Telegraf exec plugin. Subscribes to `ebus/telegram`,
+Small Rust service. Subscribes to `ebus/telegram`,
 matches command bytes against a lookup table derived from ebusd-configuration
-CSVs, writes decoded values to InfluxDB.
+CSVs, writes decoded values to PostgreSQL/TimescaleDB.
 
 Example: telegram with PB=0xB5, SB=0x1A, data prefix `05 FF 32 26` →
 this is `hmu/RunDataFlowTemp`, slave response bytes decode as D2C (signed

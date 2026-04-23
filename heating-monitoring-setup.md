@@ -37,7 +37,7 @@ Operationally, the key idea is local collection on each edge host and central st
 
 | Host | Address | Primary role | SSH |
 |---|---|---|---|
-| `pi5data` | `10.0.1.230` | central hub: Mosquitto, InfluxDB, Telegraf, Grafana, ebusd, controller services | `ssh jack@pi5data` |
+| `pi5data` | `10.0.1.230` | central hub: Mosquitto, TimescaleDB, Grafana, ebusd, controller services | `ssh jack@pi5data` |
 | `emonpi` | `10.0.1.117` | EmonPi2 CTs, DS18B20, Zigbee2MQTT | `ssh pi@emonpi` |
 | `emonhp` | `10.0.1.169` | heat pump MBUS + SDM120 + emonth2 | `ssh pi@emonhp` |
 | `emondhw` | `10.0.1.46` | Multical DHW meter + MQTT bridge | `ssh pi@emondhw` |
@@ -55,11 +55,11 @@ ak get emon-pi-credentials
 - Docker stack root: `~/monitoring/`
 - Main compose file: `~/monitoring/docker-compose.yml`
 - Mosquitto config: `~/monitoring/mosquitto/config/mosquitto.conf`
-- Telegraf config: `~/monitoring/telegraf/telegraf.conf`
-- InfluxDB token for services: `/etc/adaptive-heating-mvp.env`
+- Retired Telegraf config archive: `~/monitoring/telegraf/telegraf.conf.retired-phase5.*`
+- Controller env file: `/etc/adaptive-heating-mvp.env`
 - eBUS poll script: `/usr/local/bin/ebusd-poll.sh`
 - Services of interest:
-  - Docker: mosquitto, influxdb, telegraf, grafana, ebusd
+  - Docker: mosquitto, timescaledb, grafana, ebusd
   - systemd: `adaptive-heating-mvp`, `ebusd-poll`, `z2m-hub`
 
 Useful checks:

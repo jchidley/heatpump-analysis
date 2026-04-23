@@ -28,7 +28,7 @@ The model combines:
 - canonical room geometry from `data/canonical/thermal_geometry.json`
 - room temperatures from Zigbee + emonth2 sensors
 - outside temperature from eBUS
-- HP state and water temperatures from eBUS / InfluxDB
+- HP state and water temperatures from eBUS / shared TSDB data
 - radiator and connection context from the house survey
 
 ## What we know before fitting

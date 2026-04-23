@@ -32,16 +32,17 @@ adaptive-heating-mvp.rs (separate binary, depends on heatpump_analysis lib)
   ├── model/adaptive-heating-mvp.toml (own TOML config)
   ├── data/canonical/thermal_geometry.json (room geometry for solver)
   ├── ebusd TCP (localhost:8888)
-  ├── InfluxDB HTTP (localhost:8086)
+  ├── PostgreSQL / TimescaleDB
+  ├── legacy Flux/Influx compatibility tail (still present in some code paths)
   ├── Open-Meteo HTTP (forecast API)
   ├── Axum HTTP API (:3031)
-  └── JSONL + InfluxDB logging
+  └── JSONL + PostgreSQL logging
 ```
 
 Key constraints:
 - **analysis.rs has no dependency on db.rs or emoncms.rs** — operates purely on Polars DataFrames
 - **thermal.rs has no dependency on config.rs** — uses its own `ThermalConfig`
-- **adaptive-heating-mvp depends on the thermal solver** via `heatpump_analysis::thermal::bisect_mwt_for_room()` (since Phase 1b). Uses its own config, own InfluxDB queries, own eBUS access, own forecast client. The thermal module is compiled into the binary as a library dependency.
+- **adaptive-heating-mvp depends on the thermal solver** via `heatpump_analysis::thermal::bisect_mwt_for_room()` (since Phase 1b). Uses its own config, PostgreSQL-backed latest-value reads, its own eBUS access, its own forecast client, and still carries a legacy Influx compatibility tail in some code. The thermal module is compiled into the binary as a library dependency.
 - **gaps.rs bypasses db.rs** — writes directly to `simulated_samples` and `gap_log` tables
 
 ## Data Flow
@@ -58,19 +59,21 @@ emoncms.org API → emoncms.rs::Client → db.rs::sync_all() → SQLite (samples
 SQLite → db.rs::load_dataframe() → analysis.rs::enrich() → analysis functions → stdout
 ```
 
-### Thermal model path (InfluxDB)
+### Thermal model path (live PostgreSQL-first, with legacy compatibility tail)
 
 ```
-InfluxDB (pi5data:8086, bucket "energy")
+PostgreSQL / TimescaleDB (pi5data:5432, db "energy")
   ├── room temps (zigbee2mqtt/*_temp_humid, emon/emonth2_23/temperature)
   ├── outside temp (ebusd/poll/OutsideTemp)
   ├── HP state (ebusd/poll/BuildingCircuitFlow, StatuscodeNum)
   ├── MWT (ebusd/poll/FlowTemp, ReturnTemp)
   ├── PV power (emon/EmonPi2/P3)
   │
-  └──→ thermal/influx.rs → thermal.rs (calibrate / validate / operational)
+  └──→ PostgreSQL-first readers + legacy `thermal/influx.rs` compatibility helpers
                                  │
-                                 └──→ artifacts/thermal/*.json
+                                 └──→ thermal.rs (calibrate / validate / operational)
+                                               │
+                                               └──→ artifacts/thermal/*.json
 ```
 
 ### Adaptive heating V2 control path (live on pi5data)
@@ -87,9 +90,9 @@ eBUS (ebusd TCP :8888)
   ├── writes: Hc1HeatCurve (inner loop), Z1OpMode (startup/shutdown),
   │           HwcSFMode (DHW boost)
   │
-InfluxDB (localhost:8086)
-  ├── reads: Leather temp, Aldora temp
-  ├── writes: adaptive_heating_mvp measurement (decision logs)
+PostgreSQL / TimescaleDB
+  ├── reads: Leather temp, Aldora temp, Tesla, Multical, controller history
+  ├── writes: adaptive_heating_mvp table (decision logs)
 
   └──→ Outer loop (900s): forecast → live thermal solver (bisect_mwt_for_room) → target_flow + initial curve
          │
@@ -97,7 +100,7 @@ InfluxDB (localhost:8086)
                 │                  curve += gain × error (proportional feedback)
                 │
                 ├──→ eBUS write: Hc1HeatCurve
-                ├──→ InfluxDB (decision metrics)
+                ├──→ PostgreSQL (decision metrics)
                 └──→ JSONL file (full decision audit log)
 ```
 
@@ -118,14 +121,14 @@ The adaptive-heating-mvp assumes ebusd is running on localhost:8888 and responsi
 - writes fail → logged but control cycle continues
 - no retry/reconnect logic beyond the cycle interval
 
-### InfluxDB topic naming
+### Telemetry topic naming
 
 Room temperature topics must match between:
-- Telegraf MQTT→InfluxDB config (what gets written)
+- the shared ingest/routing layer (what gets written)
 - `model/adaptive-heating-mvp.toml` `[topics]` (what gets queried)
 - `model/thermal-config.toml` sensor_topics (what thermal model uses)
 
-The emonth2 uses `_field = "value"` while Zigbee sensors use `_field = "temperature"`. This is handled in both `src/thermal/influx.rs` and `src/bin/adaptive-heating-mvp.rs::query_latest_room_temp()`.
+The emonth2 uses `value` while Zigbee sensors use `temperature`. PostgreSQL routing preserves that distinction, and the remaining legacy `src/thermal/influx.rs` helpers mirror the same reader semantics.
 
 ### VRC 700 baseline safety net
 

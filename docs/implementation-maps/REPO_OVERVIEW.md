@@ -17,9 +17,9 @@ Three main functions:
 
 1. **Analysis CLI** — syncs monitoring data from emoncms.org to local SQLite, classifies HP operating states (heating/DHW/defrost/idle), produces COP breakdowns, energy analysis, degree-day normalisation, and gas-era comparisons using Polars.
 
-2. **Thermal model** — 13-room thermal network calibrated from Zigbee temperature sensors and InfluxDB data. Includes equilibrium solver, MWT bisection for control, and DHW session analysis. Calibration, validation, operational analysis, and reproducibility snapshots.
+2. **Thermal model** — 13-room thermal network calibrated from Zigbee temperature sensors and shared TSDB data. Includes equilibrium solver, MWT bisection for control, and DHW session analysis. The codebase still contains a remaining legacy Flux/Influx compatibility tail, but live analysis is PostgreSQL-first.
 
-3. **Adaptive heating V2** — live model-predictive controller on `pi5data`. Two-loop architecture: outer loop (15 min) uses forecast + **live thermal solver** (`bisect_mwt_for_room`) → target flow temp; inner loop (60s) nudges VRC 700 heat curve until `Hc1ActualFlowTempDesired` matches target. Reads eBUS + InfluxDB, writes to VRC 700 via eBUS, logs to InfluxDB and JSONL. Mobile controls via z2m-hub.
+3. **Adaptive heating V2** — live model-predictive controller on `pi5data`. Two-loop architecture: outer loop (15 min) uses forecast + **live thermal solver** (`bisect_mwt_for_room`) → target flow temp; inner loop (60s) nudges VRC 700 heat curve until `Hc1ActualFlowTempDesired` matches target. Reads eBUS + PostgreSQL-backed latest values, writes to VRC 700 via eBUS, logs to PostgreSQL and JSONL. Mobile controls via z2m-hub.
 
 Beyond this repo:
 - **z2m-hub** (`~/github/z2m-hub/`) — Zigbee automations, DHW tracking/boost, mobile dashboard, and heating mode control proxy
@@ -35,7 +35,7 @@ Beyond this repo:
 | Axum 0.8 + Tokio | HTTP API for adaptive heating MVP | `Cargo.toml` |
 | TOML (serde + toml) | External configuration for domain constants | `config.toml`, `model/thermal-config.toml`, `model/adaptive-heating-mvp.toml` |
 | clap 4 | CLI argument parsing (derive mode) | `Cargo.toml` |
-| reqwest 0.12 | HTTP client for emoncms REST API, InfluxDB queries, Open-Meteo forecast | `Cargo.toml` |
+| reqwest 0.12 | HTTP client for emoncms REST API, legacy Flux/Influx compatibility calls, Open-Meteo forecast | `Cargo.toml` |
 | thiserror 2 | Typed domain errors in thermal module | `src/thermal/error.rs` |
 | sha2 | Config/artifact hashing for reproducibility | `Cargo.toml` |
 | chrono | Date/time handling | `Cargo.toml` |

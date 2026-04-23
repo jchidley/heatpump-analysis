@@ -73,33 +73,15 @@ Local controller runs now need `TIMESCALEDB_CONNINFO` when using `status` or `ru
 | MQTT | Not used directly | N/A | Z2M sensors arrive through the shared data hub |
 | Open-Meteo | Controller (weather forecast) | None needed | Public API, no auth |
 
-## Legacy ad-hoc InfluxDB queries from dev machine (WSL2)
+## Legacy InfluxDB notes
 
-Use this only for migration-tail diagnostics. PostgreSQL is the default operator query path; see `lat.md/infrastructure.md#Ad-hoc PostgreSQL Queries from Dev Machine`.
+The live InfluxDB v2 service on `pi5data` has been retired.
 
-To query InfluxDB on pi5data from the dev machine without SSH:
-
-```bash
-INFLUX_TOKEN=$(ak get influxdb)
-curl -s -H "Authorization: Token $INFLUX_TOKEN" \
-  "http://pi5data:8086/api/v2/query?org=home" \
-  -H "Content-Type: application/vnd.flux" \
-  -H "Accept: application/csv" \
-  --data-raw 'from(bucket:"energy") |> range(start: -2h) |> filter(fn: (r) => r._measurement == "ebusd") |> last()'
-```
-
-Key details:
-- **API**: InfluxDB v2 Flux, `http://pi5data:8086`
-- **Org**: `home`, **Bucket**: `energy`
-- **Token source**: `ak get influxdb` (GPG-encrypted keystore)
-- **Measurements**: `ebusd`, `zigbee` (`_field="temperature"`), `adaptive_heating`, `tesla`, `dhw_inflection`, `dhw_capacity`
-
-Do NOT use the InfluxDB v1 compatibility endpoint (`/query?db=`) — it requires separate auth and the v2 Flux API works directly.
+If you are working on the remaining archive-import / compatibility tail, treat any Influx-era access as historical-only and prefer the repo-local LP export/import tooling and PostgreSQL-first verification paths. Do not assume a live `:8086` endpoint still exists.
 
 ## What NOT to do
 
 - Don't hardcode tokens in source code or config files tracked by git
 - Don't rely on `ak` for production — it's a dev-machine tool
-- Don't reuse the Telegraf token for the controller once the dedicated token has been created
 - Don't put tokens in `model/adaptive-heating-mvp.toml` — that file is in the repo
-- The `influx_token_env` config field names the environment variable, not the token itself
+- The legacy `influx_token_env` config field names the environment variable, not the token itself
