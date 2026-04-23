@@ -12,7 +12,7 @@ Four hosts: three emon monitors and one central data hub.
 | **emonhp** | 10.0.1.169 | Heat meter (MBUS) + SDM120 electricity meter → emoncms.org |
 | **emondhw** | 10.0.1.46 | Multical 403 DHW meter (T1, T2, flow, volume) |
 | **Serial hardware note** | — | `emondhw` and `emonhp` both currently use QinHeng/WCH `1a86:55d3` USB CDC ACM adapters on one measurement path. `emondhw` uses it for the Multical 403 Modbus link; `emonhp` uses the same adapter family for the SDM120 path, while its MBUS path is a separate Prolific USB serial device and its emonTxV5 path is Silicon Labs CP2102N. |
-| **pi5data** | 10.0.1.230 | Central hub: Docker/system services for Mosquitto, TimescaleDB/PostgreSQL, Telegraf, Grafana, ebusd, plus legacy InfluxDB coexistence, `z2m-hub` (:3030), and `adaptive-heating-mvp` (:3031) |
+| **pi5data** | 10.0.1.230 | Central hub: Docker/system services for Mosquitto, TimescaleDB/PostgreSQL, Grafana, ebusd, `z2m-hub` (:3030), and `adaptive-heating-mvp` (:3031) |
 
 emonpi also runs `energy-hub-tesla.service` — a Python collector that polls the local Powerwall Gateway API every 10s and publishes raw metrics plus derived signals to MQTT as `emon/tesla/+`.
 
@@ -20,16 +20,16 @@ MQTT credentials: `emonpi` / `emonpimqtt2016`. Z2M WebSocket: `ws://emonpi:8080/
 
 ## Data Path
 
-Each emon host runs local Mosquitto, bridging to central Mosquitto on pi5data. PostgreSQL/TimescaleDB is the intended store for `heatpump-analysis`; legacy InfluxDB still coexists only so the final cutover can complete without changing field devices.
+Each emon host runs local Mosquitto, bridging to central Mosquitto on pi5data. PostgreSQL/TimescaleDB is the live store for `heatpump-analysis`.
 
 ```
 emonhp  ──bridge──┐
-emondhw ──bridge──┼──> pi5data mosquitto → TSDB ingest/services → TimescaleDB/PostgreSQL (+ legacy Influx coexistence) → Grafana/controller
+emondhw ──bridge──┼──> pi5data mosquitto → TSDB ingest/services → TimescaleDB/PostgreSQL → Grafana/controller
 emonpi  ──bridge──┘           │
                               └── ebusd (Docker) → ebusd-poll.sh (systemd)
 ```
 
-Telegraf subscribes to `emon/+/+` and other MQTT topics and feeds the shared ingest path on pi5data. `heatpump-analysis` is being cut over to PostgreSQL by command/config path, while any remaining Influx-only behaviour belongs in [[tsdb-migration]]. `z2m-hub` polls eBUS via TCP and MQTT for DHW tracking.
+The shared `energy-hub-timescaledb-ingest` service subscribes to `emon/+/+` and other MQTT topics and feeds the shared ingest path on pi5data. `heatpump-analysis` is now PostgreSQL-first by command/config path, while any remaining Influx-era compatibility code belongs in [[tsdb-migration]]. `z2m-hub` polls eBUS via TCP and MQTT for DHW tracking.
 
 ### Multical outage boundary and recovery
 
@@ -101,7 +101,7 @@ Planned replacement: xyzroe eBus-TTL adapter → Pico W (Rust/Embassy firmware) 
 
 ## Room Sensors
 
-11× SONOFF SNZB-02P (v2.2.0) indoor + 1 outdoor + 1 emonth2. Data: Z2M → MQTT → pi5data Telegraf → TSDB ingest, with PostgreSQL/TimescaleDB as the migration target and legacy Influx shadowing still in the tail.
+11× SONOFF SNZB-02P (v2.2.0) indoor + 1 outdoor + 1 emonth2. Data: Z2M → MQTT → pi5data `energy-hub-timescaledb-ingest` → PostgreSQL/TimescaleDB.
 
 12/13 rooms have dedicated sensors (Office + Landing added 24 Mar 2026). Conservatory uses `ebusd/poll/Z2RoomTemp` from the VRC 700 (tracks within 1°C of the former SNZB-02P). `outside_temp_humid` (0x842712fffe772723) paired 7 Apr 2026, deployed to shaded SE wall near VRC 700 OAT sensor. Zigbee routers (ZBMINI switches) at hall, landing, kitchen, top_landing provide mesh coverage for battery sensors.
 

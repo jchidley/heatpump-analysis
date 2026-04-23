@@ -10,11 +10,11 @@ This plan section now mirrors the same three-bucket rule as [[tsdb-migration]]: 
 
 ### Current state
 
-The repo-local PostgreSQL cutover is complete. `heatpump-analysis` no longer blocks the shared cutover.
+The repo-local PostgreSQL cutover is complete, and the shared Phase 5 shutdown on `pi5data` was completed on 2026-04-23. `heatpump-analysis` no longer blocks any part of the migration.
 
 ### Actions required to complete migration
 
-Only the shared Phase 5 shutdown work remains: retire Telegraf's v2 output, remove the Grafana v2 datasource, stop/remove InfluxDB v2, and archive the v2 volume.
+No migration-critical actions remain.
 
 ### Backlog after migration
 

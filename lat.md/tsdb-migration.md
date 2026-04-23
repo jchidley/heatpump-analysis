@@ -6,9 +6,9 @@ Shared platform shutdown work lives in `~/github/energy-hub/lat.md/tsdb-migratio
 
 ## Current state
 
-The repo-local PostgreSQL cutover is complete.
+The repo-local PostgreSQL cutover is complete, and the shared platform shutdown is complete too.
 
-`heatpump-analysis` now runs PostgreSQL-first on its migrated paths, and the live `adaptive-heating-mvp` path no longer needs InfluxDB to read or write. The only migration-critical work left for this repo is the shared Phase 5 InfluxDB shutdown on `pi5data`, owned in `energy-hub`.
+`heatpump-analysis` now runs PostgreSQL-first on its migrated paths, the live `adaptive-heating-mvp` path no longer needs InfluxDB to read or write, and the shared Phase 5 InfluxDB shutdown on `pi5data` was completed on 2026-04-23 by `energy-hub`.
 
 Current accepted PostgreSQL-first behaviour that is not a migration blocker:
 - controller decision rows keep whole-second precision; the shared rationale lives in `~/github/energy-hub/lat.md/infrastructure.md#Timestamp semantics and required precision`
@@ -18,13 +18,9 @@ Current accepted PostgreSQL-first behaviour that is not a migration blocker:
 
 ## Actions required to complete migration
 
-Only the shared Phase 5 shutdown sequence is still migration-critical for this repo.
+No migration-critical actions remain for this repo.
 
-Use `~/github/energy-hub/lat.md/tsdb-migration.md` and `~/github/energy-hub/docs/timescaledb-cutover-runbook.md` for the remaining operator steps:
-1. retire Telegraf's v2 output
-2. remove the Grafana v2 datasource
-3. stop and remove InfluxDB v2
-4. archive the v2 data volume
+The shared Phase 5 shutdown is complete; use `~/github/energy-hub/lat.md/tsdb-migration.md` and `~/github/energy-hub/docs/timescaledb-cutover-runbook.md` only as the completion record.
 
 ## New work backlog once migration is done
 

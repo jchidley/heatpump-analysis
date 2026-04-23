@@ -33,8 +33,7 @@ adaptive-heating-mvp.rs (separate binary)
   ├── heatpump_analysis::thermal (library crate)
   ├── model/adaptive-heating-mvp.toml (own config)
   ├── ebusd TCP :8888 (VRC 700 reads/writes)
-  ├── TimescaleDB / PostgreSQL (target latest-value reads + decision-log mirror)
-  ├── InfluxDB HTTP :8086 (legacy coexistence / migration tail)
+  ├── TimescaleDB / PostgreSQL (latest-value reads + decision-log mirror)
   ├── Open-Meteo HTTP (hourly forecast)
   └── Axum HTTP :3031 (status/mode/kill API)
 ```
@@ -81,7 +80,7 @@ Four active config artifacts define four separate concerns.
 |------|---------|---------|
 | `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators, battery coverage assumption, Octopus data path |
 | `model/thermal-config.toml` | Thermal model + history commands | Influx connection plus PostgreSQL conninfo for the TSDB seam, test nights, calibration bounds |
-| `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, legacy Influx compatibility settings plus PostgreSQL conninfo, fallback Cosy windows, baseline, inner loop tuning |
+| `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, PostgreSQL conninfo, fallback Cosy windows, baseline, inner loop tuning |
 | `artifacts/thermal/regression-thresholds.toml` | `thermal-regression-check` | Artifact regression gates |
 
 `data/canonical/thermal_geometry.json` is the single source of truth for room geometry, consumed by both the thermal solver and the adaptive controller. `model/control-table.json` is legacy — no longer loaded (replaced by live solver in Phase 1b).
