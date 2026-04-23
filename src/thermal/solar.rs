@@ -293,6 +293,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn back_facing_vertical_surface_keeps_only_half_diffuse_gain() {
+        let dni = 800.0;
+        let dhi = 120.0;
+        let result = surface_irradiance(
+            dni,
+            dhi,
+            0.8,
+            AZ_SE,
+            TILT_VERTICAL,
+315.0 * std::f64::consts::PI / 180.0,
+        );
+        assert!(
+            (result - 60.0).abs() < 1e-10,
+            "back-facing vertical surface should keep only half diffuse gain, got {result}"
+        );
+    }
+
     // --- avg_irradiance_in_window tests ---
 
     fn make_solar_data() -> Vec<HourlySolarIrradiance> {
@@ -350,6 +368,36 @@ mod tests {
             (sw - 600.0).abs() < 1e-10,
             "should use nearest point, got {sw}"
         );
+    }
+
+    #[test]
+    fn avg_irradiance_empty_window_uses_midpoint_nearest_tuple() {
+        let sparse = vec![
+            HourlySolarIrradiance {
+                time: dt(2024, 6, 21, 9, 0),
+                sw_vertical: 100.0,
+                ne_vertical: 50.0,
+                ne_horizontal: 25.0,
+                se_vertical: 10.0,
+            },
+            HourlySolarIrradiance {
+                time: dt(2024, 6, 21, 14, 0),
+                sw_vertical: 600.0,
+                ne_vertical: 300.0,
+                ne_horizontal: 225.0,
+                se_vertical: 110.0,
+            },
+        ];
+        let (sw, ne, ne_h, se) = avg_irradiance_in_window(
+            &sparse,
+            dt(2024, 6, 21, 10, 10),
+            dt(2024, 6, 21, 13, 50),
+        );
+
+        assert!((sw - 600.0).abs() < 1e-10, "expected midpoint-nearest SW tuple, got {sw}");
+        assert!((ne - 300.0).abs() < 1e-10, "expected midpoint-nearest NE tuple, got {ne}");
+        assert!((ne_h - 225.0).abs() < 1e-10, "expected midpoint-nearest NE horizontal tuple, got {ne_h}");
+        assert!((se - 110.0).abs() < 1e-10, "expected midpoint-nearest SE tuple, got {se}");
     }
 
     #[test]

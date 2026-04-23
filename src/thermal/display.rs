@@ -1014,6 +1014,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn already_warm_target_at_exact_lower_bound_still_returns_minimum_mwt() {
+        let target = leather_temp_at(18.0, 15.0);
+
+        let mwt = bisect_mwt_for_room("leather", target, 18.0, 0.0, 0.0)
+            .expect("bisection should succeed for exact lower-bound case");
+
+        assert_eq!(
+            mwt,
+            Some(15.0),
+            "target exactly met at minimum MWT should still short-circuit to the lower bound"
+        );
+    }
+
     // @lat: [[tests#Thermal solver#Unknown rooms return no MWT]]
     #[test]
     fn unknown_room_returns_none() {

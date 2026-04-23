@@ -223,56 +223,8 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
         });
     }
 
-    let mut all_residuals = Vec::new();
-    for w in &window_results {
-        all_residuals.extend(w.residuals.iter().map(|r| r.residual));
-    }
-    let aggregate_metrics = compute_metrics_from_values(&all_residuals);
-
-    let agg_measured_w: f64 = window_results
-        .iter()
-        .map(|w| w.whole_house.measured_w)
-        .sum();
-    let agg_predicted_w: f64 = window_results
-        .iter()
-        .map(|w| w.whole_house.predicted_w)
-        .sum();
-    let agg_error_w = agg_predicted_w - agg_measured_w;
-    let agg_pred_over_meas = if agg_measured_w.abs() > 1e-9 {
-        agg_predicted_w / agg_measured_w
-    } else {
-        f64::NAN
-    };
-
-    let mut agg_room_errors: HashMap<String, (f64, f64)> = HashMap::new();
-    for w in &window_results {
-        for r in &w.residuals {
-            let meas_w = r.measured * r.thermal_mass_kj_per_k / 3.6;
-            let pred_w = r.predicted * r.thermal_mass_kj_per_k / 3.6;
-            let entry = agg_room_errors.entry(r.room.clone()).or_insert((0.0, 0.0));
-            entry.0 += meas_w;
-            entry.1 += pred_w;
-        }
-    }
-    let mut agg_contributors: Vec<RoomHeatError> = agg_room_errors
-        .into_iter()
-        .map(|(room, (m, p))| RoomHeatError {
-            room,
-            measured_w: m,
-            predicted_w: p,
-            error_w: p - m,
-        })
-        .collect();
-    agg_contributors.sort_by(|a, b| b.error_w.abs().total_cmp(&a.error_w.abs()));
-    let agg_top: Vec<RoomHeatError> = agg_contributors.into_iter().take(5).collect();
-
-    let aggregate_whole_house = WholeHouseMetrics {
-        measured_w: agg_measured_w,
-        predicted_w: agg_predicted_w,
-        error_w: agg_error_w,
-        pred_over_meas: agg_pred_over_meas,
-        top_contributors: agg_top.clone(),
-    };
+    let aggregate_metrics = aggregate_metrics_from_windows(&window_results);
+    let aggregate_whole_house = aggregate_whole_house_from_windows(&window_results, 5);
 
     let aggregate_pass = aggregate_metrics.rmse <= cfg.validation.thresholds.rmse_max
         && aggregate_metrics.bias.abs() <= cfg.validation.thresholds.bias_abs_max
@@ -289,10 +241,13 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
     );
     println!(
         "  whole-house: meas={:.0}W, pred={:.0}W, err={:+.0}W, pred/meas={:.2}",
-        agg_measured_w, agg_predicted_w, agg_error_w, agg_pred_over_meas
+        aggregate_whole_house.measured_w,
+        aggregate_whole_house.predicted_w,
+        aggregate_whole_house.error_w,
+        aggregate_whole_house.pred_over_meas
     );
     println!("  top aggregate error contributors:");
-    for c in &agg_top {
+    for c in &aggregate_whole_house.top_contributors {
         println!(
             "    {:<14} meas={:>6.0}W  pred={:>6.0}W  err={:>+6.0}W",
             c.room, c.measured_w, c.predicted_w, c.error_w
@@ -403,6 +358,61 @@ pub(crate) fn whole_house_metrics(residuals: &[RoomResidual], top_n: usize) -> W
 pub(crate) fn compute_metrics(residuals: &[RoomResidual]) -> Metrics {
     let values: Vec<f64> = residuals.iter().map(|r| r.residual).collect();
     compute_metrics_from_values(&values)
+}
+
+pub(crate) fn aggregate_metrics_from_windows(windows: &[WindowValidation]) -> Metrics {
+    let mut values = Vec::new();
+    for window in windows {
+        values.extend(window.residuals.iter().map(|r| r.residual));
+    }
+    compute_metrics_from_values(&values)
+}
+
+pub(crate) fn aggregate_whole_house_from_windows(
+    windows: &[WindowValidation],
+    top_n: usize,
+) -> WholeHouseMetrics {
+    let measured_w: f64 = windows.iter().map(|w| w.whole_house.measured_w).sum();
+    let predicted_w: f64 = windows.iter().map(|w| w.whole_house.predicted_w).sum();
+    let error_w = predicted_w - measured_w;
+    let pred_over_meas = if measured_w.abs() > 1e-9 {
+        predicted_w / measured_w
+    } else {
+        f64::NAN
+    };
+
+    let mut room_totals: HashMap<String, (f64, f64)> = HashMap::new();
+    for window in windows {
+        for residual in &window.residuals {
+            let measured = residual.measured * residual.thermal_mass_kj_per_k / 3.6;
+            let predicted = residual.predicted * residual.thermal_mass_kj_per_k / 3.6;
+            let totals = room_totals
+                .entry(residual.room.clone())
+                .or_insert((0.0, 0.0));
+            totals.0 += measured;
+            totals.1 += predicted;
+        }
+    }
+
+    let mut top_contributors: Vec<RoomHeatError> = room_totals
+        .into_iter()
+        .map(|(room, (measured_w, predicted_w))| RoomHeatError {
+            room,
+            measured_w,
+            predicted_w,
+            error_w: predicted_w - measured_w,
+        })
+        .collect();
+    top_contributors.sort_by(|a, b| b.error_w.abs().total_cmp(&a.error_w.abs()));
+    top_contributors.truncate(top_n);
+
+    WholeHouseMetrics {
+        measured_w,
+        predicted_w,
+        error_w,
+        pred_over_meas,
+        top_contributors,
+    }
 }
 
 pub(crate) fn compute_metrics_from_values(values: &[f64]) -> Metrics {
@@ -548,6 +558,126 @@ mod tests {
         assert_eq!(whole_house.predicted_w, 0.0);
         assert_eq!(whole_house.error_w, 0.0);
         assert!(whole_house.pred_over_meas.is_nan());
+    }
+
+    // @lat: [[tests#Thermal validation helpers#Aggregate metrics flatten residuals across windows]]
+    #[test]
+    fn aggregate_metrics_flattens_all_window_residuals() {
+        let windows = vec![
+            WindowValidation {
+                name: "w1".to_string(),
+                start: "2026-04-10T00:00:00+00:00".to_string(),
+                end: "2026-04-10T01:00:00+00:00".to_string(),
+                door_state: "normal".to_string(),
+                outside_avg_c: 5.0,
+                wind_avg_ms: 0.0,
+                wind_multiplier: 1.0,
+                metrics: compute_metrics_from_values(&[999.0]),
+                whole_house: WholeHouseMetrics {
+                    measured_w: 0.0,
+                    predicted_w: 0.0,
+                    error_w: 0.0,
+                    pred_over_meas: f64::NAN,
+                    top_contributors: vec![],
+                },
+                pass: false,
+                residuals: vec![residual("a", 1.0, 1.5, 36.0), residual("b", 2.0, 1.0, 36.0)],
+            },
+            WindowValidation {
+                name: "w2".to_string(),
+                start: "2026-04-11T00:00:00+00:00".to_string(),
+                end: "2026-04-11T01:00:00+00:00".to_string(),
+                door_state: "closed".to_string(),
+                outside_avg_c: 4.0,
+                wind_avg_ms: 1.0,
+                wind_multiplier: 1.1,
+                metrics: compute_metrics_from_values(&[999.0]),
+                whole_house: WholeHouseMetrics {
+                    measured_w: 0.0,
+                    predicted_w: 0.0,
+                    error_w: 0.0,
+                    pred_over_meas: f64::NAN,
+                    top_contributors: vec![],
+                },
+                pass: false,
+                residuals: vec![residual("c", -1.0, -0.25, 36.0)],
+            },
+        ];
+
+        let metrics = aggregate_metrics_from_windows(&windows);
+        let direct = compute_metrics_from_values(&[0.5, -1.0, 0.75]);
+
+        assert_eq!(metrics.rooms_count, 3);
+        assert!((metrics.rmse - direct.rmse).abs() < 1e-9);
+        assert!((metrics.mae - direct.mae).abs() < 1e-9);
+        assert!((metrics.bias - direct.bias).abs() < 1e-9);
+        assert!((metrics.max_abs_error - direct.max_abs_error).abs() < 1e-9);
+        assert!((metrics.within_0_5c - direct.within_0_5c).abs() < 1e-9);
+        assert!((metrics.within_1_0c - direct.within_1_0c).abs() < 1e-9);
+    }
+
+    // @lat: [[tests#Thermal validation helpers#Aggregate whole-house contributors merge repeated rooms across windows]]
+    #[test]
+    fn aggregate_whole_house_merges_repeated_rooms_across_windows() {
+        let windows = vec![
+            WindowValidation {
+                name: "w1".to_string(),
+                start: "2026-04-10T00:00:00+00:00".to_string(),
+                end: "2026-04-10T01:00:00+00:00".to_string(),
+                door_state: "normal".to_string(),
+                outside_avg_c: 5.0,
+                wind_avg_ms: 0.0,
+                wind_multiplier: 1.0,
+                metrics: compute_metrics_from_values(&[0.5]),
+                whole_house: WholeHouseMetrics {
+                    measured_w: 10.0,
+                    predicted_w: 13.0,
+                    error_w: 3.0,
+                    pred_over_meas: 1.3,
+                    top_contributors: vec![],
+                },
+                pass: true,
+                residuals: vec![
+                    residual("shared", 1.0, 2.0, 36.0),
+                    residual("other", 1.0, 1.25, 36.0),
+                ],
+            },
+            WindowValidation {
+                name: "w2".to_string(),
+                start: "2026-04-11T00:00:00+00:00".to_string(),
+                end: "2026-04-11T01:00:00+00:00".to_string(),
+                door_state: "closed".to_string(),
+                outside_avg_c: 4.0,
+                wind_avg_ms: 1.0,
+                wind_multiplier: 1.1,
+                metrics: compute_metrics_from_values(&[1.0]),
+                whole_house: WholeHouseMetrics {
+                    measured_w: 12.0,
+                    predicted_w: 18.0,
+                    error_w: 6.0,
+                    pred_over_meas: 1.5,
+                    top_contributors: vec![],
+                },
+                pass: false,
+                residuals: vec![
+                    residual("shared", 2.0, 3.0, 36.0),
+                    residual("small", 1.0, 1.1, 36.0),
+                ],
+            },
+        ];
+
+        let aggregate = aggregate_whole_house_from_windows(&windows, 2);
+
+        assert!((aggregate.measured_w - 22.0).abs() < 1e-9);
+        assert!((aggregate.predicted_w - 31.0).abs() < 1e-9);
+        assert!((aggregate.error_w - 9.0).abs() < 1e-9);
+        assert!((aggregate.pred_over_meas - (31.0 / 22.0)).abs() < 1e-9);
+        assert_eq!(aggregate.top_contributors.len(), 2);
+        assert_eq!(aggregate.top_contributors[0].room, "shared");
+        assert!((aggregate.top_contributors[0].measured_w - 30.0).abs() < 1e-9);
+        assert!((aggregate.top_contributors[0].predicted_w - 50.0).abs() < 1e-9);
+        assert!((aggregate.top_contributors[0].error_w - 20.0).abs() < 1e-9);
+        assert_eq!(aggregate.top_contributors[1].room, "other");
     }
 
     proptest! {

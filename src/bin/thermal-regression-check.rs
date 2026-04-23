@@ -621,23 +621,27 @@ mod tests {
         path
     }
 
-    fn baseline_json(command: &str, config_sha: &str) -> String {
+    fn calibrate_json(command: &str, config_sha: &str, final_score: f64, doorway_cd: f64) -> String {
         format!(
             r#"{{
   "command": "{command}",
   "config_sha256": "{config_sha}",
   "calibration": {{
-    "final_score": 1.0,
+    "final_score": {final_score},
     "rmse_night1": 0.5,
     "rmse_night2": 0.6,
     "leather_ach": 0.3,
     "landing_ach": 1.3,
     "conservatory_ach": 0.2,
     "office_ach": 0.4,
-    "doorway_cd": 0.2
+    "doorway_cd": {doorway_cd}
   }}
 }}"#
         )
+    }
+
+    fn baseline_json(command: &str, config_sha: &str) -> String {
+        calibrate_json(command, config_sha, 1.0, 0.2)
     }
 
     fn default_thresholds_toml() -> &'static str {
@@ -648,6 +652,8 @@ mod tests {
         config_sha: &str,
         records_count: usize,
         true_cooling_n: usize,
+        med_ratio: &str,
+        doorway_cd: f64,
     ) -> String {
         let records = (0..records_count)
             .map(|i| format!("{{\"idx\":{i}}}"))
@@ -660,7 +666,7 @@ mod tests {
   "summary_true_cooling": {{
     "rmse": 0.4,
     "mae": 0.3,
-    "med_ratio": null,
+    "med_ratio": {med_ratio},
     "n": {true_cooling_n}
   }},
   "records": [{records}],
@@ -669,7 +675,60 @@ mod tests {
     "landing_ach": 1.3,
     "conservatory_ach": 0.2,
     "office_ach": 0.4,
+    "doorway_cd": {doorway_cd}
+  }}
+}}"#
+        )
+    }
+
+    fn validation_json(config_sha: &str, aggregate_pass: bool, within_1c: f64) -> String {
+        format!(
+            r#"{{
+  "command": "thermal-validate",
+  "config_sha256": "{config_sha}",
+  "calibration": {{
+    "final_score": 1.0,
+    "rmse_night1": 0.5,
+    "rmse_night2": 0.6,
+    "leather_ach": 0.3,
+    "landing_ach": 1.3,
+    "conservatory_ach": 0.2,
+    "office_ach": 0.4,
     "doorway_cd": 0.2
+  }},
+  "validation": {{
+    "aggregate_metrics": {{
+      "rmse": 0.4,
+      "bias": 0.1,
+      "within_1_0c": {within_1c}
+    }},
+    "aggregate_pass": {aggregate_pass}
+  }}
+}}"#
+        )
+    }
+
+    fn operational_json(config_sha: &str, records_count: usize, doorway_cd: f64) -> String {
+        let records = (0..records_count)
+            .map(|i| format!("{{\"idx\":{i}}}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            r#"{{
+  "command": "thermal-operational",
+  "config_sha256": "{config_sha}",
+  "summary_all": {{
+    "rmse": 0.4,
+    "mae": 0.3,
+    "bias": 0.1
+  }},
+  "records": [{records}],
+  "calibrated_params": {{
+    "leather_ach": 0.3,
+    "landing_ach": 1.3,
+    "conservatory_ach": 0.2,
+    "office_ach": 0.4,
+    "doorway_cd": {doorway_cd}
   }}
 }}"#
         )
@@ -724,12 +783,12 @@ mod tests {
         let baseline = write_temp_file(
             "fit-regression-baseline",
             "json",
-            &fit_diagnostics_json("abc", 3, 2),
+            &fit_diagnostics_json("abc", 3, 2, "null", 0.2),
         );
         let candidate = write_temp_file(
             "fit-regression-candidate",
             "json",
-            &fit_diagnostics_json("abc", 3, 2),
+            &fit_diagnostics_json("abc", 3, 2, "null", 0.2),
         );
 
         run(Cli {
@@ -747,12 +806,12 @@ mod tests {
         let baseline = write_temp_file(
             "fit-zero-baseline",
             "json",
-            &fit_diagnostics_json("abc", 0, 0),
+            &fit_diagnostics_json("abc", 0, 0, "null", 0.2),
         );
         let candidate = write_temp_file(
             "fit-zero-candidate",
             "json",
-            &fit_diagnostics_json("abc", 5, 4),
+            &fit_diagnostics_json("abc", 5, 4, "null", 0.2),
         );
 
         run(Cli {
@@ -761,5 +820,248 @@ mod tests {
             thresholds,
         })
         .expect("zero-sized baselines should skip drop-fraction gates");
+    }
+
+    // @lat: [[tests#Thermal regression gates#Fit diagnostics artifacts fail on count or parameter drift]]
+    #[test]
+    fn fit_diagnostics_gates_fail_on_true_cooling_drop_and_param_drift() {
+        let thresholds = write_temp_file(
+            "fit-drift-thresholds",
+            "toml",
+            default_thresholds_toml(),
+        );
+        let baseline = write_temp_file(
+            "fit-drift-baseline",
+            "json",
+            &fit_diagnostics_json("abc", 10, 10, "1.0", 0.2),
+        );
+        let low_true_cooling = write_temp_file(
+            "fit-drift-low-n",
+            "json",
+            &fit_diagnostics_json("abc", 10, 8, "1.0", 0.2),
+        );
+        let drifted_param = write_temp_file(
+            "fit-drift-param",
+            "json",
+            &fit_diagnostics_json("abc", 10, 10, "1.0", 0.6),
+        );
+
+        let err = run(Cli {
+            baseline: baseline.clone(),
+            candidate: low_true_cooling,
+            thresholds: thresholds.clone(),
+        })
+        .expect_err(
+            "true-cooling count drops beyond the default 15% limit should fail fit diagnostics",
+        );
+        assert!(err.contains("regression gate FAILED"));
+
+        let err = run(Cli {
+            baseline,
+            candidate: drifted_param,
+            thresholds,
+        })
+        .expect_err(
+            "parameter drift beyond the default absolute delta should fail fit diagnostics",
+        );
+        assert!(err.contains("regression gate FAILED"));
+    }
+
+    // @lat: [[tests#Thermal regression gates#Fit diagnostics med_ratio delta fails when present]]
+    #[test]
+    fn fit_diagnostics_med_ratio_delta_fails_when_values_are_present() {
+        let thresholds = write_temp_file(
+            "fit-med-thresholds",
+            "toml",
+            default_thresholds_toml(),
+        );
+        let baseline = write_temp_file(
+            "fit-med-baseline",
+            "json",
+            &fit_diagnostics_json("abc", 10, 10, "1.0", 0.2),
+        );
+        let drifted_med_ratio = write_temp_file(
+            "fit-med-drifted",
+            "json",
+            &fit_diagnostics_json("abc", 10, 10, "1.5", 0.2),
+        );
+
+        let err = run(Cli {
+            baseline,
+            candidate: drifted_med_ratio,
+            thresholds,
+        })
+        .expect_err("med_ratio drift beyond the default 0.30 limit should fail fit diagnostics");
+        assert!(err.contains("regression gate FAILED"));
+    }
+
+    // @lat: [[tests#Thermal regression gates#Fit diagnostics records drop fails when baseline is nonzero]]
+    #[test]
+    fn fit_diagnostics_records_drop_fails_when_baseline_is_nonzero() {
+        let thresholds = write_temp_file(
+            "fit-records-thresholds",
+            "toml",
+            default_thresholds_toml(),
+        );
+        let baseline = write_temp_file(
+            "fit-records-baseline",
+            "json",
+            &fit_diagnostics_json("abc", 10, 10, "1.0", 0.2),
+        );
+        let low_records = write_temp_file(
+            "fit-records-low",
+            "json",
+            &fit_diagnostics_json("abc", 8, 10, "1.0", 0.2),
+        );
+
+        let err = run(Cli {
+            baseline,
+            candidate: low_records,
+            thresholds,
+        })
+        .expect_err("record drops beyond the default 15% limit should fail fit diagnostics");
+        assert!(err.contains("regression gate FAILED"));
+    }
+
+    // @lat: [[tests#Thermal regression gates#Validation gate requires aggregate pass when enabled]]
+    #[test]
+    fn validation_gate_requires_candidate_aggregate_pass_by_default() {
+        let thresholds = write_temp_file(
+            "validation-thresholds",
+            "toml",
+            default_thresholds_toml(),
+        );
+        let baseline = write_temp_file(
+            "validation-baseline",
+            "json",
+            &validation_json("abc", true, 0.95),
+        );
+        let candidate = write_temp_file(
+            "validation-candidate",
+            "json",
+            &validation_json("abc", false, 0.95),
+        );
+
+        let err = run(Cli {
+            baseline,
+            candidate,
+            thresholds,
+        })
+        .expect_err("aggregate_pass=false should fail when require_aggregate_pass stays enabled");
+        assert!(err.contains("regression gate FAILED"));
+    }
+
+    // @lat: [[tests#Thermal regression gates#Validation gate can disable aggregate pass enforcement]]
+    #[test]
+    fn validation_gate_allows_aggregate_pass_false_when_threshold_disables_it() {
+        let thresholds = write_temp_file(
+            "validation-thresholds-no-aggregate-pass",
+            "toml",
+            &format!(
+                "{}\n[validate]\nrequire_aggregate_pass = false\n",
+                default_thresholds_toml()
+            ),
+        );
+        let baseline = write_temp_file(
+            "validation-baseline-no-aggregate-pass",
+            "json",
+            &validation_json("abc", true, 0.95),
+        );
+        let candidate = write_temp_file(
+            "validation-candidate-no-aggregate-pass",
+            "json",
+            &validation_json("abc", false, 0.95),
+        );
+
+        run(Cli {
+            baseline,
+            candidate,
+            thresholds,
+        })
+        .expect("aggregate_pass=false should be allowed when thresholds disable that gate");
+    }
+
+    // @lat: [[tests#Thermal regression gates#Calibrate artifacts fail on score or parameter drift]]
+    #[test]
+    fn calibrate_gates_fail_on_score_and_param_drift() {
+        let thresholds = write_temp_file(
+            "calibrate-thresholds",
+            "toml",
+            default_thresholds_toml(),
+        );
+        let baseline = write_temp_file(
+            "calibrate-baseline",
+            "json",
+            &calibrate_json("thermal-calibrate", "abc", 1.0, 0.2),
+        );
+        let low_score = write_temp_file(
+            "calibrate-low-score",
+            "json",
+            &calibrate_json("thermal-calibrate", "abc", 0.90, 0.2),
+        );
+        let drifted_param = write_temp_file(
+            "calibrate-drifted-param",
+            "json",
+            &calibrate_json("thermal-calibrate", "abc", 1.0, 0.6),
+        );
+
+        let err = run(Cli {
+            baseline: baseline.clone(),
+            candidate: low_score,
+            thresholds: thresholds.clone(),
+        })
+        .expect_err("score drift beyond the default 0.05 limit should fail calibrate checks");
+        assert!(err.contains("regression gate FAILED"));
+
+        let err = run(Cli {
+            baseline,
+            candidate: drifted_param,
+            thresholds,
+        })
+        .expect_err(
+            "parameter drift beyond the default absolute delta should fail calibrate checks",
+        );
+        assert!(err.contains("regression gate FAILED"));
+    }
+
+    // @lat: [[tests#Thermal regression gates#Operational artifacts fail on large record drops or param drift]]
+    #[test]
+    fn operational_gates_fail_on_record_drop_and_param_drift() {
+        let thresholds = write_temp_file(
+            "operational-thresholds",
+            "toml",
+            default_thresholds_toml(),
+        );
+        let baseline = write_temp_file(
+            "operational-baseline",
+            "json",
+            &operational_json("abc", 10, 0.2),
+        );
+        let low_records = write_temp_file(
+            "operational-low-records",
+            "json",
+            &operational_json("abc", 8, 0.2),
+        );
+        let drifted_param = write_temp_file(
+            "operational-drifted-param",
+            "json",
+            &operational_json("abc", 10, 0.6),
+        );
+
+        let err = run(Cli {
+            baseline: baseline.clone(),
+            candidate: low_records,
+            thresholds: thresholds.clone(),
+        })
+        .expect_err("record drops beyond the default 15% limit should fail operational checks");
+        assert!(err.contains("regression gate FAILED"));
+
+        let err = run(Cli {
+            baseline,
+            candidate: drifted_param,
+            thresholds,
+        })
+        .expect_err("parameter drift beyond the default absolute delta should fail operational checks");
+        assert!(err.contains("regression gate FAILED"));
     }
 }

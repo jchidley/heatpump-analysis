@@ -1089,6 +1089,47 @@ mod tests {
         assert_eq!(states, vec!["heating", "dhw", "dhw", "heating", "heating"]);
     }
 
+    // @lat: [[tests#CLI state classification#DHW enter threshold is inclusive]]
+    #[test]
+    fn dhw_enter_threshold_is_inclusive() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let e = Some(thresholds.elec_running_w + 100.0);
+
+        let states = classify_states(
+            &[e; 2],
+            &[Some(2000.0); 2],
+            &[
+                Some(thresholds.dhw_enter_flow_rate - 0.1),
+                Some(thresholds.dhw_enter_flow_rate),
+            ],
+            &[1.0; 2],
+        );
+
+        assert_eq!(states, vec!["heating", "dhw"]);
+    }
+
+    // @lat: [[tests#CLI state classification#DHW exit threshold is exclusive]]
+    #[test]
+    fn dhw_exit_threshold_is_exclusive() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let e = Some(thresholds.elec_running_w + 100.0);
+
+        let states = classify_states(
+            &[e; 3],
+            &[Some(2000.0); 3],
+            &[
+                Some(thresholds.dhw_enter_flow_rate + 0.2),
+                Some(thresholds.dhw_exit_flow_rate),
+                Some(thresholds.dhw_exit_flow_rate - 0.01),
+            ],
+            &[1.0; 3],
+        );
+
+        assert_eq!(states, vec!["dhw", "dhw", "heating"]);
+    }
+
     // @lat: [[tests#CLI state classification#Defrost entry from heating preserves heating as pre-defrost]]
     #[test]
     fn defrost_from_heating_recovers_to_heating() {
@@ -1187,5 +1228,49 @@ mod tests {
         let cop: Vec<Option<f64>> = enriched.column("cop").unwrap().f64().unwrap().into_iter().collect();
         assert_eq!(cop[0], None);
         assert_eq!(cop[1], Some(running_heat / running_elec));
+    }
+
+    // @lat: [[tests#CLI state classification#Enrich keeps COP unset at the running-power threshold]]
+    #[test]
+    fn enrich_keeps_cop_unset_at_running_power_threshold() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let df = df!(
+            "elec_w" => &[thresholds.elec_running_w],
+            "heat_w" => &[2400.0],
+            "flow_rate" => &[14.0],
+            "flow_t" => &[40.0],
+            "return_t" => &[32.0],
+            "outside_t" => &[8.0],
+        )
+        .expect("test dataframe");
+
+        let enriched = enrich(&df).expect("enrich should succeed");
+        let state = enriched.column("state").unwrap().str().unwrap().get(0);
+        let cop = enriched.column("cop").unwrap().f64().unwrap().get(0);
+
+        assert_eq!(state, Some("idle"));
+        assert_eq!(cop, None);
+    }
+
+    // @lat: [[tests#CLI state classification#Enrich preserves null delta-T when temperatures are missing]]
+    #[test]
+    fn enrich_preserves_null_delta_t_when_temperatures_are_missing() {
+        ensure_config_loaded();
+        let thresholds = &config().thresholds;
+        let df = df!(
+            "elec_w" => &[thresholds.elec_running_w + 100.0, thresholds.elec_running_w + 100.0],
+            "heat_w" => &[2400.0, 2400.0],
+            "flow_rate" => &[14.0, 14.0],
+            "flow_t" => &[Some(40.0), None],
+            "return_t" => &[None, Some(32.0)],
+            "outside_t" => &[8.0, 8.0],
+        )
+        .expect("test dataframe");
+
+        let enriched = enrich(&df).expect("enrich should succeed");
+        let delta_t: Vec<Option<f64>> = enriched.column("delta_t").unwrap().f64().unwrap().into_iter().collect();
+
+        assert_eq!(delta_t, vec![None, None]);
     }
 }
