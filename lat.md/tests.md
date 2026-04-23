@@ -916,7 +916,9 @@ These tests document the three history.rs filter patterns and their PostgreSQL t
 
 ### Topic filter routes by topic prefix and field name
 
-This spec verifies that TopicSummarySpec queries route by topic prefix to the correct PG table and that the _field distinction (value for emonth, temperature for zigbee) is preserved.
+This spec verifies that TopicSummarySpec queries keep the correct table and field semantics for each topic family.
+
+It also requires a Flux fallback for Zigbee environmental topics when the shared `zigbee` table lacks the needed PostgreSQL columns, so history reads degrade gracefully instead of failing the whole query.
 
 ### Measurement filter routes by measurement name and field tag
 
@@ -964,4 +966,4 @@ This spec verifies that humidity queries skip the emon/emonth2_23/temperature to
 
 ### Humidity uses humidity field not temperature
 
-This spec verifies that humidity queries use _field="humidity" for all topics, distinct from temperature queries. In PostgreSQL, this maps to the humidity column in the zigbee table.
+This spec verifies that humidity queries use _field="humidity" for all topics, distinct from temperature queries. When PostgreSQL exposes `zigbee.humidity` it should use that column; otherwise the reader must fall back to Flux rather than erroring.
