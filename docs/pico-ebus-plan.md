@@ -382,7 +382,9 @@ in the VRC 700 and VWZ AI traffic. Phase 3 quantifies this.
 Publish telegrams to pi5data. Decoder service writes to InfluxDB.
 Verify completeness against ebusd.
 
-### Phase 5: Active sending (optional, later)
+### Phase 5: Active sending
+
+This is unfinished work, not optional polish. The current passive-only Pico plan avoids the hardest part of the protocol stack — arbitration plus active sending — and therefore still depends on the existing write-capable eBUS path for any command transmission.
 
 Enable PIO TX. Implement arbitration. Subscribe to `ebus/send`.
 Verify timing with Saleae. Test with safe read commands first.

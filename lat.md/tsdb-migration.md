@@ -24,7 +24,9 @@ The remaining work is shared Phase 5 platform shutdown in `~/github/energy-hub/l
 
 ## Explicitly deferred repo-local follow-up items
 
-These are not migration blockers for the shared cutover, but they are real unfinished work and should be fixed deliberately rather than left implied.
+These are real unfinished items that are not shared-cutover blockers, but still need deliberate fixes.
+
+They are listed here because “accepted”, “tail work”, or “post-cutover cleanup” had started to hide real technical debt.
 
 1. **Controller `/status.updated_at` bug**
    - Current behaviour: `/status` still reports the old mode-change timestamp (`2026-04-07T12:30:00Z`) even while fresh PostgreSQL rows and JSONL actions continue to land.
@@ -36,6 +38,10 @@ These are not migration blockers for the shared cutover, but they are real unfin
 3. **Migration-tail tests to retire**
    - Remaining sections already listed below under “Migration-tail test coverage to retire after cutover” are not optional documentation clutter; they are an explicit cleanup queue.
    - Fix target: remove those specs only when the matching Flux/LP compatibility code is actually deleted, so `tests.md` returns to PostgreSQL-only current-state truth.
+4. **Pico eBUS active-sending gap**
+   - Current docs in `docs/pico-ebus-plan.md` still stop at the passive-listen architecture while the arbitration / active-send phase is unfinished.
+   - Why it was tolerated: passive receive was enough for immediate protocol exploration and parity work.
+   - Fix target: implement the deferred arbitration / active-sending phase so the Pico path can replace, rather than merely observe beside, the existing write-capable eBUS stack.
 
 ## Completion-critical next actions
 
