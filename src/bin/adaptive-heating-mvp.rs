@@ -865,17 +865,19 @@ fn query_latest_topic_value(
 
 fn query_latest_topic_value_pg(conninfo: &str, topic: &str, lookback: &str) -> Result<Option<f64>> {
     let cutoff = lookback_cutoff(lookback)?;
+    let route = latest_topic_pg_route(topic)
+        .ok_or_else(|| anyhow!("unsupported PostgreSQL topic route for {topic}"))?;
     let mut pg = pg_client(conninfo)?;
 
-    match latest_topic_pg_route(topic) {
-        Some(LatestTopicPgRoute::ZigbeeTemperature { device }) => pg
+    match route {
+        LatestTopicPgRoute::ZigbeeTemperature { device } => pg
             .query_opt(
                 "SELECT temperature FROM zigbee WHERE device = $1 AND time >= $2 AND temperature IS NOT NULL ORDER BY time DESC LIMIT 1",
                 &[&device, &cutoff],
             )
             .map(|row| row.map(|r| r.get::<_, f64>(0)))
             .context("query zigbee topic latest value"),
-        Some(LatestTopicPgRoute::EmonthColumn { column }) => {
+        LatestTopicPgRoute::EmonthColumn { column } => {
             let sql = format!(
                 "SELECT {column} FROM emonth WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
                 column = quoted_identifier(column)
@@ -884,7 +886,7 @@ fn query_latest_topic_value_pg(conninfo: &str, topic: &str, lookback: &str) -> R
                 .map(|row| row.map(|r| r.get::<_, f64>(0)))
                 .context("query emonth topic latest value")
         }
-        Some(LatestTopicPgRoute::TeslaColumn { column }) => {
+        LatestTopicPgRoute::TeslaColumn { column } => {
             let sql = format!(
                 "SELECT {column} FROM tesla WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
                 column = quoted_identifier(column)
@@ -893,7 +895,7 @@ fn query_latest_topic_value_pg(conninfo: &str, topic: &str, lookback: &str) -> R
                 .map(|row| row.map(|r| r.get::<_, f64>(0)))
                 .with_context(|| format!("query tesla topic {topic} latest value"))
         }
-        Some(LatestTopicPgRoute::MulticalColumn { column }) => {
+        LatestTopicPgRoute::MulticalColumn { column } => {
             let sql = format!(
                 "SELECT {column} FROM multical WHERE time >= $1 AND {column} IS NOT NULL ORDER BY time DESC LIMIT 1",
                 column = quoted_identifier(column)
@@ -902,7 +904,6 @@ fn query_latest_topic_value_pg(conninfo: &str, topic: &str, lookback: &str) -> R
                 .map(|row| row.map(|r| r.get::<_, f64>(0)))
                 .with_context(|| format!("query multical topic {topic} latest value"))
         }
-        None => Err(anyhow!("unsupported PostgreSQL topic route for {topic}")),
     }
 }
 
@@ -2585,9 +2586,95 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use proptest::prelude::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Mutex, OnceLock};
+    use std::thread;
+
+    fn serve_json_once(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test HTTP server");
+        let addr = listener.local_addr().expect("test server addr");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept test client");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write test response");
+        });
+        format!("http://{}", addr)
+    }
+
+    fn serve_ebusd_once(reply: &'static str) -> (u16, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test eBUS server");
+        let port = listener.local_addr().expect("test eBUS server addr").port();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept test eBUS client");
+            let mut buf = [0u8; 1024];
+            let n = stream.read(&mut buf).expect("read test eBUS command");
+            stream
+                .write_all(reply.as_bytes())
+                .expect("write test eBUS reply");
+            String::from_utf8_lossy(&buf[..n]).trim().to_string()
+        });
+        (port, handle)
+    }
+
+    fn sample_forecast_hour(hour: u32, temperature_c: f64) -> ForecastHour {
+        ForecastHour {
+            time: format!("2026-04-05T{:02}:00", hour),
+            hour,
+            temperature_c,
+            humidity_pct: 80.0,
+            direct_radiation_w_m2: 0.0,
+        }
+    }
 
     fn test_config() -> Config {
         default_config()
+    }
+
+    fn temp_state_file(name: &str) -> PathBuf {
+        let unique = format!(
+            "adaptive-heating-mvp-test-{}-{}-{}.toml",
+            name,
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn test_service_state(mode: Mode) -> ServiceState {
+        let mut config = test_config();
+        config.state_file = temp_state_file(match mode {
+            Mode::Occupied => "occupied",
+            Mode::ShortAbsence => "short_absence",
+            Mode::AwayUntil => "away_until",
+            Mode::Disabled => "disabled",
+            Mode::MonitorOnly => "monitor_only",
+        });
+        config.ebusd_port = 9;
+
+        let runtime = RuntimeState {
+            mode,
+            updated_at: Utc::now(),
+            ..RuntimeState::default()
+        };
+
+        ServiceState {
+            config,
+            runtime: Arc::new(Mutex::new(runtime)),
+        }
     }
 
     // @lat: [[tests#Adaptive heating controller#Overnight target stays at the comfort floor until waking]]
@@ -2881,6 +2968,68 @@ mod tests {
         assert_eq!(target_dhw_timer_weekday(after, waking), Weekday::Tue);
     }
 
+    // @lat: [[tests#Controller tariff and timer helpers#Timer dedup skips unchanged morning rewrite state]]
+    #[test]
+    fn sync_morning_dhw_timer_skips_unchanged_state_without_rewriting() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 6, 6, 30, 0).unwrap();
+        let mut state = RuntimeState {
+            last_dhw_timer_weekday: Some("Monday".to_string()),
+            last_dhw_timer_morning_enabled: Some(true),
+            ..RuntimeState::default()
+        };
+
+        let result = sync_morning_dhw_timer(&config, &mut state, now, Some(39.0))
+            .expect("unchanged timer state should skip write before any eBUS call");
+
+        assert!(result.is_none());
+        assert_eq!(state.last_dhw_timer_weekday.as_deref(), Some("Monday"));
+        assert_eq!(state.last_dhw_timer_morning_enabled, Some(true));
+    }
+
+    // @lat: [[tests#Controller tariff and timer helpers#Timer write failures clear dedup state for retry]]
+    #[test]
+    fn sync_morning_dhw_timer_retries_after_err_result() {
+        let mut config = test_config();
+        config.ebusd_host = "127.0.0.1".to_string();
+        let now = Local.with_ymd_and_hms(2026, 4, 6, 6, 30, 0).unwrap();
+        let mut state = RuntimeState {
+            last_dhw_timer_weekday: Some("Sunday".to_string()),
+            last_dhw_timer_morning_enabled: Some(false),
+            ..RuntimeState::default()
+        };
+
+        let (fail_port, fail_handle) = serve_ebusd_once("ERR: write failed\n");
+        config.ebusd_port = fail_port;
+        let fail_log = sync_morning_dhw_timer(&config, &mut state, now, Some(39.0))
+            .expect("ERR payload should still return a log line")
+            .expect("ERR payload should still produce a write log");
+        let fail_command = fail_handle.join().expect("join failed eBUS server");
+
+        assert_eq!(
+            fail_command,
+            "write -c 700 HwcTimer_Monday 04:00;07:00;13:00;16:00;22:00;-:-"
+        );
+        assert!(fail_log.contains("ERR: write failed"));
+        assert_eq!(state.last_dhw_timer_weekday, None);
+        assert_eq!(state.last_dhw_timer_morning_enabled, None);
+
+        let (retry_port, retry_handle) = serve_ebusd_once("done\n");
+        config.ebusd_port = retry_port;
+        let retry_log = sync_morning_dhw_timer(&config, &mut state, now, Some(39.0))
+            .expect("cleared dedup state should allow retry")
+            .expect("retry should perform a fresh write");
+        let retry_command = retry_handle.join().expect("join retry eBUS server");
+
+        assert_eq!(
+            retry_command,
+            "write -c 700 HwcTimer_Monday 04:00;07:00;13:00;16:00;22:00;-:-"
+        );
+        assert!(retry_log.contains("-> done"));
+        assert_eq!(state.last_dhw_timer_weekday.as_deref(), Some("Monday"));
+        assert_eq!(state.last_dhw_timer_morning_enabled, Some(true));
+    }
+
     // @lat: [[tests#Controller tariff and timer helpers#T1 prediction wraps across midnight]]
     #[test]
     fn predict_t1_wraps_across_midnight() {
@@ -3103,6 +3252,58 @@ mod tests {
         assert!(plan.launch_now);
         assert_eq!(plan.battery_adequate_to_next_cosy, Some(true));
         assert_eq!(plan.slot_key, "2026-04-05:overnight_battery");
+        assert!(plan.reason.contains("launch now"));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Cold nights override overnight battery gating for DHW]]
+    #[test]
+    fn dhw_scheduler_launches_overnight_on_cold_night_even_without_battery_headroom() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 5, 1, 0, 0).unwrap();
+        let battery = assess_battery_headroom(Some(1.0), Some("normal"));
+        let plan = plan_dhw_schedule(
+            &config,
+            now,
+            Some(1.5),
+            Some(40.6),
+            Some(41.0),
+            Some(20.0),
+            Some(221.0),
+            Some("normal"),
+            battery.as_ref(),
+        )
+        .expect("cold overnight slots should launch even when the battery gate is false");
+
+        assert!(plan.launch_now);
+        assert_eq!(plan.battery_adequate_to_next_cosy, Some(false));
+        assert_eq!(plan.slot_key, "2026-04-05:overnight_battery");
+        assert!(plan.reason.contains("outside=1.5°C"));
+        assert!(plan.reason.contains("launch now"));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Large overnight T1 deficits override battery gating for DHW]]
+    #[test]
+    fn dhw_scheduler_launches_overnight_when_predicted_t1_deficit_is_large() {
+        let config = test_config();
+        let now = Local.with_ymd_and_hms(2026, 4, 5, 1, 0, 0).unwrap();
+        let battery = assess_battery_headroom(Some(1.0), Some("normal"));
+        let plan = plan_dhw_schedule(
+            &config,
+            now,
+            Some(6.0),
+            Some(39.8),
+            Some(41.0),
+            Some(20.0),
+            Some(221.0),
+            Some("normal"),
+            battery.as_ref(),
+        )
+        .expect("large predicted T1 deficits should launch even when the battery gate is false");
+
+        assert!(plan.launch_now);
+        assert_eq!(plan.battery_adequate_to_next_cosy, Some(false));
+        assert_eq!(plan.slot_key, "2026-04-05:overnight_battery");
+        assert!(plan.reason.contains("predicted_T1@07:00=38.4°C"));
         assert!(plan.reason.contains("launch now"));
     }
 
@@ -3375,6 +3576,47 @@ mod tests {
         assert_eq!(enabled.len(), 1);
     }
 
+    // @lat: [[tests#Adaptive heating controller#Forecast cache fetches requested hour from API response]]
+    #[test]
+    fn forecast_cache_fetches_requested_hour_from_api_response() {
+        let mut config = test_config();
+        config.model.forecast_cache_secs = 3600;
+        config.model.forecast_url = serve_json_once(
+            r#"{"hourly":{"time":["2026-04-05T04:00","2026-04-05T05:00"],"temperature_2m":[6.5,7.0],"relative_humidity_2m":[81.0,79.0],"direct_radiation":[0.0,120.0]}}"#,
+        );
+        let client = Client::builder().build().expect("forecast client");
+        let cache = Arc::new(Mutex::new(None));
+
+        let forecast = get_forecast_for_hour(&client, &config, &cache, 5)
+            .expect("matching forecast hour should be returned from fetched cache");
+
+        assert_eq!(forecast.hour, 5);
+        assert_eq!(forecast.temperature_c, 7.0);
+        assert_eq!(forecast.humidity_pct, 79.0);
+        assert_eq!(forecast.direct_radiation_w_m2, 120.0);
+        assert_eq!(cache.lock().unwrap().as_ref().unwrap().hours.len(), 2);
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Forecast refresh failure keeps stale cache]]
+    #[test]
+    fn forecast_refresh_failure_keeps_stale_cache() {
+        let mut config = test_config();
+        config.model.forecast_cache_secs = 0;
+        config.model.forecast_url = "http://127.0.0.1:1/unreachable".to_string();
+        let client = Client::builder().build().expect("forecast client");
+        let cache = Arc::new(Mutex::new(Some(ForecastCache {
+            hours: vec![sample_forecast_hour(4, 6.5)],
+            fetched_at: Instant::now() - Duration::from_secs(120),
+        })));
+
+        let forecast = get_forecast_for_hour(&client, &config, &cache, 4)
+            .expect("stale cached hour should survive refresh failure");
+
+        assert_eq!(forecast.hour, 4);
+        assert_eq!(forecast.temperature_c, 6.5);
+        assert_eq!(cache.lock().unwrap().as_ref().unwrap().hours.len(), 1);
+    }
+
     // @lat: [[tests#Adaptive heating controller#Forecast branch uses forecast temperature and solar]]
     #[test]
     fn forecast_branch_uses_forecast_temp_and_solar() {
@@ -3469,6 +3711,62 @@ mod tests {
         assert!(config.model.default_delta_t_c > 0.0);
     }
 
+    // @lat: [[tests#Adaptive heating controller#Activating from monitor-only clears DHW timer dedup state]]
+    #[test]
+    fn activating_from_monitor_only_clears_dhw_timer_dedup_state() {
+        let state = test_service_state(Mode::MonitorOnly);
+        {
+            let mut runtime = state.runtime.lock().unwrap();
+            runtime.last_dhw_timer_weekday = Some("Monday".to_string());
+            runtime.last_dhw_timer_morning_enabled = Some(true);
+        }
+
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(set_mode(&state, Mode::Occupied, None, "resume from monitor-only"))
+            .expect("set active mode");
+
+        let runtime = state.runtime.lock().unwrap();
+        assert_eq!(runtime.mode, Mode::Occupied);
+        assert_eq!(runtime.last_reason, "resume from monitor-only");
+        assert_eq!(
+            runtime.last_dhw_timer_weekday, None,
+            "activating from monitor-only must clear remembered timer weekday"
+        );
+        assert_eq!(
+            runtime.last_dhw_timer_morning_enabled, None,
+            "activating from monitor-only must clear remembered morning-enabled flag"
+        );
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Active-to-active mode changes keep DHW timer dedup state]]
+    #[test]
+    fn active_to_active_mode_change_keeps_dhw_timer_dedup_state() {
+        let state = test_service_state(Mode::Occupied);
+        {
+            let mut runtime = state.runtime.lock().unwrap();
+            runtime.last_dhw_timer_weekday = Some("Tuesday".to_string());
+            runtime.last_dhw_timer_morning_enabled = Some(false);
+        }
+
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(set_mode(&state, Mode::ShortAbsence, None, "occupied to short absence"))
+            .expect("set active mode");
+
+        let runtime = state.runtime.lock().unwrap();
+        assert_eq!(runtime.mode, Mode::ShortAbsence);
+        assert_eq!(runtime.last_reason, "occupied to short absence");
+        assert_eq!(
+            runtime.last_dhw_timer_weekday.as_deref(),
+            Some("Tuesday"),
+            "active-to-active changes must preserve timer dedup weekday"
+        );
+        assert_eq!(
+            runtime.last_dhw_timer_morning_enabled,
+            Some(false),
+            "active-to-active changes must preserve timer dedup flag"
+        );
+    }
+
     // ── Write-contract tests (migration regression) ────────────────────────
 
     // @lat: [[tests#Adaptive heating write contracts#Decision PostgreSQL row maps tags and boolean fields correctly]]
@@ -3483,6 +3781,27 @@ mod tests {
         assert_eq!(row.battery_adequate_to_next_cosy, Some(1.0));
         assert_eq!(row.battery_headroom_to_next_cosy_kwh, Some(1.25));
         assert_eq!(row.aldora_temp_c, None);
+    }
+
+    #[test]
+    fn decision_postgres_row_preserves_false_and_none_boolean_states() {
+        let mut false_entry = sample_decision_log();
+        false_entry.battery_adequate_to_next_cosy = Some(false);
+        let false_row = decision_write_row(&false_entry);
+        assert_eq!(
+            false_row.battery_adequate_to_next_cosy,
+            Some(0.0),
+            "false battery adequacy must map to FLOAT8 0.0"
+        );
+
+        let mut none_entry = sample_decision_log();
+        none_entry.battery_adequate_to_next_cosy = None;
+        let none_row = decision_write_row(&none_entry);
+        assert_eq!(
+            none_row.battery_adequate_to_next_cosy,
+            None,
+            "missing battery adequacy must stay NULL rather than being coerced"
+        );
     }
 
     // @lat: [[tests#Adaptive heating write contracts#Decision PostgreSQL row keeps line-protocol second precision]]
@@ -3691,6 +4010,123 @@ mod tests {
                 column: "P3"
             }
         );
+    }
+
+    #[test]
+    fn measurement_routing_keeps_non_dhw_emon_fields_off_multical() {
+        assert_eq!(
+            latest_measurement_pg_route("emon", "temperature"),
+            LatestMeasurementPgRoute::DirectTableColumn {
+                table: "emon",
+                column: "temperature"
+            },
+            "non-DHW emon fields must not be rerouted into multical"
+        );
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Controller resolves PostgreSQL conninfo from configured env name]]
+    #[test]
+    fn resolve_postgres_conninfo_uses_configured_env_name() {
+        let _guard = env_lock().lock().unwrap();
+        let mut config = test_config();
+        config.postgres.conninfo_env = "TEST_ADAPTIVE_HEATING_CONNINFO".to_string();
+        unsafe {
+            std::env::remove_var("TIMESCALEDB_CONNINFO");
+            std::env::set_var("TEST_ADAPTIVE_HEATING_CONNINFO", "host=test dbname=energy");
+        }
+
+        let conninfo = resolve_postgres_conninfo(&config).expect("configured env should resolve");
+        assert_eq!(conninfo, "host=test dbname=energy");
+
+        unsafe {
+            std::env::remove_var("TEST_ADAPTIVE_HEATING_CONNINFO");
+        }
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Missing controller PostgreSQL conninfo names the expected env]]
+    #[test]
+    fn resolve_postgres_conninfo_error_names_missing_env() {
+        let _guard = env_lock().lock().unwrap();
+        let mut config = test_config();
+        config.postgres.conninfo_env = "TEST_MISSING_ADAPTIVE_HEATING_CONNINFO".to_string();
+        unsafe {
+            std::env::remove_var("TEST_MISSING_ADAPTIVE_HEATING_CONNINFO");
+        }
+
+        let err = resolve_postgres_conninfo(&config).expect_err("missing env should error");
+        let message = format!("{err:#}");
+        assert!(message.contains("TEST_MISSING_ADAPTIVE_HEATING_CONNINFO"));
+        assert!(message.contains("missing postgres conninfo env"));
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Controller lookback cutoff supports minute hour and day windows]]
+    #[test]
+    fn lookback_cutoff_supports_minute_hour_and_day_units() {
+        let now = Utc::now();
+
+        let minute_age = now - lookback_cutoff("-15m").expect("minutes lookback should parse");
+        let hour_age = now - lookback_cutoff("-2h").expect("hours lookback should parse");
+        let day_age = now - lookback_cutoff("-7d").expect("days lookback should parse");
+
+        assert!((minute_age.num_seconds() - 15 * 60).abs() <= 1);
+        assert!((hour_age.num_seconds() - 2 * 60 * 60).abs() <= 1);
+        assert!((day_age.num_seconds() - 7 * 24 * 60 * 60).abs() <= 1);
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Controller lookback cutoff rejects malformed windows]]
+    #[test]
+    fn lookback_cutoff_rejects_malformed_windows() {
+        for bad in ["15m", "-15x", "-xh", "", "-"] {
+            let err = lookback_cutoff(bad).expect_err("malformed lookback should error");
+            let message = format!("{err:#}");
+            assert!(
+                message.contains(bad) || message.contains("unsupported lookback"),
+                "error should preserve bad input context: {message}"
+            );
+        }
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Controller quoted identifiers wrap simple column names]]
+    #[test]
+    fn quoted_identifier_wraps_simple_names() {
+        assert_eq!(quoted_identifier("temperature"), "\"temperature\"");
+        assert_eq!(quoted_identifier("soc_pct"), "\"soc_pct\"");
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Controller quoted identifiers escape embedded quotes]]
+    #[test]
+    fn quoted_identifier_escapes_embedded_quotes() {
+        assert_eq!(
+            quoted_identifier("bad\"name"),
+            "\"bad\"\"name\"",
+            "embedded double quotes must be doubled inside quoted SQL identifiers"
+        );
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Unsupported latest topic routes fail before PostgreSQL connect]]
+    #[test]
+    fn unsupported_latest_topic_route_fails_before_postgres_connect() {
+        let err = query_latest_topic_value_pg("host=definitely-invalid", "unsupported/topic", "-2h")
+            .expect_err("unsupported topic should fail before any PostgreSQL connect attempt");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("unsupported PostgreSQL topic route"));
+        assert!(
+            !message.contains("connect postgres"),
+            "route failure should happen before any connection attempt: {message}"
+        );
+    }
+
+    // @lat: [[tests#Adaptive heating write contracts#Unsupported latest topic route errors name the offending topic]]
+    #[test]
+    fn unsupported_latest_topic_route_error_names_topic() {
+        let topic = "unsupported/topic";
+        let err = query_latest_topic_value_pg("host=definitely-invalid", topic, "-2h")
+            .expect_err("unsupported topic should produce a route error");
+        let message = format!("{err:#}");
+
+        assert!(message.contains(topic));
+        assert!(message.contains("unsupported PostgreSQL topic route"));
     }
 
 }
