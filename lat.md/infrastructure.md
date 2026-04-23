@@ -119,7 +119,7 @@ Temperature and humidity from separate sources.
 
 Secrets follow device class and trust boundary.
 
-Pi/Linux services should hold stronger runtime secrets in systemd-managed credentials. Preferred policy is `systemd-creds encrypt` + `SetCredentialEncrypted=` where supported; current adaptive-heating-mvp deployment still uses `LoadCredential=influx_token:/etc/adaptive-heating-mvp/influx.token` from a root-only file at `/etc/adaptive-heating-mvp/influx.token` (root:root 0600) for the remaining legacy compatibility path. Final removal of that Influx credential dependency belongs in [[tsdb-migration]]. Do not store secrets in TOML, pass them on command lines, or check them into the repo.
+Pi/Linux services should hold stronger runtime secrets in systemd-managed credentials where practical, but the current `adaptive-heating-mvp` production deployment on pi5data uses a root-only environment file (`/etc/adaptive-heating-mvp.env`) for `TIMESCALEDB_CONNINFO` plus Octopus credentials. It no longer loads any Influx token or systemd Influx credential. Do not store secrets in TOML, pass them on command lines, or check them into the repo.
 
 Dev/test may use one-shot `ak`-sourced environment injection on the trusted machine only, e.g. `PGPASSWORD=$(ak get timescaledb) ...` or `export TIMESCALEDB_CONNINFO=...`. This is a local operator convenience for verification, not a production secret-distribution mechanism. Legacy ad-hoc Influx access likewise uses `ak get influxdb` only while migration-tail diagnostics still exist. See `deploy/SECRETS.md`.
 
@@ -137,7 +137,7 @@ Credentials for the `octopus-tariff` crate resolve in order: env vars → `~/.oc
 - `~/.octopus-api-key` plain-text file (API key only, chmod 600) — used on emonpi where no `.envrc` is present
 - `~/github/octopus/.envrc` sourced via bash — canonical store on dev machines, shared across `octopus`, `octopus-tariff`, and `heatpump-analysis`
 
-On pi5data the Octopus env vars are still injected by the systemd `EnvironmentFile` at `/etc/adaptive-heating-mvp.env`, but the InfluxDB token is no longer passed via environment.
+On pi5data the Octopus env vars and `TIMESCALEDB_CONNINFO` are injected by the systemd `EnvironmentFile` at `/etc/adaptive-heating-mvp.env`.
 
 ### Ad-hoc PostgreSQL Queries from Dev Machine
 

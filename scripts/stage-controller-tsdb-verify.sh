@@ -27,11 +27,11 @@ cp "\$config" "\$staged_config"
 
 cd "\$repo"
 . ~/.cargo/env
-cargo build --release
+cargo build --release --bin adaptive-heating-mvp
 
 echo "=== Staged PostgreSQL verification config ready ==="
 echo "staged_config=\$staged_config"
-echo "fresh_bin=\$repo/target/release/heatpump-analysis"
+echo "fresh_bin=\$bin"
 echo "controller_bin=\$bin"
 echo "fallback_bin=\$fallback_bin"
 REMOTE

@@ -12,7 +12,7 @@ section() {
 
 repo="$HOME/adaptive-heating-mvp"
 config="$repo/model/adaptive-heating-mvp.toml"
-bin="$repo/target/release/heatpump-analysis"
+bin="$repo/target/release/adaptive-heating-mvp"
 
 if [ ! -x "$bin" ]; then
   echo "missing controller binary: $bin" >&2

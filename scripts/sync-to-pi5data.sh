@@ -11,8 +11,11 @@ OCTOPUS_TARIFF_REMOTE="/home/jack/github/octopus-tariff"
 
 echo "=== Syncing sources to ${REMOTE}:${REMOTE_DIR} ==="
 
-# Binary source → main.rs on pi5data
-scp "${LOCAL_ROOT}/src/bin/adaptive-heating-mvp.rs" "${REMOTE}:${REMOTE_DIR}/src/main.rs"
+ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}/src/bin ${REMOTE_DIR}/src/thermal ${REMOTE_DIR}/model ${REMOTE_DIR}/data/canonical"
+
+# Controller binary source
+scp "${LOCAL_ROOT}/src/bin/adaptive-heating-mvp.rs" \
+    "${REMOTE}:${REMOTE_DIR}/src/bin/adaptive-heating-mvp.rs"
 
 # Thermal library modules
 scp ${LOCAL_ROOT}/src/thermal/*.rs "${REMOTE}:${REMOTE_DIR}/src/thermal/"
@@ -38,13 +41,15 @@ scp "${OCTOPUS_TARIFF_SRC}/src/"*.rs "${REMOTE}:${OCTOPUS_TARIFF_REMOTE}/src/"
 # Data files
 scp "${LOCAL_ROOT}/data/canonical/thermal_geometry.json" \
     "${REMOTE}:${REMOTE_DIR}/data/canonical/thermal_geometry.json"
+scp "${LOCAL_ROOT}/model/control-table.json" \
+    "${REMOTE}:${REMOTE_DIR}/model/control-table.json"
 
 # Config
 scp "${LOCAL_ROOT}/model/adaptive-heating-mvp.toml" \
     "${REMOTE}:${REMOTE_DIR}/model/adaptive-heating-mvp.toml"
 
 echo "=== Sources synced. Now build on pi5data: ==="
-echo "  ssh pi5data 'cd ${REMOTE_DIR} && . ~/.cargo/env && cargo build --release && cp target/release/heatpump-analysis target/release/adaptive-heating-mvp'"
+echo "  ssh pi5data 'cd ${REMOTE_DIR} && . ~/.cargo/env && cargo build --release --bin adaptive-heating-mvp'"
 echo ""
 echo "Then restart:"
 echo "  ssh pi5data 'sudo systemctl restart adaptive-heating-mvp'"

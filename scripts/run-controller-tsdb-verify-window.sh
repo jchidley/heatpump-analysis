@@ -23,7 +23,6 @@ window_secs="$WINDOW_SECS"
 repo="$REMOTE_DIR"
 staged_config="$REMOTE_STAGED_CONFIG"
 bin="$REMOTE_BIN"
-fresh_bin="$REMOTE_DIR/target/release/heatpump-analysis"
 log_dir="$REMOTE_LOG_DIR"
 log_file="$REMOTE_LOG"
 transient_unit="adaptive-heating-mvp-tsdb-verify.service"
@@ -70,10 +69,6 @@ echo "before_last_24h=$before_rows"
 echo "stopping systemd service"
 sudo systemctl stop adaptive-heating-mvp
 systemctl is-active adaptive-heating-mvp || true
-
-if [ -x "$fresh_bin" ]; then
-  cp "$fresh_bin" "$bin"
-fi
 
 echo "running staged controller via transient systemd unit for $window_secs seconds"
 sudo systemctl reset-failed "$transient_unit" >/dev/null 2>&1 || true

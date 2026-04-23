@@ -40,7 +40,7 @@ The same evening also exposed a deploy-path gap: `scripts/sync-to-pi5data.sh` ha
 
 That sync script was updated, the release was rebuilt on `pi5data`, and `adaptive-heating-mvp` was restarted successfully at 22:47 BST. Immediate checks showed fresh startup logs, HTTP listener recovery on port 3031, and successful startup eBUS writes.
 
-A later TSDB-verification follow-up exposed a second deploy-path mismatch on `pi5data`: the cut-down remote project still builds `target/release/heatpump-analysis` by default, while systemd and the verifier scripts execute `target/release/adaptive-heating-mvp`. The staged verifier only started exercising the new code once the fresh package-named artifact was copied onto the controller-specific path after stopping the live service.
+A later TSDB-verification follow-up exposed a second deploy-path mismatch on `pi5data`: the cut-down remote project still built `target/release/heatpump-analysis` by default, while systemd and the verifier scripts executed `target/release/adaptive-heating-mvp`. That deploy seam has since been closed by syncing the controller source onto `src/bin/adaptive-heating-mvp.rs` remotely and building `cargo build --release --bin adaptive-heating-mvp`, so the staged verifier and the live unit now execute the same freshly built artifact path.
 
 That same verification thread also showed an operator lesson: phone-app DHW boost requests were still being accepted by `z2m-hub` during the test window. In this case the overlap was deliberate and understood by the operator, but it is still useful context when interpreting mixed behaviour during future live verification windows.
 
