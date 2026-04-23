@@ -14,5 +14,5 @@ It also links to file-level source index pages when individual source files need
 - [[plan]] — Open items, next steps, and links to detailed plan docs in `docs/`
 - [[reviews]] — Archived dated plan-item reviews so `plan.md` only carries the latest status note per active item
 - [[tests]] — Targeted executable specs for controller invariants and other migration-sensitive behaviour that need explicit code coverage
-- [[tsdb-migration]] — Sole repo-local outstanding-work tracker for the final PostgreSQL/TimescaleDB cutover in this repo
+- [[tsdb-migration]] — Current migration state, remaining completion actions, and post-migration backlog for the PostgreSQL/TimescaleDB cutover in this repo
 - [[src]] — File-level source index for source files that have dedicated `lat.md` documentation

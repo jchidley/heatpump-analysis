@@ -1,24 +1,24 @@
 # Plan
 
-Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-23 17:30 BST**. The previous review snapshot lives in [[reviews]].
+Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-23 17:30 BST**.
 
 The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/tsdb-migration.md`.
 
 ## TSDB Migration
 
-The repo-local PostgreSQL cutover is now complete, and this plan section keeps only the handoff to shared Phase 5 shutdown work.
+This plan section now mirrors the same three-bucket rule as [[tsdb-migration]]: current state, actions required to complete migration, and backlog after migration.
 
-Detailed status and proof now live in [[tsdb-migration]], especially [[tsdb-migration#Migration Snapshot]] and [[tsdb-migration#Outstanding completion gate]].
+### Current state
 
-### Active completion plan
+The repo-local PostgreSQL cutover is complete. `heatpump-analysis` no longer blocks the shared cutover.
 
-Repo-local migration work is done. The remaining actions now live in the shared tracker: retire Telegraf's v2 output, remove the Grafana v2 datasource, stop/remove InfluxDB v2, and archive the v2 volume.
+### Actions required to complete migration
 
-Cross-repo prerequisite status is now satisfied: `energy-hub` shared-platform phases are green, `z2m-hub` has closed its repo-local migration, and `heatpump-analysis` has now recorded its final parity plus rollback evidence.
+Only the shared Phase 5 shutdown work remains: retire Telegraf's v2 output, remove the Grafana v2 datasource, stop/remove InfluxDB v2, and archive the v2 volume.
 
-### Agent handoff shortcut
+### Backlog after migration
 
-Use [[tsdb-migration#Migration Snapshot]] first for the shortest current-state briefing, then [[tsdb-migration#Completion-critical next actions]] for the ordered finish-the-migration plan.
+Use [[tsdb-migration#New work backlog once migration is done]] for the repo-local post-migration queue.
 
 ## Heating Controller
 

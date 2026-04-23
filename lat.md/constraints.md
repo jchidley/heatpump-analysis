@@ -37,6 +37,16 @@ All ad-hoc data analysis must push filtering, aggregation, windowing, and arithm
 - **Why**: PostgreSQL is the migration target and the durable query surface. Keeping work server-side avoids transport-specific parser contracts, reduces bandwidth, and makes the final cutover path reproducible.
 - **Migration tail rule**: if a diagnostic still needs raw Flux or profiler output, treat it as explicit migration-tail work tracked in [[tsdb-migration]] rather than the default operator path.
 
+## Timestamp Semantics and Required Precision
+
+Most telemetry and controller events in this repo only justify whole-second precision.
+
+- Multical is 2s, Tesla is ~10s, eBUS polling is 30s, the controller inner loop is 60s, and the outer decision loop is 900s.
+- Host clocks, polling jitter, MQTT/ingest delay, and write-time stamping dominate any microsecond-looking timestamp digits, so treat sub-second precision as bookkeeping unless a series proves otherwise.
+- Keep controller summary/event rows at whole-second precision unless a new consumer demonstrates a real need for finer event ordering.
+- The notable exception is cross-board electricity calibration in `~/github/energy-hub/lat.md/calibration.md#Calibration Method#Step-change calibration (energy balance)`, where sub-second lag between emon MCU sampling windows materially affects the signal-processing result.
+- The shared platform rationale now lives in `~/github/energy-hub/lat.md/infrastructure.md#Timestamp semantics and required precision`.
+
 ## Code Gotchas
 
 Non-obvious code behaviours that have caused bugs or confusion.
