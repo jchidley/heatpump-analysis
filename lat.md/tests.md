@@ -46,6 +46,14 @@ This spec verifies that a normal-mode overnight DHW event is deferred to the nex
 
 This spec verifies that a normal-mode overnight DHW event launches immediately in the overnight battery-backed slot once discretionary headroom is sufficient to cover the expected charge.
 
+### Cold nights override overnight battery gating for DHW
+
+This spec verifies that sub-2C overnight conditions force an immediate normal-mode DHW launch even when battery headroom is inadequate, so the scheduler does not gamble on a cold morning cylinder.
+
+### Large overnight T1 deficits override battery gating for DHW
+
+This spec verifies that a sufficiently depleted predicted T1 launches normal-mode overnight DHW immediately even in mild weather, preventing severe morning hot-water shortfalls from waiting for the next Cosy slot.
+
 ### Low remaining litres triggers DHW even when T1 looks safe
 
 This spec verifies that the scheduler now treats low `dhw.remaining_litres` as an independent recharge trigger, so a deceptively warm T1 cannot hide an already-depleted practical hot-water budget.
@@ -126,6 +134,14 @@ This property test verifies across random time pairs that hours_until_time is al
 
 This property test verifies across random initial temperatures and time gaps that the predicted cylinder-top temperature never exceeds the starting value, matching the constant-rate decay model.
 
+### Forecast cache fetches requested hour from API response
+
+This spec verifies that forecast refresh stores the hourly API response and returns the requested hour from the cached result.
+
+### Forecast refresh failure keeps stale cache
+
+This spec verifies that when a forecast refresh fails, the controller keeps serving any stale cached hour instead of going blind immediately.
+
 ### Forecast branch uses forecast temperature and solar
 
 This spec verifies that the forecast-driven controller branch feeds forecast outside temperature and solar inputs into the thermal solver path, so target flow is chosen from predicted rather than current conditions.
@@ -133,6 +149,14 @@ This spec verifies that the forecast-driven controller branch feeds forecast out
 ### Default configuration values are sane
 
 This spec verifies that the controller's built-in default configuration stays internally consistent and within expected operational bounds, so startup without overrides does not begin from nonsense parameters.
+
+### Activating from monitor-only clears DHW timer dedup state
+
+This spec verifies that moving from `MonitorOnly` back to an active mode clears the remembered DHW timer weekday/enable flags so the controller re-evaluates morning timer fallback rails on resume.
+
+### Active-to-active mode changes keep DHW timer dedup state
+
+This spec verifies that changing between active modes does not clear the remembered DHW timer weekday/enable flags, because only disabled or monitor-only activation should force a fresh timer rewrite pass.
 
 ## Controller tariff and timer helpers
 
@@ -162,6 +186,14 @@ This spec verifies that any end-of-day tariff/timer window is encoded as `-:-` b
 
 This spec verifies that timer rewrites target the current weekday before waking time and the next weekday afterwards, so fallback rails are written for the correct morning.
 
+### Timer dedup skips unchanged morning rewrite state
+
+This spec verifies that when the computed weekday and morning-enabled flag match the remembered timer state, the controller skips the eBUS write instead of needlessly rewriting the same fallback rails.
+
+### Timer write failures clear dedup state for retry
+
+This spec verifies that an eBUS write result containing `ERR:` clears the remembered timer weekday/enable state so the next controller tick retries the fallback-rail write.
+
 ### T1 prediction wraps across midnight
 
 This spec verifies that cylinder-top decay prediction uses elapsed hours across midnight rather than going negative or resetting at 00:00.
@@ -184,7 +216,7 @@ This spec verifies that the bisection solver returns no result when the requeste
 
 ### Already warm targets return the minimum MWT
 
-This spec verifies that if the requested room is already warm enough at the solver's minimum allowed MWT, the bisection shortcut returns that lower bound instead of searching upward.
+This spec verifies that if the requested room is already warm enough at the solver's minimum allowed MWT, including the exact-equality boundary, the bisection shortcut returns that lower bound instead of searching upward.
 
 ### Unknown rooms return no MWT
 
@@ -272,11 +304,11 @@ This spec verifies that solar altitude and azimuth change sensibly across day an
 
 ### Surface irradiance is non-negative and respects geometry
 
-This spec verifies that plane-of-array irradiance stays non-negative and responds correctly to surface tilt and azimuth, including zero output when the sun is below the horizon.
+This spec verifies that plane-of-array irradiance stays non-negative and responds correctly to surface tilt and azimuth, including zero output when the sun is below the horizon and half-diffuse-only gain for back-facing vertical surfaces.
 
 ### Window irradiance averaging handles partial and empty windows
 
-This spec verifies that irradiance window averaging uses in-window samples when available and falls back safely for partial or empty windows, keeping downstream solar gains stable.
+This spec verifies that irradiance window averaging uses in-window samples when available and falls back safely for partial or empty windows, selecting the full nearest tuple by window-midpoint distance when no sample lands inside.
 
 ## CLI state classification
 
@@ -298,6 +330,14 @@ This spec verifies that samples below the running-power threshold stay idle even
 
 This spec verifies the full heating→DHW→heating cycle: DHW is entered when flow exceeds the enter threshold, maintained through transition-band flow, and exited when flow drops below the exit threshold.
 
+### DHW enter threshold is inclusive
+
+This spec verifies that a flow rate exactly on the DHW enter threshold immediately classifies as DHW from heating, preserving the intended inclusive entry edge of the hysteresis band.
+
+### DHW exit threshold is exclusive
+
+This spec verifies that a flow rate exactly on the DHW exit threshold stays in DHW until it falls below the boundary, preserving the asymmetric hysteresis that prevents chatter.
+
 ### Defrost entry from heating preserves heating as pre-defrost
 
 This spec verifies that when defrost occurs from a heating state, recovery in the transition band returns to heating (the pre-defrost circuit) rather than guessing DHW.
@@ -313,6 +353,14 @@ This spec verifies that the defrost DT threshold is strictly less-than (exclusiv
 ### Enrich derives state delta-T and running-only COP
 
 This spec verifies that analysis row enrichment adds `state` and `delta_t`, while leaving COP unset for non-running rows so idle samples do not fabricate efficiency.
+
+### Enrich keeps COP unset at the running-power threshold
+
+This spec verifies that a sample exactly on the running-power threshold stays non-running for COP purposes, so the strict greater-than boundary cannot fabricate efficiency at the idle edge.
+
+### Enrich preserves null delta-T when temperatures are missing
+
+This spec verifies that enriched output keeps `delta_t` null when flow or return temperatures are missing, even though the classifier internally uses a zero fallback to avoid crashing on sparse rows.
 
 ## DHW session analysis
 
@@ -524,10 +572,6 @@ This spec verifies that controller-event row parsing copies every present field 
 
 This spec verifies that controller-event parsing leaves optional fields unset when the source row omits them, rather than synthesising misleading defaults.
 
-### profiled_flux wraps query with profiler import
-
-This spec verifies that the profiling helper prepends the Flux profiler import and wrapper directives around a query, so ad-hoc diagnostics can request operator timings without changing the base query.
-
 ### batch_summary_union_flux builds union with all metrics
 
 This spec verifies that batched summary-query construction unions every requested metric subquery into one Flux program, preserving per-series summary coverage while reducing query round-trips.
@@ -588,6 +632,14 @@ This spec verifies whole-house `pred_over_meas` stays undefined when measured ro
 
 This spec verifies residual aggregation keeps rooms even when thermal-mass evidence is missing, but leaves their whole-house watt contribution at zero so validation does not invent weighted loads.
 
+### Aggregate metrics flatten residuals across windows
+
+This spec verifies validation aggregates recompute metrics from every room residual across all windows, rather than averaging per-window summaries that could distort RMSE or tolerance fractions.
+
+### Aggregate whole-house contributors merge repeated rooms across windows
+
+This spec verifies aggregate whole-house reporting merges repeated room contributions across windows before sorting contributors, so recurring problem rooms are ranked by their cumulative error.
+
 ### Metrics magnitudes are symmetric under sign inversion
 
 This spec verifies that negating every residual flips bias sign but preserves RMSE, MAE, max absolute error, and tolerance-bucket fractions, because those metrics depend only on magnitudes.
@@ -607,6 +659,34 @@ This spec verifies that fit-diagnostics comparison treats null `med_ratio` value
 ### Drop gates skip zero-sized baselines
 
 This spec verifies that record-count drop gates are skipped when the baseline has zero items, avoiding meaningless percentage-drop failures during early or sparse artifact generation.
+
+### Validation gate requires aggregate pass when enabled
+
+This spec verifies that `thermal-validate` comparisons fail when the candidate artifact reports `aggregate_pass=false` and the default `require_aggregate_pass` gate is still enabled.
+
+### Validation gate can disable aggregate pass enforcement
+
+This spec verifies that `thermal-validate` can skip the aggregate-pass boolean gate when thresholds explicitly disable it, while still keeping the numeric regression checks active.
+
+### Operational artifacts fail on large record drops or param drift
+
+This spec verifies that `thermal-operational` comparisons reject candidates when record count drops beyond the configured fraction or calibrated parameters drift past their absolute-delta gate.
+
+### Calibrate artifacts fail on score or parameter drift
+
+This spec verifies that `thermal-calibrate` comparisons reject candidates when calibration score or calibrated parameters drift beyond their absolute-delta gates.
+
+### Fit diagnostics artifacts fail on count or parameter drift
+
+This spec verifies that `thermal-fit-diagnostics` comparisons reject candidates when true-cooling counts drop beyond their configured fraction or calibrated parameters drift past their absolute-delta gate.
+
+### Fit diagnostics med_ratio delta fails when present
+
+This spec verifies that when both fit-diagnostics artifacts report numeric `med_ratio` values, the comparison enforces the configured absolute-delta gate instead of silently skipping the metric.
+
+### Fit diagnostics records drop fails when baseline is nonzero
+
+This spec verifies that `thermal-fit-diagnostics` comparisons reject candidates whose overall record count drops beyond the configured fraction when the baseline artifact has a nonzero record set.
 
 ## InfluxDB wire-format parsing
 
@@ -668,11 +748,11 @@ Despite the heading's historical wording, this is now a transport-agnostic reade
 
 ### Missing required column returns MissingColumn error
 
-This spec verifies that when a required value column is absent from a row-shaped response, the consumer detects it rather than silently producing bad data.
+This spec verifies that when a required value column is absent from a row-shaped response, the consumer returns the explicit `MissingColumn` variant with the expected column/context rather than silently producing bad data.
 
 ### Unparseable float in value column returns FloatParse error
 
-This spec verifies that non-numeric values in the _value column are detected at parse time rather than propagating as NaN or zero.
+This spec verifies that non-numeric values in the _value column are detected at parse time and reported via the explicit `FloatParse` variant with the original bad value, rather than propagating as NaN or zero.
 
 ### Multi-topic query builds OR conditions with correct field names
 
@@ -768,7 +848,7 @@ These tests pin PostgreSQL-first adaptive-heating decision write semantics now t
 
 ### Decision PostgreSQL row maps tags and boolean fields correctly
 
-This spec verifies that the PostgreSQL write-row helper mirrors LP semantics by underscore-normalizing `mode`/`action`/`tariff` tags and converting `battery_adequate_to_next_cosy` into the schema's FLOAT8 1.0/0.0 representation.
+This spec verifies that the PostgreSQL write-row helper normalizes tags, maps battery adequacy to FLOAT8 1.0/0.0, and preserves NULL when the signal is absent.
 
 ### Decision PostgreSQL row keeps line-protocol second precision
 
@@ -798,9 +878,41 @@ This spec verifies that DHW T1 latest-value reads keep the emon measurement `val
 
 This spec verifies that latest-value measurement reads keep `ebusd_poll` on the field/value table while routing other measurements through direct table/column selection.
 
+### Controller resolves PostgreSQL conninfo from configured env name
+
+This spec verifies that the controller reads PostgreSQL conninfo from whatever `postgres.conninfo_env` names, so service config can move the secret without code changes.
+
+### Missing controller PostgreSQL conninfo names the expected env
+
+This spec verifies that when the configured controller PostgreSQL env var is absent, the error names that exact env var so startup failures point operators at the right secret.
+
+### Controller lookback cutoff supports minute hour and day windows
+
+This spec verifies that latest-value read lookbacks accept the controller's supported `-Nm`, `-Nh`, and `-Nd` forms and convert them into approximately the expected UTC cutoff offsets.
+
+### Controller lookback cutoff rejects malformed windows
+
+This spec verifies that malformed latest-value lookbacks fail fast and mention the original bad input, so TSDB-read regressions surface as diagnosable startup or status errors.
+
+### Controller quoted identifiers wrap simple column names
+
+This spec verifies that dynamic PostgreSQL column identifiers are wrapped in double quotes, so latest-value queries keep exact column names instead of relying on unsafe bare identifiers.
+
+### Controller quoted identifiers escape embedded quotes
+
+This spec verifies that embedded double quotes inside dynamic PostgreSQL identifiers are doubled before interpolation, preventing malformed SQL when unusual identifier text is quoted.
+
+### Unsupported latest topic routes fail before PostgreSQL connect
+
+This spec verifies that an unsupported latest-value topic is rejected before any PostgreSQL connection attempt, so route bugs surface as deterministic contract failures rather than misleading connection errors.
+
+### Unsupported latest topic route errors name the offending topic
+
+This spec verifies that unsupported latest-value topic errors include the exact offending topic string, so operators can diagnose misconfigured controller topics from the failure message alone.
+
 ## History filter variant routing
 
-These tests document the three history.rs filter patterns and their PostgreSQL table routing implications. Any remaining Flux-backed helpers are migration-tail compatibility only.
+These tests document the three history.rs filter patterns and their PostgreSQL table routing implications during the PostgreSQL cutover. Remaining Flux-backed paths here are compatibility/parity tail work rather than the default operator route.
 
 ### Topic filter routes by topic prefix and field name
 
@@ -809,6 +921,8 @@ This spec verifies that TopicSummarySpec queries route by topic prefix to the co
 ### Measurement filter routes by measurement name and field tag
 
 This spec verifies that MeasurementSummarySpec queries route by _measurement to the correct PG table. Notably, measurement="emon" with dhw_ fields routes to multical, not emon.
+
+It also preserves the `dhw_volume_V1` to `dhw_volume_v1` column-normalization edge.
 
 ### Measurement filter routing covers live ebusd fields
 

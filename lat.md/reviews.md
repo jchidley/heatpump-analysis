@@ -2,6 +2,28 @@
 
 This file keeps older review snapshots so [[plan]] can carry the live item descriptions plus the newest dated review only.
 
+## 2026-04-23 10:25 BST Multical Outage Recovery Snapshot
+
+This snapshot records the DHW data-gap investigation that followed the discovery of missing recent Multical rows in PostgreSQL.
+
+### DHW Data Path
+
+The missing week was traced to an upstream `emondhw` USB/Modbus outage rather than a PostgreSQL migration bug.
+
+Checks on `pi5data` showed `multical` rows stopped at **2026-04-16 10:08 UTC** in both TimescaleDB and the legacy Influx engine export, while other TSDB tables stayed current. SSH inspection of `emondhw` found `emonhub` repeatedly logging `Not connected to modbus device` / `Could not find Modbus device`, no `/dev/ttyMULTICAL`, and `dmesg` evidence of a USB disconnect plus repeated descriptor read `-71` errors around the outage window. A remote reboot recovered the QinHeng USB serial adapter, restored `/dev/ttyMULTICAL -> ttyACM0`, resumed `emon/multical/*` MQTT publishes, and fresh `multical` rows appeared again in PostgreSQL at **2026-04-23 09:23 UTC**.
+
+### Recovery Boundary
+
+The outage window cannot be backfilled from the local migration sources because the source data stopped before both Influx and PostgreSQL writes.
+
+The practical fix was therefore to restore live capture, not replay history. Any later analysis should treat **2026-04-16 10:08 UTC → 2026-04-23 09:22 UTC** as a real Multical source-loss window unless another external archive is found.
+
+### USB Adapter Comparison
+
+`emondhw` and `emonhp` both use QinHeng/WCH `1a86:55d3` USB CDC ACM serial adapters, so this does not look like one host using a special safer driver.
+
+Both adapters enumerate as `cdc_acm` with the same USB class (`Communications` / `CDC Data`), same product string (`USB Single Serial`), same max power claim (138 mA), and `power/control=on`. The key differences are environmental: `emondhw` has the QinHeng adapter as the only device on a Pi Zero 2 W `dwc_otg` root port and polls the Multical every 2s at 19200 baud, while `emonhp` runs on a different host/controller stack (`xhci_hcd`), places the QinHeng device behind a VIA USB hub alongside other serial devices, and polls the SDM120 every 10s at 9600 baud. `emonhp` showed no matching USB-reset or emonhub read-failure evidence during the comparison, so the current evidence points away from a simple driver-only bug and toward adapter/bus/physical-link instability on `emondhw`.
+
 ## 2026-04-12 22:55 BST DHW / Timer Boundary Snapshot
 
 This snapshot records the evening DHW investigation that immediately followed the live volume-budget rollout.

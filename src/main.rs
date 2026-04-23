@@ -247,9 +247,6 @@ enum Commands {
         /// Human-oriented summary output
         #[arg(long)]
         human: bool,
-        /// Print raw InfluxDB Flux profiler output for key queries to stderr
-        #[arg(long)]
-        profile_queries: bool,
     },
     /// Reconstruct fused high-resolution DHW-history evidence (defaults to last 7 days ending now)
     DhwHistory {
@@ -268,9 +265,6 @@ enum Commands {
         /// Human-oriented summary output
         #[arg(long)]
         human: bool,
-        /// Print raw InfluxDB Flux profiler output for key queries to stderr
-        #[arg(long)]
-        profile_queries: bool,
     },
     /// Native-cadence DHW drill-down for one bounded event/window
     DhwDrilldown {
@@ -765,16 +759,9 @@ fn main() -> Result<()> {
             ref until,
             days,
             human,
-            profile_queries,
         } => {
             let (since, until) = resolve_history_window(since.as_deref(), until.as_deref(), days)?;
-            thermal::heating_history(
-                std::path::Path::new(config),
-                &since,
-                &until,
-                human,
-                profile_queries,
-            )?;
+            thermal::heating_history(std::path::Path::new(config), &since, &until, human)?;
         }
 
         Commands::DhwHistory {
@@ -783,16 +770,9 @@ fn main() -> Result<()> {
             ref until,
             days,
             human,
-            profile_queries,
         } => {
             let (since, until) = resolve_history_window(since.as_deref(), until.as_deref(), days)?;
-            thermal::dhw_history(
-                std::path::Path::new(config),
-                &since,
-                &until,
-                human,
-                profile_queries,
-            )?;
+            thermal::dhw_history(std::path::Path::new(config), &since, &until, human)?;
         }
 
         Commands::DhwDrilldown {
@@ -901,16 +881,16 @@ fn run_history_review(
     let days = history_window_days(since, until)?;
     let config_path_str = config_path.to_string_lossy().to_string();
     let heating = match target {
-        HistoryReviewTarget::Heating | HistoryReviewTarget::Both => Some(
-            thermal::heating_history_summary(config_path, since, until, false)?,
-        ),
+        HistoryReviewTarget::Heating | HistoryReviewTarget::Both => {
+            Some(thermal::heating_history_summary(config_path, since, until)?)
+        }
         HistoryReviewTarget::Dhw => None,
     };
     let dhw =
         match target {
-            HistoryReviewTarget::Dhw | HistoryReviewTarget::Both => Some(
-                thermal::dhw_history_summary(config_path, since, until, false)?,
-            ),
+            HistoryReviewTarget::Dhw | HistoryReviewTarget::Both => {
+                Some(thermal::dhw_history_summary(config_path, since, until)?)
+            }
             HistoryReviewTarget::Heating => None,
         };
 

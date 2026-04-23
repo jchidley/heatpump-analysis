@@ -71,7 +71,7 @@ Mobile controls: phone → z2m-hub (:3030) `/api/heating/*` → HTTP proxy → a
 
 `thermal/history.rs` now uses the shared TSDB seam, with PostgreSQL as the intended path for representative history reads when `[postgres]` is configured.
 
-`history-review` ([[src/main.rs#run_history_review]]) adds heuristic verdicts and optional day-rounded `dhw_sessions` context. Any remaining profiling/raw Flux compatibility tail is explicit migration work tracked in [[tsdb-migration]].
+`history-review` ([[src/main.rs#run_history_review]]) adds heuristic verdicts and optional day-rounded `dhw_sessions` context. History evidence remains PostgreSQL-first; any remaining Flux compatibility or parity tail work stays tracked in [[tsdb-migration]] rather than the default operator path.
 
 ## Configuration
 

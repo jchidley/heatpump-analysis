@@ -139,6 +139,29 @@ fn query_pg_timeseries(
         .collect())
 }
 
+fn parse_time_value_row(
+    row: &HashMap<String, String>,
+    time_context: &'static str,
+    value_context: &'static str,
+) -> ThermalResult<(DateTime<FixedOffset>, f64)> {
+    let time_str = row.get("_time").ok_or(ThermalError::MissingColumn {
+        column: "_time",
+        context: time_context,
+    })?;
+    let t = parse_dt(time_str)?;
+
+    let value_str = row.get("_value").ok_or(ThermalError::MissingColumn {
+        column: "_value",
+        context: value_context,
+    })?;
+    let value: f64 = value_str.parse().map_err(|_| ThermalError::FloatParse {
+        context: value_context,
+        value: value_str.clone(),
+    })?;
+
+    Ok((t, value))
+}
+
 fn query_pg_room_topic(
     client: &mut PgClient,
     topic: &str,
@@ -298,21 +321,7 @@ pub fn query_outside_temp(
     let rows = query_flux_csv(influx_url, org, token, &flux)?;
     let mut out = Vec::new();
     for row in rows {
-        let time_str = row.get("_time").ok_or(ThermalError::MissingColumn {
-            column: "_time",
-            context: "outside row",
-        })?;
-        let t = parse_dt(time_str)?;
-
-        let value_str = row.get("_value").ok_or(ThermalError::MissingColumn {
-            column: "_value",
-            context: "outside row",
-        })?;
-        let value: f64 = value_str.parse().map_err(|_| ThermalError::FloatParse {
-            context: "outside _value",
-            value: value_str.clone(),
-        })?;
-        out.push((t, value));
+        out.push(parse_time_value_row(&row, "outside row", "outside _value")?);
     }
     out.sort_by_key(|(t, _)| *t);
     Ok(out)
@@ -405,21 +414,7 @@ pub fn query_pv_power(
     let rows = query_flux_csv(influx_url, org, token, &flux)?;
     let mut out = Vec::new();
     for row in rows {
-        let time_str = row.get("_time").ok_or(ThermalError::MissingColumn {
-            column: "_time",
-            context: "pv row",
-        })?;
-        let t = parse_dt(time_str)?;
-
-        let value_str = row.get("_value").ok_or(ThermalError::MissingColumn {
-            column: "_value",
-            context: "pv row",
-        })?;
-        let value: f64 = value_str.parse().map_err(|_| ThermalError::FloatParse {
-            context: "pv _value",
-            value: value_str.clone(),
-        })?;
-        out.push((t, value));
+        out.push(parse_time_value_row(&row, "pv row", "pv _value")?);
     }
     out.sort_by_key(|(t, _)| *t);
     Ok(out)
@@ -453,21 +448,7 @@ pub fn query_building_circuit_flow(
     let rows = query_flux_csv(influx_url, org, token, &flux)?;
     let mut out = Vec::new();
     for row in rows {
-        let time_str = row.get("_time").ok_or(ThermalError::MissingColumn {
-            column: "_time",
-            context: "bcf row",
-        })?;
-        let t = parse_dt(time_str)?;
-
-        let value_str = row.get("_value").ok_or(ThermalError::MissingColumn {
-            column: "_value",
-            context: "bcf row",
-        })?;
-        let value: f64 = value_str.parse().map_err(|_| ThermalError::FloatParse {
-            context: "bcf _value",
-            value: value_str.clone(),
-        })?;
-        out.push((t, value));
+        out.push(parse_time_value_row(&row, "bcf row", "bcf _value")?);
     }
     out.sort_by_key(|(t, _)| *t);
     Ok(out)
@@ -501,21 +482,7 @@ pub fn query_mwt(
     let rows = query_flux_csv(influx_url, org, token, &flux)?;
     let mut out = Vec::new();
     for row in rows {
-        let time_str = row.get("_time").ok_or(ThermalError::MissingColumn {
-            column: "_time",
-            context: "mwt row",
-        })?;
-        let t = parse_dt(time_str)?;
-
-        let value_str = row.get("_value").ok_or(ThermalError::MissingColumn {
-            column: "_value",
-            context: "mwt row",
-        })?;
-        let value: f64 = value_str.parse().map_err(|_| ThermalError::FloatParse {
-            context: "mwt _value",
-            value: value_str.clone(),
-        })?;
-        out.push((t, value));
+        out.push(parse_time_value_row(&row, "mwt row", "mwt _value")?);
     }
     out.sort_by_key(|(t, _)| *t);
     Ok(out)
@@ -669,16 +636,6 @@ pub fn query_flux_csv_pub(
     flux: &str,
 ) -> ThermalResult<Vec<HashMap<String, String>>> {
     query_flux_csv(influx_url, org, token, flux)
-}
-
-/// Public wrapper to execute Flux and return raw annotated CSV.
-pub fn query_flux_raw_pub(
-    influx_url: &str,
-    org: &str,
-    token: &str,
-    flux: &str,
-) -> ThermalResult<String> {
-    query_flux_raw(influx_url, org, token, flux)
 }
 
 fn query_flux_csv(
@@ -1002,16 +959,19 @@ mod tests {
     #[test]
     fn missing_column_errors() {
         let csv = "\
-,result,table,_time
-,_result,0,2026-01-15T10:00:00Z
+,result,table,_time,value
+,_result,0,2026-01-15T10:00:00Z,99.9
 ";
         let rows = parse_influx_annotated_csv(csv).unwrap();
-        // Simulate query_outside_temp looking for _value
-        let result = rows[0].get("_value");
-        assert!(
-            result.is_none(),
-            "Missing _value column should not be present"
-        );
+        let err = parse_time_value_row(&rows[0], "outside row", "outside _value").unwrap_err();
+
+        match err {
+            ThermalError::MissingColumn { column, context } => {
+                assert_eq!(column, "_value");
+                assert_eq!(context, "outside _value");
+            }
+            other => panic!("expected MissingColumn error, got {other:?}"),
+        }
     }
 
     // @lat: [[tests#Query return contracts#Unparseable float in value column returns FloatParse error]]
@@ -1022,9 +982,15 @@ mod tests {
 ,_result,0,2026-01-15T10:00:00Z,not_a_number
 ";
         let rows = parse_influx_annotated_csv(csv).unwrap();
-        let value_str = rows[0].get("_value").unwrap();
-        let parse_result: Result<f64, _> = value_str.parse();
-        assert!(parse_result.is_err());
+        let err = parse_time_value_row(&rows[0], "outside row", "outside _value").unwrap_err();
+
+        match err {
+            ThermalError::FloatParse { context, value } => {
+                assert_eq!(context, "outside _value");
+                assert_eq!(value, "not_a_number");
+            }
+            other => panic!("expected FloatParse error, got {other:?}"),
+        }
     }
 
     // ── topic→table routing ────────────────────────────────────────────────

@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::config::{load_thermal_config, resolve_influx_token, resolve_postgres_conninfo};
 use super::error::{ThermalError, ThermalResult};
-use super::influx::{parse_dt, query_flux_csv_pub, query_flux_raw_pub};
+use super::influx::{parse_dt, query_flux_csv_pub};
 
 const DHW_FLOW_THRESHOLD_LH: f64 = 900.0;
 const DHW_MIN_DURATION_SECONDS: i64 = 300;
@@ -23,7 +23,6 @@ struct HistoryCtx {
     bucket: String,
     token: String,
     pg_conninfo: Option<String>,
-    profile_queries: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -208,10 +207,8 @@ pub fn heating_history_summary(
     config_path: &Path,
     since: &str,
     until: &str,
-    profile_queries: bool,
 ) -> ThermalResult<HeatingHistorySummary> {
-    let (ctx, since_dt, until_dt) =
-        load_ctx_and_window(config_path, since, until, profile_queries)?;
+    let (ctx, since_dt, until_dt) = load_ctx_and_window(config_path, since, until)?;
 
     let topic_summaries = query_topic_numeric_summaries_compact(
         &ctx,
@@ -419,9 +416,8 @@ pub fn heating_history(
     since: &str,
     until: &str,
     human: bool,
-    profile_queries: bool,
 ) -> ThermalResult<()> {
-    let summary = heating_history_summary(config_path, since, until, profile_queries)?;
+    let summary = heating_history_summary(config_path, since, until)?;
     if human {
         print_heating_history_human(&summary);
     } else {
@@ -437,10 +433,8 @@ pub fn dhw_history_summary(
     config_path: &Path,
     since: &str,
     until: &str,
-    profile_queries: bool,
 ) -> ThermalResult<DhwHistorySummary> {
-    let (ctx, since_dt, until_dt) =
-        load_ctx_and_window(config_path, since, until, profile_queries)?;
+    let (ctx, since_dt, until_dt) = load_ctx_and_window(config_path, since, until)?;
 
     let measurement_summaries = query_measurement_numeric_summaries_compact(
         &ctx,
@@ -597,9 +591,8 @@ pub fn dhw_history(
     since: &str,
     until: &str,
     human: bool,
-    profile_queries: bool,
 ) -> ThermalResult<()> {
-    let summary = dhw_history_summary(config_path, since, until, profile_queries)?;
+    let summary = dhw_history_summary(config_path, since, until)?;
     if human {
         print_dhw_history_human(&summary);
     } else {
@@ -617,7 +610,7 @@ pub fn dhw_drilldown(
     until: &str,
     human: bool,
 ) -> ThermalResult<()> {
-    let (ctx, since_dt, until_dt) = load_ctx_and_window(config_path, since, until, false)?;
+    let (ctx, since_dt, until_dt) = load_ctx_and_window(config_path, since, until)?;
 
     let t1_native = query_measurement_numeric_series(
         &ctx, &since_dt, &until_dt, "emon", "dhw_t1", "2s", "last",
@@ -1129,7 +1122,6 @@ fn query_topic_numeric_summaries_compact(
             })
             .collect::<Vec<_>>(),
     );
-    maybe_print_profile(&ctx, "topic_numeric_summaries", &flux)?;
     summaries_from_batch_rows(query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?)
 }
 
@@ -1201,7 +1193,6 @@ fn query_measurement_numeric_summaries_compact(
             })
             .collect::<Vec<_>>(),
     );
-    maybe_print_profile(&ctx, "measurement_numeric_summaries", &flux)?;
     summaries_from_batch_rows(query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?)
 }
 
@@ -1254,7 +1245,6 @@ fn query_plain_measurement_numeric_summaries_compact(
             })
             .collect::<Vec<_>>(),
     );
-    maybe_print_profile(&ctx, "plain_measurement_numeric_summaries", &flux)?;
     summaries_from_batch_rows(query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?)
 }
 
@@ -1323,21 +1313,6 @@ fn query_measurement_numeric_last_value_compact(
         field,
     );
     Ok(query_numeric_point_compact(ctx, &flux)?.map(|p| p.value))
-}
-
-fn profiled_flux(flux: &str) -> String {
-    format!(
-        "import \"profiler\"\noption profiler.enabledProfilers = [\"query\", \"operator\"]\n\n{flux}"
-    )
-}
-
-fn maybe_print_profile(ctx: &HistoryCtx, label: &str, flux: &str) -> ThermalResult<()> {
-    if !ctx.profile_queries {
-        return Ok(());
-    }
-    let raw = query_flux_raw_pub(&ctx.url, &ctx.org, &ctx.token, &profiled_flux(flux))?;
-    eprintln!("\n=== InfluxDB Flux profile: {label} ===\n{raw}");
-    Ok(())
 }
 
 fn query_measurement_string_last_compact(
@@ -1528,7 +1503,6 @@ fn query_state_change_periods_compact(
     baseline_active: bool,
     min_duration_seconds: Option<i64>,
 ) -> ThermalResult<Vec<Period>> {
-    maybe_print_profile(ctx, "state_change_periods", flux)?;
     let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, flux)?;
     let mut periods = Vec::new();
     let mut current_start: Option<DateTime<FixedOffset>> =
@@ -1908,7 +1882,6 @@ fn query_dhw_charge_summaries_batched_compact(
             })
             .collect::<Vec<_>>(),
     );
-    maybe_print_profile(ctx, "dhw_charge_period_summaries", &period_summary_flux)?;
     let period_summaries = summaries_from_batch_rows(query_flux_csv_pub(
         &ctx.url,
         &ctx.org,
@@ -1958,7 +1931,6 @@ fn query_dhw_charge_summaries_batched_compact(
             })
             .collect::<Vec<_>>(),
     );
-    maybe_print_profile(ctx, "dhw_charge_boundaries_numeric", &numeric_boundary_flux)?;
     let numeric_boundaries = numeric_values_from_batch_rows(query_flux_csv_pub(
         &ctx.url,
         &ctx.org,
@@ -1988,7 +1960,6 @@ fn query_dhw_charge_summaries_batched_compact(
             })
             .collect::<Vec<_>>(),
     );
-    maybe_print_profile(ctx, "dhw_charge_boundaries_string", &string_boundary_flux)?;
     let string_boundaries = string_values_from_batch_rows(query_flux_csv_pub(
         &ctx.url,
         &ctx.org,
@@ -2089,7 +2060,6 @@ fn query_dhw_max_divergence_compact(
         start = since.to_rfc3339(),
         stop = until.to_rfc3339(),
     );
-    maybe_print_profile(ctx, "dhw_max_divergence", &flux)?;
     Ok(query_numeric_point_compact(ctx, &flux)?.map(|p| p.value))
 }
 
@@ -2097,7 +2067,6 @@ fn load_ctx_and_window(
     config_path: &Path,
     since: &str,
     until: &str,
-    profile_queries: bool,
 ) -> ThermalResult<(HistoryCtx, DateTime<FixedOffset>, DateTime<FixedOffset>)> {
     let (_, cfg) = load_thermal_config(config_path)?;
     let token = resolve_influx_token(&cfg)?;
@@ -2111,7 +2080,6 @@ fn load_ctx_and_window(
             bucket: cfg.influx.bucket,
             token,
             pg_conninfo,
-            profile_queries,
         },
         since_dt,
         until_dt,
@@ -2557,7 +2525,6 @@ fn query_controller_rows(
         since.to_rfc3339(),
         until.to_rfc3339(),
     );
-    maybe_print_profile(ctx, "controller_rows", &flux)?;
     let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
     let mut out = Vec::new();
     for row in rows {
@@ -3577,16 +3544,6 @@ mod tests {
         assert_eq!(event.flow_desired_c, None);
     }
 
-    // @lat: [[tests#History evidence helpers#profiled_flux wraps query with profiler import]]
-    #[test]
-    fn profiled_flux_wraps_with_profiler() {
-        let flux = "from(bucket: \"test\") |> range(start: -1h)";
-        let result = profiled_flux(flux);
-        assert!(result.starts_with("import \"profiler\""));
-        assert!(result.contains("enabledProfilers"));
-        assert!(result.ends_with(flux));
-    }
-
     // @lat: [[tests#History evidence helpers#batch_summary_union_flux builds union with all metrics]]
     #[test]
     fn batch_summary_union_flux_builds_union() {
@@ -3704,7 +3661,6 @@ mod tests {
             bucket: cfg.influx.bucket.clone(),
             token: token.clone(),
             pg_conninfo: None,
-            profile_queries: false,
         };
         let pg_ctx = HistoryCtx {
             url: cfg.influx.url,
@@ -3712,7 +3668,6 @@ mod tests {
             bucket: cfg.influx.bucket,
             token,
             pg_conninfo: Some(conninfo),
-            profile_queries: false,
         };
         Some((flux_ctx, pg_ctx, since, until))
     }
@@ -3790,6 +3745,10 @@ mod tests {
         assert_eq!(
             measurement_table_and_column("emon", "dhw_t1"),
             Some(("multical".to_string(), "dhw_t1".to_string(), None))
+        );
+        assert_eq!(
+            measurement_table_and_column("emon", "dhw_volume_V1"),
+            Some(("multical".to_string(), "dhw_volume_v1".to_string(), None))
         );
     }
 

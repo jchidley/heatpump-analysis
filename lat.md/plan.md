@@ -1,12 +1,12 @@
 # Plan
 
-Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-13 07:20 BST**. The previous review snapshot lives in [[reviews]].
+Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-23**. The previous review snapshot lives in [[reviews]].
 
 The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/tsdb-migration.md`.
 
 ## TSDB Migration
 
-The repo-local PostgreSQL cutover is now in its final verification and deployment phase, and this plan section intentionally keeps only the remaining completion work.
+The repo-local PostgreSQL cutover is now in its final verification and closeout phase, and this plan section intentionally keeps only the remaining completion work.
 
 Detailed status and proof now live in [[tsdb-migration]], especially [[tsdb-migration#Migration Snapshot]] and [[tsdb-migration#Completion-critical next actions]].
 
@@ -14,12 +14,11 @@ Detailed status and proof now live in [[tsdb-migration]], especially [[tsdb-migr
 
 Only actions still required to finish this repo's PostgreSQL migration belong here.
 
-1. Decide the end-state for the last generic Flux helpers in `src/thermal/history.rs`: either keep profiling/raw compatibility explicitly Flux-only, or replace it with a small PostgreSQL row-adapter path and test that contract.
-2. Run the remaining representative PostgreSQL parity/integration windows for history outputs, DHW outputs, and controller evidence, then record the proof windows in [[tsdb-migration]].
-3. Rehearse the live `adaptive-heating-mvp` cutover and rollback path on `pi5data` with the staged PostgreSQL config until restore confidence is explicit rather than inferred.
-4. Perform the live controller cutover on `pi5data`, removing the legacy Influx-only config/credential dependency, monitor journal/API/TimescaleDB evidence immediately after restart, and then update the shared migration tracker to mark this repo complete.
+1. Run the remaining representative PostgreSQL parity/integration windows for history outputs, DHW outputs, and controller evidence, then record the proof windows in [[tsdb-migration]].
+2. Rehearse and record the rollback path for the now-live PostgreSQL-only `adaptive-heating-mvp` service on `pi5data` until restore confidence is explicit rather than inferred.
+3. Update the shared migration tracker to mark this repo complete once the parity and rollback evidence is recorded.
 
-Cross-repo prerequisite status is now stable enough to treat as background context rather than a plan item: `energy-hub` shared-platform phases are green and `z2m-hub` has closed its repo-local migration, so this repo is the remaining consumer cutover.
+Cross-repo prerequisite status is now stable enough to treat as background context rather than a plan item: `energy-hub` shared-platform phases are green, `z2m-hub` has closed its repo-local migration, and this repo's remaining work is verification/closeout rather than another live cutover.
 
 ### Agent handoff shortcut
 
@@ -140,6 +139,12 @@ Detailed plan: [`docs/dhw-plan.md`](../docs/dhw-plan.md)
 ### Progressing: Volume-Aware DHW Demand Prediction
 
 This remains the main actionable DHW software item, but the controller no longer relies on T1 alone.
+
+### Open: Multical stale-data alerting
+
+The `emondhw` source outage showed that DHW history can go blind for days without any local TSDB replay path to repair it.
+
+The 2026-04-16 → 2026-04-23 gap was caused by the Multical USB/Modbus device disappearing on `emondhw`, so both PostgreSQL and legacy Influx stopped advancing together. The immediate recovery was a reboot, but the durable gap is irrecoverable from local migration sources. Follow-up work: add an operational stale-data alert for `multical` freshness and define whether the first response should be notification-only or an automated `emondhw` restart/reboot path.
 
 On 47% of nights there's an overnight shower (avg 62L, max 120L). The 27 Mar night showed the risk: a 120L shower at 23:23 dropped T1 from 43.5→~37°C, below the 40°C comfort floor, and the old model would have predicted 41.8°C. The controller now adds a first practical draw-aware budget: it reads `dhw.remaining_litres` plus the latest `dhw_capacity.recommended_full_litres`, caps optimistic remaining-volume estimates by that practical full-capacity value, and compares the resulting remaining litres with slot demand budgets aligned to Cosy charge windows (morning 89L, afternoon 72L, overnight 62L). That means a warm-looking T1 no longer suppresses a recharge when practical hot-water volume is already too low.
 

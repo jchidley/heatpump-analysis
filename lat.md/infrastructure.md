@@ -11,6 +11,7 @@ Four hosts: three emon monitors and one central data hub.
 | **emonpi** | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Zigbee2MQTT (21 devices) |
 | **emonhp** | 10.0.1.169 | Heat meter (MBUS) + SDM120 electricity meter → emoncms.org |
 | **emondhw** | 10.0.1.46 | Multical 403 DHW meter (T1, T2, flow, volume) |
+| **Serial hardware note** | — | `emondhw` and `emonhp` both currently use QinHeng/WCH `1a86:55d3` USB CDC ACM adapters on one measurement path. `emondhw` uses it for the Multical 403 Modbus link; `emonhp` uses the same adapter family for the SDM120 path, while its MBUS path is a separate Prolific USB serial device and its emonTxV5 path is Silicon Labs CP2102N. |
 | **pi5data** | 10.0.1.230 | Central hub: Docker/system services for Mosquitto, TimescaleDB/PostgreSQL, Telegraf, Grafana, ebusd, plus legacy InfluxDB coexistence, `z2m-hub` (:3030), and `adaptive-heating-mvp` (:3031) |
 
 emonpi also runs `energy-hub-tesla.service` — a Python collector that polls the local Powerwall Gateway API every 10s and publishes raw metrics plus derived signals to MQTT as `emon/tesla/+`.
@@ -29,6 +30,44 @@ emonpi  ──bridge──┘           │
 ```
 
 Telegraf subscribes to `emon/+/+` and other MQTT topics and feeds the shared ingest path on pi5data. `heatpump-analysis` is being cut over to PostgreSQL by command/config path, while any remaining Influx-only behaviour belongs in [[tsdb-migration]]. `z2m-hub` polls eBUS via TCP and MQTT for DHW tracking.
+
+### Multical outage boundary and recovery
+
+`multical` gaps can originate upstream on `emondhw`, not just in TimescaleDB migration plumbing.
+
+The 2026-04-16 → 2026-04-23 DHW gap proved that if `emondhw` loses `/dev/ttyMULTICAL`, both PostgreSQL and legacy Influx stop receiving fresh `emon/multical/*` data. That outage window cannot be backfilled from local TSDB sources because the source data never reached either store. Treat any future stale `multical` window the same way unless another external archive is known to exist.
+
+#### Multical stale-data checks
+
+Use these checks in order when DHW data looks stale.
+
+1. **Confirm stale PostgreSQL data on pi5data**
+   ```bash
+   ssh pi5data "docker exec timescaledb psql -U energy -d energy -Atc \"SELECT max(time) FROM multical;\""
+   ```
+2. **Check the source host**
+   ```bash
+   ssh pi@emondhw 'ls -l /dev/ttyMULTICAL'
+   ssh pi@emondhw 'systemctl --no-pager --full status emonhub mosquitto'
+   ssh pi@emondhw 'tail -50 /var/log/emonhub/emonhub.log'
+   ```
+3. **If the serial path is missing, inspect kernel evidence**
+   ```bash
+   ssh pi@emondhw 'dmesg | grep -Ei "ttyACM0|ttyMULTICAL|error -71|usb 1-1" | tail -n 80'
+   ```
+
+#### Multical recovery action
+
+If `/dev/ttyMULTICAL` is missing and `emonhub` is logging `Not connected to modbus device` / `Could not find Modbus device`, reboot `emondhw` first.
+
+```bash
+ssh pi@emondhw 'sudo reboot'
+sleep 35
+ssh pi@emondhw 'ls -l /dev/ttyMULTICAL && tail -30 /var/log/emonhub/emonhub.log'
+ssh pi5data "docker exec timescaledb psql -U energy -d energy -Atc \"SELECT max(time) FROM multical;\""
+```
+
+On the recovered system the QinHeng adapter should re-enumerate as `/dev/ttyACM0`, `/dev/ttyMULTICAL` should point back to it, `emonhub` should resume publishing `emon/multical/*`, and fresh `multical` rows should start appearing again in PostgreSQL.
 
 ### Tesla MQTT Topics
 
@@ -88,6 +127,8 @@ MCUs should prefer a gateway pattern via MQTT or a Pi-owned API and should not h
 
 Many field devices already publish to Pi-side services over MQTT, so stronger secrets should stay on the Pi side.
 
+Grafana on pi5data is part of the Docker monitoring stack rather than a native systemd service. Its admin bootstrap password must therefore come from a host-side secret file (`/etc/monitoring/grafana_admin_password`) referenced by the compose stack, not from a checked-in `admin` literal. If `/home/jack/monitoring/grafana` is recreated, Grafana will seed the admin user from that host secret on first start.
+
 ### Octopus API Credentials
 
 Credentials for the `octopus-tariff` crate resolve in order: env vars → `~/.octopus-api-key` file → `~/github/octopus/.envrc` sourced via bash.
@@ -116,6 +157,8 @@ psql "$TIMESCALEDB_CONNINFO" -c "
 ```
 
 Representative tables: `ebusd` (heat pump / VRC 700), `ebusd_poll` (numeric polled registers), `ebusd_poll_text` (string-valued polled registers), `zigbee` (room sensors), `adaptive_heating_mvp` (controller decisions), `multical` (heat meter + DHW meter fields), `dhw_inflection`, and `dhw_capacity`.
+
+For DHW investigations, check `multical` freshness first. A stale `multical` table with current `ebusd` / `adaptive_heating_mvp` usually means an upstream `emondhw` source outage rather than a PostgreSQL-wide ingest failure.
 
 If a verification task still requires raw Flux or profiler output, treat that as migration-tail work tracked in [[tsdb-migration]] rather than the default operator path.
 
