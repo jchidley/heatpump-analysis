@@ -93,7 +93,7 @@ Tariff rate lookup and window discovery use the shared `octopus-tariff` crate (`
 Markdown in this repo has distinct roles to avoid conflicting truths.
 
 - `lat.md/` holds current structured truth for architecture, domain rules, constraints, infrastructure, and controller behaviour
-- `plan.md` carries the newest operational truth for active items; older review snapshots move to [[reviews]], and any operational fact that remains relevant should eventually be reconciled back into the appropriate thematic `lat.md/` file
+- `plan.md` carries the newest operational truth for active items, and any operational fact that remains relevant should eventually be reconciled back into the appropriate thematic `lat.md/` file
 - `docs/` and top-level markdown provide human explanations, runbooks, and other non-canonical narrative material; they should point back to `lat.md/` for live facts
 - when first-party docs are condensed, durable operator/reference detail should stay in the active docs and old wording can be recovered from git history rather than a permanent mirror
 - `docs/implementation-maps/` preserves the retired code-truth snapshots for human onboarding and file discovery, while `lat.md/src/` holds any file-level source pages that the project keeps alongside the thematic graph; otherwise use the source tree directly for implementation discovery

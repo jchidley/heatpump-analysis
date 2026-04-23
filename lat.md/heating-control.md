@@ -140,7 +140,7 @@ Timer/tariff boundary rule: if an imported evening window arrives as `22:00–00
 
 ## Pilot History
 
-Durable design lessons from V1 and V2 deployment. Dated operational detail lives in [[reviews]]; the full event log can be recovered from git history of this section.
+Durable design lessons from V1 and V2 deployment. Historical detail can be recovered from git history when needed.
 
 - **V1 bang-bang rejected**: ±0.10 curve every 15 min ping-ponged 0.55→0.10→1.00. Leather τ=36h means 15-min adjustments are noise.
 - **EMA learning rejected**: `room_offset` EMA ran away overnight (learned cooling as model error, suppressed preheat). Static calibration only.

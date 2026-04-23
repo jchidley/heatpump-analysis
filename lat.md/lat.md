@@ -12,7 +12,7 @@ It also links to file-level source index pages when individual source files need
 - [[history-evidence]] — Historical heating/DHW reconstruction, history-review, evidence boundaries
 - [[infrastructure]] — Monitoring devices, MQTT topology, eBUS stack, sensors, VRC 700 baseline
 - [[plan]] — Open items, next steps, and links to detailed plan docs in `docs/`
-- [[reviews]] — Archived dated plan-item reviews so `plan.md` only carries the latest status note per active item
+- [[reviews]] — Stub page noting that historical review narrative lives in git history rather than current docs
 - [[tests]] — Targeted executable specs for controller invariants and other migration-sensitive behaviour that need explicit code coverage
 - [[tsdb-migration]] — Current migration state, remaining completion actions, and post-migration backlog for the PostgreSQL/TimescaleDB cutover in this repo
 - [[src]] — File-level source index for source files that have dedicated `lat.md` documentation
