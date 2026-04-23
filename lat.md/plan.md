@@ -1,41 +1,8 @@
 # Plan
 
-Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-23 17:10 BST**. Older review snapshots live in [[reviews]].
+Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-04-23**. The previous review snapshot lives in [[reviews]].
 
 The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/tsdb-migration.md`.
-
-## 2026-04-23 17:10 BST Review Snapshot
-
-This snapshot records the Zigbee history-route fix and the immediate parity rerun that followed the earlier 11:45 BST blocker discovery.
-
-### TSDB Migration
-
-This review window cleared the Zigbee room-temperature execution blocker, then reran the representative parity windows to expose the next real migration tail.
-
-- `history.rs` and `thermal/influx.rs` now fall back per-topic to Flux for Zigbee environmental reads when `pi5data` lacks `zigbee.temperature` / `zigbee.humidity`, so `heating-history` and `history-review both` over **2026-04-22 16:15Z..2026-04-23 10:15Z** run again on PostgreSQL-configured paths instead of failing.
-- Exact parity is still not complete: the PostgreSQL-configured heating/review output now includes controller events from `adaptive_heating_mvp`, while the Flux-only comparison path has no fresh controller rows because live Influx mirroring was intentionally removed at controller cutover.
-- `dhw-history` over **2026-04-23 10:10Z..10:27Z** still differs between backends because PostgreSQL returns richer `remaining_litres` evidence and different sample/timestamp shapes.
-- The migration plan therefore advances: Zigbee routing is no longer the first blocker; the remaining closeout work is to accept/reconcile richer PostgreSQL DHW/controller evidence, then rehearse rollback.
-
-### Heating Controller
-
-The new controller evidence was a brief daytime DHW-only window plus one clean service restart, so most heating/tuning items did not move.
-
-- `adaptive-heating-mvp` restarted cleanly at **10:03–10:04 BST** as part of the `emondhw` Multical USB-device recovery/reboot sequence, then produced three populated PostgreSQL decision rows with no null `forecast_outside_c`, `leather_temp_c`, or `target_flow_c` fields.
-- No new overnight, Cosy, wind/PV, or warm-end heating case arrived, so the open heating/tuning items remain status-maintenance rather than resolution.
-- Because the restart now has an explained operational cause rather than being an unexplained controller event, the relevant follow-up is simply whether the earlier host-side hang/null-row pattern reappears in a longer later window. It did not recur in this short post-recovery check.
-
-### DHW Scheduling
-
-The main new evidence was that the recovered Multical path stayed live and the current daytime DHW charge looked normal.
-
-- PostgreSQL `multical` advanced from the recovered state to **10:12:30 UTC** during this review, while Influx `emon/multical/dhw_t1` stayed current to **10:13:13 UTC**.
-- Controller rows at **10:39**, **10:55**, and **11:11 BST** all logged `action:"dhw_active"` with populated model fields; across the same window `HwcStorageTemp` rose **33.0→38.5°C** and `dhw_t1` rose **33.6→38.8°C**.
-- No new demand-budget miss, over-trigger, or seasonal mode change appeared; `HwcMode` still read `eco`.
-
-### Pico eBUS Adapter
-
-No status change was observed for the Pico Phase 2 PIO UART work in this review window.
 
 ## TSDB Migration
 
@@ -93,8 +60,6 @@ The exact review window shows the restart at **22:52 BST**, `startup: reinitiali
 
 **11 Apr data review (08:39 BST)**: New item opened from the review window. Immediate next step: correlate the migration work with ebus/influx/socket state, system load, and service restarts on pi5data to see whether infrastructure churn rather than controller logic stretched outer-loop work into **148–962s** hangs.
 
-**23 Apr data review (11:11 BST)**: A short post-recovery restart window was clean but not yet conclusive. Systemd stopped and restarted `adaptive-heating-mvp` at **10:03–10:04 BST**, then PostgreSQL decision rows resumed at **10:39**, **10:55**, and **11:11 BST** with populated `forecast_outside_c`, `leather_temp_c`, and `model_required_*` fields, and the journal showed no new `outer cycle took ... possible I/O hang` warnings. Keep the item open until a longer mixed heating window proves the earlier blind-period failure mode is really gone.
-
 #### Open: Elvina Overnight Comfort (Accepted Occupant Preference)
 
 Elvina still runs too cool overnight on mild nights, but the current occupant preference is to keep the vents open and the internal door closed even if that means the room stays cold in winter.
@@ -112,8 +77,6 @@ Forecast data still has an unresolved reliability question even though the 7 Apr
 Controller behaviour degrades gracefully: it uses cached forecast data and can fall back toward live outside conditions, but prolonged outages leave `forecast_outside_c` stale. The original 7 Apr issue looked like an upstream Open-Meteo reliability problem; the latest review window suggests there is also a host-side confounder because null forecast/model fields can still appear even when refreshes are succeeding. Consider: local caching with longer TTL, a second weather API, or alerting when forecast age exceeds threshold.
 
 **11 Apr data review (08:39 BST)**: The upstream API still refreshed successfully, but null `forecast_outside_c` / `model_required_*` rows reappeared. The journal showed forecast refreshes at **22:05, 22:55, 02:36, 03:39, 04:41, 05:47, and 06:51 BST**, yet the controller still emitted null forecast/model fields during the **22:45–02:31 BST** hang period and again at **06:00 BST** (`action:"hold"`, `reason:"no rule fired"`). Given the known pi5data migration work, treat this first as part of the broader **host-side migration / I/O hang confounder**, not as fresh evidence of another upstream forecast outage.
-
-**23 Apr data review (11:11 BST)**: The brief post-restart DHW window carried no fresh forecast blind spots. The **10:39**, **10:55**, and **11:11 BST** controller rows all had populated `forecast_outside_c` values (**11.4**, **11.4**, **13.2°C**) and populated `model_required_*` fields, so the earlier null-row pattern did not recur in this short check. Keep the item open because this was not a long forecast-refresh stress window.
 
 #### Open: Wind and PV Tuning
 
@@ -177,15 +140,11 @@ Detailed plan: [`docs/dhw-plan.md`](../docs/dhw-plan.md)
 
 This remains the main actionable DHW software item, but the controller no longer relies on T1 alone.
 
-**23 Apr data review (11:11 BST)**: The new review window only showed a straightforward daytime charge, not another demand-budget edge case. Controller rows at **10:39**, **10:55**, and **11:11 BST** all logged `dhw_active`, while `HwcStorageTemp` rose **33.0→38.5°C** and `dhw_t1` rose **33.6→38.8°C**. That is consistent with normal charge execution, but it does not yet validate the remaining slot-budget tuning or rule out over-trigger regressions, so the item stays progressing.
-
 ### Open: Multical stale-data alerting
 
 The `emondhw` source outage showed that DHW history can go blind for days without any local TSDB replay path to repair it.
 
 The 2026-04-16 → 2026-04-23 gap was caused by the Multical USB/Modbus device disappearing on `emondhw`, so both PostgreSQL and legacy Influx stopped advancing together. The immediate recovery was a reboot, but the durable gap is irrecoverable from local migration sources. Follow-up work: add an operational stale-data alert for `multical` freshness and define whether the first response should be notification-only or an automated `emondhw` restart/reboot path.
-
-**23 Apr data review (11:11 BST)**: Recovery held through the next review window. PostgreSQL `multical` advanced to **10:12:30 UTC** while Influx `emon/multical/dhw_t1` reached **10:13:13 UTC**, so there is no fresh evidence of another source-side outage. The operational gap is now alerting and first-response automation, not data-path restoration.
 
 On 47% of nights there's an overnight shower (avg 62L, max 120L). The 27 Mar night showed the risk: a 120L shower at 23:23 dropped T1 from 43.5→~37°C, below the 40°C comfort floor, and the old model would have predicted 41.8°C. The controller now adds a first practical draw-aware budget: it reads `dhw.remaining_litres` plus the latest `dhw_capacity.recommended_full_litres`, caps optimistic remaining-volume estimates by that practical full-capacity value, and compares the resulting remaining litres with slot demand budgets aligned to Cosy charge windows (morning 89L, afternoon 72L, overnight 62L). That means a warm-looking T1 no longer suppresses a recharge when practical hot-water volume is already too low.
 
@@ -207,8 +166,6 @@ The seasonal Eco→Normal mode change remains manual and calendar-driven.
 `hmu HwcMode` is read-only from eBUS, so the switch must still be done physically on the aroTHERM controller. The normal mode threshold remains around November because it changes charges from ~0.8–1.2 kWh eco top-ups to ~2.4 kWh normal charges. No software fix is possible.
 
 **11 Apr data review (08:39 BST)**: No seasonal change. The usable controller rows still showed `hwc_mode:"eco"`; the only deviations were transient read failures (`ERR: no signal`, `ERR: read timeout`) during the broader telemetry-hang issue, not a real mode switch.
-
-**23 Apr data review (11:11 BST)**: Still no seasonal change. Fresh `ebusd_poll_text` rows through **11:12 BST** continued to report `HwcMode=eco`.
 
 ## Pico eBUS Adapter
 

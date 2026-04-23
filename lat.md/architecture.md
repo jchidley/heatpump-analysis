@@ -111,7 +111,7 @@ ebusd must be running on localhost:8888. If down: reads error → `missing_core 
 
 Room temperature topics must match between Telegraf/MQTT ingest, `adaptive-heating-mvp.toml` `[topics]`, and `thermal-config.toml` sensor_topics.
 
-The emonth2 uses the `value` field while Zigbee sensors use `temperature`; PostgreSQL-first readers preserve that distinction, but they now fall back to Flux for Zigbee temperature/humidity history when the shared `zigbee` table does not expose those environmental columns on `pi5data`.
+The emonth2 uses the `value` field while Zigbee sensors use `temperature`; PostgreSQL routing preserves that distinction from the legacy Influx schema.
 
 ### VRC 700 Baseline Safety
 

@@ -119,30 +119,6 @@ fn pg_client(conninfo: &str) -> ThermalResult<PgClient> {
     PgClient::connect(conninfo, NoTls).map_err(ThermalError::PostgresConnect)
 }
 
-pub(crate) fn pg_table_has_column(
-    client: &mut PgClient,
-    table: &str,
-    column: &str,
-) -> ThermalResult<bool> {
-    let row = client
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2)",
-            &[&table, &column],
-        )
-        .map_err(ThermalError::PostgresQuery)?;
-    Ok(row.get::<_, bool>(0))
-}
-
-pub(crate) fn zigbee_column_available(
-    client: &mut PgClient,
-    column: &str,
-) -> ThermalResult<bool> {
-    match column {
-        "temperature" | "humidity" => pg_table_has_column(client, "zigbee", column),
-        _ => Ok(true),
-    }
-}
-
 fn query_pg_timeseries(
     conninfo: &str,
     sql: &str,
@@ -258,27 +234,8 @@ pub fn query_room_temps(
     if let Some(conninfo) = pg_conninfo {
         let mut client = pg_client(conninfo)?;
         let mut out = Vec::new();
-        let mut flux_fallback_topics = Vec::new();
         for topic in sensor_topics {
-            let use_flux = matches!(topic_route(topic), Some(TopicRoute::ZigbeeTemp { .. }))
-                && !zigbee_column_available(&mut client, "temperature")?;
-            if use_flux {
-                flux_fallback_topics.push(*topic);
-            } else {
-                out.extend(query_pg_room_topic(&mut client, topic, start, stop)?);
-            }
-        }
-        if !flux_fallback_topics.is_empty() {
-            out.extend(query_room_temps(
-                influx_url,
-                org,
-                bucket,
-                token,
-                None,
-                &flux_fallback_topics,
-                start,
-                stop,
-            )?);
+            out.extend(query_pg_room_topic(&mut client, topic, start, stop)?);
         }
         out.sort_by_key(|(t, _, _)| *t);
         return Ok(out);
@@ -544,16 +501,10 @@ pub fn query_room_humidity(
     if let Some(conninfo) = pg_conninfo {
         let mut client = pg_client(conninfo)?;
         let mut out = Vec::new();
-        let mut flux_fallback_topics = Vec::new();
-        let zigbee_humidity_available = zigbee_column_available(&mut client, "humidity")?;
         for topic in sensor_topics {
             let Some(device) = topic.strip_prefix("zigbee2mqtt/") else {
                 continue;
             };
-            if !zigbee_humidity_available {
-                flux_fallback_topics.push(*topic);
-                continue;
-            }
             let rows = client
                 .query(
                     "SELECT time_bucket(INTERVAL '5 minutes', time) AS bucket, AVG(humidity) AS value FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND humidity IS NOT NULL GROUP BY bucket ORDER BY bucket",
@@ -567,18 +518,6 @@ pub fn query_room_humidity(
                     row.get::<_, f64>(1),
                 ));
             }
-        }
-        if !flux_fallback_topics.is_empty() {
-            out.extend(query_room_humidity(
-                influx_url,
-                org,
-                bucket,
-                token,
-                None,
-                &flux_fallback_topics,
-                start,
-                stop,
-            )?);
         }
         out.sort_by_key(|(t, _, _)| *t);
         return Ok(out);

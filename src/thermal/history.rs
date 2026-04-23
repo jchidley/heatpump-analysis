@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::config::{load_thermal_config, resolve_influx_token, resolve_postgres_conninfo};
 use super::error::{ThermalError, ThermalResult};
-use super::influx::{parse_dt, query_flux_csv_pub, zigbee_column_available};
+use super::influx::{parse_dt, query_flux_csv_pub};
 
 const DHW_FLOW_THRESHOLD_LH: f64 = 900.0;
 const DHW_MIN_DURATION_SECONDS: i64 = 300;
@@ -58,7 +58,6 @@ pub struct SamplingStats {
     pub max_step_seconds: Option<f64>,
 }
 
-#[derive(Clone, Copy)]
 struct TopicSummarySpec<'a> {
     label: &'a str,
     topic: &'a str,
@@ -1050,13 +1049,8 @@ fn query_topic_numeric_summaries_compact(
     }
     if let Some(mut client) = pg_client(ctx)? {
         let mut out = std::collections::HashMap::new();
-        let mut flux_specs = Vec::new();
         for spec in specs {
             if let Some((table, column, extra)) = topic_table_and_column(spec.topic, spec.field) {
-                if table == "zigbee" && !zigbee_column_available(&mut client, &column)? {
-                    flux_specs.push(*spec);
-                    continue;
-                }
                 let summary = if table == "zigbee" {
                     let sql = format!("SELECT time, {col} FROM {table} WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column), table = table);
                     let rows = client
@@ -1106,34 +1100,6 @@ fn query_topic_numeric_summaries_compact(
                 out.insert(spec.label.to_string(), summary);
             }
         }
-        if flux_specs.is_empty() {
-            return Ok(out);
-        }
-        out.extend(summaries_from_batch_rows(query_flux_csv_pub(
-            &ctx.url,
-            &ctx.org,
-            &ctx.token,
-            &batch_summary_union_flux(
-                &flux_specs
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, spec)| {
-                        (
-                            format!("topic_base_{idx}"),
-                            spec.label.to_string(),
-                            format!(
-                                "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> keep(columns: [\"_time\", \"_value\"])",
-                                ctx.bucket,
-                                since.to_rfc3339(),
-                                until.to_rfc3339(),
-                                spec.topic,
-                                spec.field,
-                            ),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        )?)?);
         return Ok(out);
     }
     let flux = batch_summary_union_flux(
@@ -1291,22 +1257,20 @@ fn query_topic_numeric_last_value_compact(
 ) -> ThermalResult<Option<f64>> {
     if let Some(mut client) = pg_client(ctx)? {
         if let Some((table, column, extra)) = topic_table_and_column(topic, field) {
-            if !(table == "zigbee" && !zigbee_column_available(&mut client, &column)?) {
-                let row = if table == "zigbee" {
-                    let sql = format!("SELECT {col} FROM {table} WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1", col = quoted_identifier(&column), table = table);
-                    client
-                        .query_opt(&sql, &[&extra.unwrap(), since, until])
-                        .map_err(ThermalError::PostgresQuery)?
-                } else if table == "ebusd_poll" {
-                    client.query_opt("SELECT value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time DESC LIMIT 1", &[&extra.unwrap(), since, until]).map_err(ThermalError::PostgresQuery)?
-                } else {
-                    let sql = format!("SELECT {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1", col = quoted_identifier(&column), table = table);
-                    client
-                        .query_opt(&sql, &[since, until])
-                        .map_err(ThermalError::PostgresQuery)?
-                };
-                return Ok(row.map(|r| r.get::<_, f64>(0)));
-            }
+            let row = if table == "zigbee" {
+                let sql = format!("SELECT {col} FROM {table} WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1", col = quoted_identifier(&column), table = table);
+                client
+                    .query_opt(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else if table == "ebusd_poll" {
+                client.query_opt("SELECT value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time DESC LIMIT 1", &[&extra.unwrap(), since, until]).map_err(ThermalError::PostgresQuery)?
+            } else {
+                let sql = format!("SELECT {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time DESC LIMIT 1", col = quoted_identifier(&column), table = table);
+                client
+                    .query_opt(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(row.map(|r| r.get::<_, f64>(0)));
         }
     }
     let flux = format!(
@@ -2194,53 +2158,51 @@ fn query_topic_numeric_series(
 ) -> ThermalResult<Vec<(DateTime<FixedOffset>, f64)>> {
     if let Some(mut client) = pg_client(ctx)? {
         if let Some((table, column, extra)) = topic_table_and_column(topic, field) {
-            if !(table == "zigbee" && !zigbee_column_available(&mut client, &column)?) {
-                let sql = if let Some(every) = every {
-                    let agg_name = agg.unwrap_or("mean");
-                    if agg_name == "last" {
-                        if table == "zigbee" {
-                            format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column))
-                        } else if table == "ebusd_poll" {
-                            format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every))
-                        } else {
-                            format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column), table = table)
-                        }
+            let sql = if let Some(every) = every {
+                let agg_name = agg.unwrap_or("mean");
+                if agg_name == "last" {
+                    if table == "zigbee" {
+                        format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column))
+                    } else if table == "ebusd_poll" {
+                        format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every))
                     } else {
-                        let agg_fn = aggregate_keyword(agg_name);
-                        if table == "zigbee" {
-                            format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column), agg_fn = agg_fn)
-                        } else if table == "ebusd_poll" {
-                            format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}(value) AS value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn)
-                        } else {
-                            format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn, col = quoted_identifier(&column), table = table)
-                        }
+                        format!("SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, {col} AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column), table = table)
                     }
-                } else if table == "zigbee" {
-                    format!("SELECT time, {col} FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column))
-                } else if table == "ebusd_poll" {
-                    "SELECT time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time".to_string()
                 } else {
-                    format!("SELECT time, {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column), table = table)
-                };
-                let rows = if table == "zigbee" || table == "ebusd_poll" {
-                    client
-                        .query(&sql, &[&extra.unwrap(), since, until])
-                        .map_err(ThermalError::PostgresQuery)?
-                } else {
-                    client
-                        .query(&sql, &[since, until])
-                        .map_err(ThermalError::PostgresQuery)?
-                };
-                return Ok(rows
-                    .into_iter()
-                    .map(|r| {
-                        (
-                            r.get::<_, DateTime<Utc>>(0).fixed_offset(),
-                            r.get::<_, f64>(1),
-                        )
-                    })
-                    .collect());
-            }
+                    let agg_fn = aggregate_keyword(agg_name);
+                    if table == "zigbee" {
+                        format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), col = quoted_identifier(&column), agg_fn = agg_fn)
+                    } else if table == "ebusd_poll" {
+                        format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}(value) AS value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn)
+                    } else {
+                        format!("SELECT time_bucket(INTERVAL '{interval}', time) AS bucket, {agg_fn}({col}) AS value FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL GROUP BY bucket ORDER BY bucket", interval = sql_interval(every), agg_fn = agg_fn, col = quoted_identifier(&column), table = table)
+                    }
+                }
+            } else if table == "zigbee" {
+                format!("SELECT time, {col} FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column))
+            } else if table == "ebusd_poll" {
+                "SELECT time, value FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time".to_string()
+            } else {
+                format!("SELECT time, {col} FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time", col = quoted_identifier(&column), table = table)
+            };
+            let rows = if table == "zigbee" || table == "ebusd_poll" {
+                client
+                    .query(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                client
+                    .query(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<_, DateTime<Utc>>(0).fixed_offset(),
+                        r.get::<_, f64>(1),
+                    )
+                })
+                .collect());
         }
     }
     let flux = format!(
