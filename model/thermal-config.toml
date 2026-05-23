@@ -1,14 +1,7 @@
 # Thermal model calibration config
 # Keep mutable values here, not in code.
 
-[influx]
-url = "http://pi5data:8086"
-org = "home"
-bucket = "energy"
-# Token is read from this environment variable.
-token_env = "INFLUX_TOKEN"
-
-# Optional TimescaleDB conninfo for transitional dual-writes during the TSDB migration.
+# TimescaleDB conninfo for thermal/history commands.
 # Keep the secret in the named environment variable, not in this file.
 [postgres]
 conninfo_env = "TIMESCALEDB_CONNINFO"

@@ -8,7 +8,7 @@ These commands answer historical questions that live status cannot. They summari
 
 The default investigation shape is a rolling 7-day window ending now. Use exact windows only for named anchors, regression checks, or one already-identified event.
 
-Most representative history readers already have PostgreSQL routes. Any remaining Flux compatibility or parity tail work is migration-tail work tracked in [[tsdb-migration]].
+Representative history readers now run against PostgreSQL by default. Any surviving compatibility scaffolding is internal cleanup work tracked in [[tsdb-migration]], not an operator path.
 
 ## Heating History
 

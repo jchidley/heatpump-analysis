@@ -141,7 +141,7 @@ enum Commands {
     ThermalRooms,
     /// Print inter-room connections and doorway exchanges
     ThermalConnections,
-    /// Live energy balance from InfluxDB (per-room heat flows)
+    /// Live energy balance from TimescaleDB (per-room heat flows)
     ThermalAnalyse {
         /// Path to thermal calibration config TOML
         #[arg(long, default_value = "model/thermal-config.toml")]
@@ -158,10 +158,10 @@ enum Commands {
         /// Path to thermal calibration config TOML
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
-        /// Outside temperature (°C). Defaults to current from InfluxDB.
+        /// Outside temperature (°C). Defaults to current from TimescaleDB.
         #[arg(long)]
         outside: Option<f64>,
-        /// Mean water temperature (°C). Defaults to current from InfluxDB.
+        /// Mean water temperature (°C). Defaults to current from TimescaleDB.
         #[arg(long)]
         mwt: Option<f64>,
         /// Solar irradiance on SW vertical surfaces (W/m²)
@@ -177,7 +177,7 @@ enum Commands {
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
     },
-    /// Calibrate thermal model parameters from InfluxDB using fixed test windows
+    /// Calibrate thermal model parameters from TimescaleDB using fixed test windows
     ThermalCalibrate {
         /// Path to thermal calibration config TOML
         #[arg(long, default_value = "model/thermal-config.toml")]
@@ -208,7 +208,7 @@ enum Commands {
     },
     /// DHW session analysis — draws, charges, inflection detection, HWC tracking
     DhwSessions {
-        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        /// Path to thermal calibration config TOML (for TimescaleDB connection)
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
         /// Days of history to analyse
@@ -217,7 +217,7 @@ enum Commands {
         /// Output format: human, verbose, or json
         #[arg(long, default_value = "verbose")]
         format: String,
-        /// Don't write results to InfluxDB
+        /// Don't write results to TimescaleDB
         #[arg(long)]
         no_write: bool,
     },
@@ -232,7 +232,7 @@ enum Commands {
     },
     /// Reconstruct fused high-resolution heating-history evidence (defaults to last 7 days ending now)
     HeatingHistory {
-        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        /// Path to thermal calibration config TOML (for TimescaleDB connection)
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
         /// Inclusive start of window (RFC3339). Defaults to --days before --until/now.
@@ -250,7 +250,7 @@ enum Commands {
     },
     /// Reconstruct fused high-resolution DHW-history evidence (defaults to last 7 days ending now)
     DhwHistory {
-        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        /// Path to thermal calibration config TOML (for TimescaleDB connection)
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
         /// Inclusive start of window (RFC3339). Defaults to --days before --until/now.
@@ -268,7 +268,7 @@ enum Commands {
     },
     /// Native-cadence DHW drill-down for one bounded event/window
     DhwDrilldown {
-        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        /// Path to thermal calibration config TOML (for TimescaleDB connection)
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
         /// Inclusive start of drill-down window (RFC3339)
@@ -286,7 +286,7 @@ enum Commands {
         /// Domain to review
         #[arg(value_enum, default_value_t = HistoryReviewTarget::Both)]
         target: HistoryReviewTarget,
-        /// Path to thermal calibration config TOML (for InfluxDB connection)
+        /// Path to thermal calibration config TOML (for TimescaleDB connection)
         #[arg(long, default_value = "model/thermal-config.toml")]
         config: String,
         /// Inclusive start of window (RFC3339). Defaults to --days before --until/now.
@@ -886,13 +886,12 @@ fn run_history_review(
         }
         HistoryReviewTarget::Dhw => None,
     };
-    let dhw =
-        match target {
-            HistoryReviewTarget::Dhw | HistoryReviewTarget::Both => {
-                Some(thermal::dhw_history_summary(config_path, since, until)?)
-            }
-            HistoryReviewTarget::Heating => None,
-        };
+    let dhw = match target {
+        HistoryReviewTarget::Dhw | HistoryReviewTarget::Both => {
+            Some(thermal::dhw_history_summary(config_path, since, until)?)
+        }
+        HistoryReviewTarget::Heating => None,
+    };
 
     let mut review_warnings = Vec::new();
     let dhw_sessions = match target {

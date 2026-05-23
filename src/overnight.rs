@@ -1526,7 +1526,10 @@ mod tests {
     // @lat: [[tests#Overnight optimizer helpers#Heating lookup clamps to edge bins outside the calibrated range]]
     #[test]
     fn heating_lookup_clamps_to_edge_bins() {
-        let bins = vec![bin(0.0, 5.0, 3200.0, 700.0, 4.6), bin(5.0, 10.0, 2800.0, 650.0, 4.3)];
+        let bins = vec![
+            bin(0.0, 5.0, 3200.0, 700.0, 4.6),
+            bin(5.0, 10.0, 2800.0, 650.0, 4.3),
+        ];
 
         assert_eq!(lookup_heating(&bins, -2.0), (3200.0, 700.0, 4.6));
         assert_eq!(lookup_heating(&bins, 6.0), (2800.0, 650.0, 4.3));
@@ -1549,9 +1552,10 @@ mod tests {
         assert!(!schedules.is_empty());
         assert!(schedules.iter().any(|s| s.label.contains("DHW norm")));
         assert!(schedules.iter().any(|s| s.label.contains("DHW eco")));
-        assert!(schedules.iter().filter_map(|s| s.dhw_start.map(|start| (start, s.dhw_duration))).all(|(start, duration)| {
-            start >= cosy_start && start + duration <= cosy_end
-        }));
+        assert!(schedules
+            .iter()
+            .filter_map(|s| s.dhw_start.map(|start| (start, s.dhw_duration)))
+            .all(|(start, duration)| { start >= cosy_start && start + duration <= cosy_end }));
     }
 
     // @lat: [[tests#Overnight optimizer helpers#Generated schedules omit DHW modes that cannot fit the Cosy window]]
@@ -1627,8 +1631,10 @@ mod tests {
 
         let schedules = generate_schedules(&dhw, cosy_start, cosy_end);
         // All schedules should have no DHW start
-        assert!(schedules.iter().all(|s| s.dhw_start.is_none()),
-            "no DHW should fit in a 10-minute Cosy window");
+        assert!(
+            schedules.iter().all(|s| s.dhw_start.is_none()),
+            "no DHW should fit in a 10-minute Cosy window"
+        );
     }
 
     // --- fmt_offset edge-case tests ---
@@ -1726,19 +1732,24 @@ mod tests {
             make_minute_at(180, 3000),
         ]);
         let ts = minute_timestamp_utc(&night, 120);
-        assert_eq!(ts.timestamp(), 2000, "exact offset match should return stored timestamp");
+        assert_eq!(
+            ts.timestamp(),
+            2000,
+            "exact offset match should return stored timestamp"
+        );
     }
 
     #[test]
     fn minute_timestamp_utc_missing_offset_interpolates() {
-        let night = make_night(vec![
-            make_minute_at(60, 1000),
-            make_minute_at(120, 2000),
-        ]);
+        let night = make_night(vec![make_minute_at(60, 1000), make_minute_at(120, 2000)]);
         // Offset 90 is not stored — should interpolate from first minute
         let ts = minute_timestamp_utc(&night, 90);
         // Expected: first.timestamp + (90 - first_offset) minutes = 1000 + (90-60)*60 = 2800
-        assert_eq!(ts.timestamp(), 2800, "missing offset should interpolate from first minute");
+        assert_eq!(
+            ts.timestamp(),
+            2800,
+            "missing offset should interpolate from first minute"
+        );
     }
 
     #[test]
@@ -1751,14 +1762,22 @@ mod tests {
         // Just check it's approximately now + 100 minutes
         let expected_low = before + chrono::Duration::minutes(100);
         let expected_high = after + chrono::Duration::minutes(100);
-        assert!(ts >= expected_low && ts <= expected_high,
-            "empty night should use now-based fallback");
+        assert!(
+            ts >= expected_low && ts <= expected_high,
+            "empty night should use now-based fallback"
+        );
     }
 
     // --- calibrate_heating tests ---
 
-    fn make_heating_minute(offset: u32, outside_t: f64, indoor_t: f64,
-                           heat_w: f64, elec_w: f64, mwt: f64) -> Minute {
+    fn make_heating_minute(
+        offset: u32,
+        outside_t: f64,
+        indoor_t: f64,
+        heat_w: f64,
+        elec_w: f64,
+        mwt: f64,
+    ) -> Minute {
         Minute {
             offset_min: offset,
             timestamp_utc: DateTime::from_timestamp(0, 0).unwrap(),
@@ -1794,10 +1813,18 @@ mod tests {
         // Should have recovery samples in the 4-6°C bin (rising indoor_t)
         assert!(!recovery.is_empty(), "should find recovery bins");
         let bin = &recovery[0];
-        assert!(bin.t_out_low <= 5.0 && bin.t_out_high > 5.0,
-            "recovery bin should contain 5°C");
-        assert!((bin.avg_heat_w - 3000.0).abs() < 1.0, "avg heat should be 3000W");
-        assert!((bin.avg_cop - 5.0).abs() < 0.01, "COP should be 3000/600 = 5.0");
+        assert!(
+            bin.t_out_low <= 5.0 && bin.t_out_high > 5.0,
+            "recovery bin should contain 5°C"
+        );
+        assert!(
+            (bin.avg_heat_w - 3000.0).abs() < 1.0,
+            "avg heat should be 3000W"
+        );
+        assert!(
+            (bin.avg_cop - 5.0).abs() < 0.01,
+            "COP should be 3000/600 = 5.0"
+        );
     }
 
     #[test]
@@ -1825,8 +1852,14 @@ mod tests {
         };
 
         let (recovery, maintenance) = calibrate_heating(&[night]);
-        assert!(recovery.is_empty(), "idle state should not produce recovery bins");
-        assert!(maintenance.is_empty(), "idle state should not produce maintenance bins");
+        assert!(
+            recovery.is_empty(),
+            "idle state should not produce recovery bins"
+        );
+        assert!(
+            maintenance.is_empty(),
+            "idle state should not produce maintenance bins"
+        );
     }
 
     // --- calibrate_dhw non-empty path ---
@@ -1837,7 +1870,11 @@ mod tests {
         // Build a night with a 45-minute DHW cycle (offset 480-524) at 800W
         let mut minutes = Vec::new();
         for i in 0..780 {
-            let state = if (480..525).contains(&i) { "dhw" } else { "idle" };
+            let state = if (480..525).contains(&i) {
+                "dhw"
+            } else {
+                "idle"
+            };
             let elec = if state == "dhw" { 800.0 } else { 0.0 };
             let mut m = make_minute(i);
             m.state = state;
@@ -1854,11 +1891,17 @@ mod tests {
 
         let stats = calibrate_dhw(&[night]);
         assert_eq!(stats.n_cycles, 1, "should find exactly one DHW cycle");
-        assert!((stats.avg_duration_min - 45.0).abs() < 0.1,
-            "DHW cycle duration should be 45 minutes, got {}", stats.avg_duration_min);
+        assert!(
+            (stats.avg_duration_min - 45.0).abs() < 0.1,
+            "DHW cycle duration should be 45 minutes, got {}",
+            stats.avg_duration_min
+        );
         // 45 minutes × 800W / 60 / 1000 = 0.6 kWh
-        assert!((stats.avg_elec_kwh - 0.6).abs() < 0.01,
-            "DHW electricity should be ~0.6 kWh, got {}", stats.avg_elec_kwh);
+        assert!(
+            (stats.avg_elec_kwh - 0.6).abs() < 0.01,
+            "DHW electricity should be ~0.6 kWh, got {}",
+            stats.avg_elec_kwh
+        );
     }
 
     #[test]
@@ -1866,7 +1909,11 @@ mod tests {
         // Build a night with a 10-minute DHW cycle (below MIN_DHW_CYCLE_MIN)
         let mut minutes = Vec::new();
         for i in 0..780 {
-            let state = if (480..490).contains(&i) { "dhw" } else { "idle" };
+            let state = if (480..490).contains(&i) {
+                "dhw"
+            } else {
+                "idle"
+            };
             let mut m = make_minute(i);
             m.state = state;
             m.elec_w = if state == "dhw" { 800.0 } else { 0.0 };
@@ -1882,7 +1929,10 @@ mod tests {
 
         let stats = calibrate_dhw(&[night]);
         assert_eq!(stats.n_cycles, 0, "short DHW cycle should be filtered out");
-        assert_eq!(stats.avg_duration_min, 60.0, "should fall back to default duration");
+        assert_eq!(
+            stats.avg_duration_min, 60.0,
+            "should fall back to default duration"
+        );
     }
 
     // --- calibrate_cooling and simulate_schedule ---

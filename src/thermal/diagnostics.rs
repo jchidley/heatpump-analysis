@@ -8,14 +8,14 @@ use super::artifact::{config_sha256, git_meta, ArtifactCalibrationParams, FitDia
 use super::calibration::{
     avg_room_temps_in_window, avg_series_in_window, build_room_series, calibrate_model,
 };
-use super::config::{resolve_influx_token, resolve_postgres_conninfo};
+use super::config::resolve_postgres_conninfo;
 use super::error::{ThermalError, ThermalResult};
 use super::geometry::build_doorways;
-use super::influx;
 use super::physics::{
     doors_all_closed_except_chimney, estimate_thermal_mass, room_energy_balance,
     BODY_HEAT_SLEEPING_W,
 };
+use super::tsdb;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,48 +71,22 @@ pub fn fit_diagnostics(config_path: &Path) -> ThermalResult<()> {
     let range_start = fit_cfg
         .start
         .as_deref()
-        .map(influx::parse_dt)
+        .map(tsdb::parse_dt)
         .transpose()?
         .unwrap_or_else(|| setup.night1_start - chrono::Duration::hours(24));
     let range_end = fit_cfg
         .end
         .as_deref()
-        .map(influx::parse_dt)
+        .map(tsdb::parse_dt)
         .transpose()?
         .unwrap_or_else(|| Utc::now().fixed_offset());
 
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
-    let token = resolve_influx_token(cfg)?;
     let pg_conninfo = resolve_postgres_conninfo(cfg)?;
 
-    let room_rows = influx::query_room_temps(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &sensor_topics,
-        &range_start,
-        &range_end,
-    )?;
-    let outside_rows = influx::query_outside_temp(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &range_start,
-        &range_end,
-    )?;
-    let status_rows = influx::query_status_codes(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &range_start,
-        &range_end,
-    )?;
+    let room_rows = tsdb::query_room_temps(&pg_conninfo, &sensor_topics, &range_start, &range_end)?;
+    let outside_rows = tsdb::query_outside_temp(&pg_conninfo, &range_start, &range_end)?;
+    let status_rows = tsdb::query_status_codes(&pg_conninfo, &range_start, &range_end)?;
 
     if status_rows.is_empty() {
         return Err(ThermalError::NoStatusData);

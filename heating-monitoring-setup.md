@@ -26,7 +26,7 @@ For those, use:
 
 ```text
 Multical DHW meter -> emondhw --bridge--┐
-Heat meter / SDM120 -> emonhp --bridge--┼-> pi5data mosquitto -> telegraf -> influxdb -> grafana
+Heat meter / SDM120 -> emonhp --bridge--┼-> pi5data mosquitto -> mqtt_to_pg.py -> TimescaleDB -> Grafana
 EmonPi2 / Zigbee -> emonpi --bridge-----┘                     |
 Vaillant eBUS -> adapter -> ebusd on pi5data ----------------┘
 ```
@@ -55,7 +55,6 @@ ak get emon-pi-credentials
 - Docker stack root: `~/monitoring/`
 - Main compose file: `~/monitoring/docker-compose.yml`
 - Mosquitto config: `~/monitoring/mosquitto/config/mosquitto.conf`
-- Retired Telegraf config archive: `~/monitoring/telegraf/telegraf.conf.retired-phase5.*`
 - Controller env file: `/etc/adaptive-heating-mvp.env`
 - eBUS poll script: `/usr/local/bin/ebusd-poll.sh`
 - Services of interest:

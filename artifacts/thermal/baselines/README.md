@@ -13,8 +13,7 @@ Missing any required file is a hard CI failure.
 
 ## Refresh procedure (intentional model/config change)
 
-1. Export `INFLUX_TOKEN` from a secure source.
-2. Generate fresh artifacts:
+1. Generate fresh artifacts:
 
    ```bash
    cargo run --bin heatpump-analysis -- thermal-calibrate --config model/thermal-config.toml
@@ -22,19 +21,19 @@ Missing any required file is a hard CI failure.
    cargo run --bin heatpump-analysis -- thermal-fit-diagnostics --config model/thermal-config.toml
    ```
 
-3. Refresh baselines:
+2. Refresh baselines:
 
    ```bash
    bash scripts/refresh-thermal-baselines.sh
    ```
 
-4. Validate gates locally:
+3. Validate gates locally:
 
    ```bash
    bash scripts/thermal-regression-ci.sh
    ```
 
-5. Commit baseline updates in the same PR as the intentional model/config change.
+4. Commit baseline updates in the same PR as the intentional model/config change.
 
 ## Rules
 

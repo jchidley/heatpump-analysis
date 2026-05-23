@@ -33,7 +33,6 @@ adaptive-heating-mvp.rs (separate binary, depends on heatpump_analysis lib)
   ├── data/canonical/thermal_geometry.json (room geometry for solver)
   ├── ebusd TCP (localhost:8888)
   ├── PostgreSQL / TimescaleDB
-  ├── legacy Flux/Influx compatibility tail (still present in some code paths)
   ├── Open-Meteo HTTP (forecast API)
   ├── Axum HTTP API (:3031)
   └── JSONL + PostgreSQL logging
@@ -42,7 +41,7 @@ adaptive-heating-mvp.rs (separate binary, depends on heatpump_analysis lib)
 Key constraints:
 - **analysis.rs has no dependency on db.rs or emoncms.rs** — operates purely on Polars DataFrames
 - **thermal.rs has no dependency on config.rs** — uses its own `ThermalConfig`
-- **adaptive-heating-mvp depends on the thermal solver** via `heatpump_analysis::thermal::bisect_mwt_for_room()` (since Phase 1b). Uses its own config, PostgreSQL-backed latest-value reads, its own eBUS access, its own forecast client, and still carries a legacy Influx compatibility tail in some code. The thermal module is compiled into the binary as a library dependency.
+- **adaptive-heating-mvp depends on the thermal solver** via `heatpump_analysis::thermal::bisect_mwt_for_room()` (since Phase 1b). Uses its own config, PostgreSQL-backed latest-value reads, its own eBUS access, and its own forecast client. The thermal module is compiled into the binary as a library dependency.
 - **gaps.rs bypasses db.rs** — writes directly to `simulated_samples` and `gap_log` tables
 
 ## Data Flow
@@ -59,7 +58,7 @@ emoncms.org API → emoncms.rs::Client → db.rs::sync_all() → SQLite (samples
 SQLite → db.rs::load_dataframe() → analysis.rs::enrich() → analysis functions → stdout
 ```
 
-### Thermal model path (live PostgreSQL-first, with legacy compatibility tail)
+### Thermal model path (live PostgreSQL)
 
 ```
 PostgreSQL / TimescaleDB (pi5data:5432, db "energy")
@@ -69,7 +68,7 @@ PostgreSQL / TimescaleDB (pi5data:5432, db "energy")
   ├── MWT (ebusd/poll/FlowTemp, ReturnTemp)
   ├── PV power (emon/EmonPi2/P3)
   │
-  └──→ PostgreSQL-first readers + legacy `thermal/influx.rs` compatibility helpers
+  └──→ PostgreSQL/TimescaleDB readers
                                  │
                                  └──→ thermal.rs (calibrate / validate / operational)
                                                │
@@ -128,7 +127,7 @@ Room temperature topics must match between:
 - `model/adaptive-heating-mvp.toml` `[topics]` (what gets queried)
 - `model/thermal-config.toml` sensor_topics (what thermal model uses)
 
-The emonth2 uses `value` while Zigbee sensors use `temperature`. PostgreSQL routing preserves that distinction, and the remaining legacy `src/thermal/influx.rs` helpers mirror the same reader semantics.
+The emonth2 uses `value` while Zigbee sensors use `temperature`. PostgreSQL routing preserves that distinction directly in the shared `src/thermal/tsdb.rs` reader path.
 
 ### VRC 700 baseline safety net
 

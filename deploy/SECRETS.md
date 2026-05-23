@@ -6,7 +6,7 @@ The live controller now reads and writes via PostgreSQL. Repo-local migration st
 
 ## Production (pi5data systemd service)
 
-The controller now needs **PostgreSQL conninfo** plus the existing Octopus account credentials. It no longer uses an Influx token or systemd credential.
+The controller needs **PostgreSQL conninfo** plus the existing Octopus account credentials.
 
 ### Where it lives
 
@@ -57,7 +57,7 @@ curl -fsS http://127.0.0.1:3031/status
 sudo grep '^TIMESCALEDB_CONNINFO=' /etc/adaptive-heating-mvp.env
 ```
 
-The service should stay up and `/status` should respond without any Influx token or credential configured.
+The service should stay up and `/status` should respond with the configured PostgreSQL conninfo.
 
 ## Development (WSL2 / local testing)
 
@@ -73,15 +73,9 @@ Local controller runs now need `TIMESCALEDB_CONNINFO` when using `status` or `ru
 | MQTT | Not used directly | N/A | Z2M sensors arrive through the shared data hub |
 | Open-Meteo | Controller (weather forecast) | None needed | Public API, no auth |
 
-## Legacy InfluxDB notes
-
-The live InfluxDB v2 service on `pi5data` has been retired.
-
-If you are working on the remaining archive-import / compatibility tail, treat any Influx-era access as historical-only and prefer the repo-local LP export/import tooling and PostgreSQL-first verification paths. Do not assume a live `:8086` endpoint still exists.
-
 ## What NOT to do
 
 - Don't hardcode tokens in source code or config files tracked by git
 - Don't rely on `ak` for production — it's a dev-machine tool
 - Don't put tokens in `model/adaptive-heating-mvp.toml` — that file is in the repo
-- The legacy `influx_token_env` config field names the environment variable, not the token itself
+- Don't add extra database credentials back to the controller; production uses `TIMESCALEDB_CONNINFO`

@@ -22,7 +22,7 @@ Before changing a host, check:
 
 ```text
 emonhp  ──bridge──┐
-emondhw ──bridge──┼──> pi5data mosquitto -> telegraf -> influxdb -> grafana
+emondhw ──bridge──┼──> pi5data mosquitto -> TimescaleDB/PostgreSQL -> Grafana/controller
 emonpi  ──bridge──┘                │
                                    └── ebusd (Docker) -> ebusd-poll.sh (systemd)
 ```
@@ -120,8 +120,7 @@ Purpose: central broker, storage, dashboards, ebusd, polling, controller service
 
 Docker services:
 - mosquitto
-- influxdb
-- telegraf
+- timescaledb
 - grafana
 - ebusd
 
@@ -132,7 +131,6 @@ Systemd services of interest:
 
 Important files:
 - `~/monitoring/docker-compose.yml`
-- `~/monitoring/telegraf/telegraf.conf`
 - `/usr/local/bin/ebusd-poll.sh`
 - `/etc/adaptive-heating-mvp.env`
 
@@ -150,16 +148,16 @@ Never commit secrets. Use:
 
 ```bash
 ak get emon-pi-credentials
-ak get influxdb
+ak get timescaledb
 ```
 
-Production controller token lives in:
+Production controller database access lives in the root-only environment file:
 
 ```text
-/etc/adaptive-heating-mvp/influx.token
+/etc/adaptive-heating-mvp.env
 ```
 
-It is injected into the service via systemd `LoadCredential=`. `/etc/adaptive-heating-mvp.env` remains for non-Influx env vars only.
+It provides `TIMESCALEDB_CONNINFO` for the controller.
 
 See [`../deploy/SECRETS.md`](../deploy/SECRETS.md).
 

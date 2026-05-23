@@ -22,7 +22,7 @@ Unless you have a named anchor or regression case, start with a rolling 7-day wi
 
 ```bash
 date -u
-export INFLUX_TOKEN=$(ak get influxdb)
+export TIMESCALEDB_CONNINFO="$(ak get timescaledb)"
 cargo run --bin heatpump-analysis -- heating-history
 cargo run --bin heatpump-analysis -- dhw-history
 cargo run --bin heatpump-analysis -- dhw-sessions --days 7 --format json
@@ -49,7 +49,7 @@ Before promoting a finding into a plan or `lat.md`, check for:
 
 ```bash
 date -u
-export INFLUX_TOKEN=$(ak get influxdb)
+export TIMESCALEDB_CONNINFO="$(ak get timescaledb)"
 cargo run --bin heatpump-analysis -- heating-history
 ```
 
@@ -74,7 +74,7 @@ Typical questions:
 
 ```bash
 date -u
-export INFLUX_TOKEN=$(ak get influxdb)
+export TIMESCALEDB_CONNINFO="$(ak get timescaledb)"
 cargo run --bin heatpump-analysis -- dhw-history
 ```
 
@@ -98,7 +98,7 @@ Typical questions:
 
 ```bash
 date -u
-export INFLUX_TOKEN=$(ak get influxdb)
+export TIMESCALEDB_CONNINFO="$(ak get timescaledb)"
 cargo run --bin heatpump-analysis -- heating-history
 cargo run --bin heatpump-analysis -- dhw-history
 ```

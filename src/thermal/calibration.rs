@@ -9,9 +9,9 @@ use super::error::{MeasuredRates, TempSeries, ThermalError, ThermalResult};
 use super::geometry::{
     build_connections, build_doorways, build_rooms, Doorway, InternalConnection, RoomDef,
 };
-use super::influx;
 use super::physics::{doors_all_closed_except_chimney, estimate_thermal_mass, room_energy_balance};
 use super::report;
+use super::tsdb;
 use super::wind::{fetch_open_meteo_wind, wind_multiplier_for_window};
 
 // ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
     }
 
     println!("\n========================================================================");
-    println!("BEST FIT (direct Influx + config-driven bounds)");
+    println!("BEST FIT (TimescaleDB + config-driven bounds)");
     println!("========================================================================");
     println!("leather_ach      = {:.2}", result.leather_ach);
     println!("landing_ach      = {:.2}", result.landing_ach);
@@ -196,10 +196,10 @@ pub fn calibrate(config_path: &Path) -> ThermalResult<()> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn prepare_calibration(cfg: &ThermalConfig) -> ThermalResult<CalibrationSetup> {
-    let night1_start = influx::parse_dt(&cfg.test_nights.night1_start)?;
-    let night1_end = influx::parse_dt(&cfg.test_nights.night1_end)?;
-    let night2_start = influx::parse_dt(&cfg.test_nights.night2_start)?;
-    let night2_end = influx::parse_dt(&cfg.test_nights.night2_end)?;
+    let night1_start = tsdb::parse_dt(&cfg.test_nights.night1_start)?;
+    let night1_end = tsdb::parse_dt(&cfg.test_nights.night1_end)?;
+    let night2_start = tsdb::parse_dt(&cfg.test_nights.night2_start)?;
+    let night2_end = tsdb::parse_dt(&cfg.test_nights.night2_end)?;
 
     let rooms = build_rooms()?;
     let connections = build_connections()?;
@@ -220,30 +220,11 @@ pub(crate) fn prepare_calibration(cfg: &ThermalConfig) -> ThermalResult<Calibrat
         wind_multiplier_for_window(&cfg.wind, &wind_points, night2_start, night2_end);
 
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
-    let token = std::env::var(&cfg.influx.token_env)
-        .map_err(|_| ThermalError::MissingEnv(cfg.influx.token_env.clone()))?;
     let pg_conninfo = super::config::resolve_postgres_conninfo(cfg)?;
 
-    let room_rows = influx::query_room_temps(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &sensor_topics,
-        &earliest,
-        &latest,
-    )?;
+    let room_rows = tsdb::query_room_temps(&pg_conninfo, &sensor_topics, &earliest, &latest)?;
 
-    let outside_rows = influx::query_outside_temp(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &earliest,
-        &latest,
-    )?;
+    let outside_rows = tsdb::query_outside_temp(&pg_conninfo, &earliest, &latest)?;
 
     let room_series = build_room_series(&room_rows, &rooms)?;
     let (meas1, avg1, outside1) =
@@ -574,8 +555,8 @@ pub(crate) fn parse_validation_windows(
     for w in raw {
         out.push(ParsedWindow {
             name: w.name.clone(),
-            start: influx::parse_dt(&w.start)?,
-            end: influx::parse_dt(&w.end)?,
+            start: tsdb::parse_dt(&w.start)?,
+            end: tsdb::parse_dt(&w.end)?,
             door_state: w.door_state.clone(),
         });
     }

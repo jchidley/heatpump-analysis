@@ -303,7 +303,7 @@ mod tests {
             0.8,
             AZ_SE,
             TILT_VERTICAL,
-315.0 * std::f64::consts::PI / 180.0,
+            315.0 * std::f64::consts::PI / 180.0,
         );
         assert!(
             (result - 60.0).abs() < 1e-10,
@@ -388,16 +388,25 @@ mod tests {
                 se_vertical: 110.0,
             },
         ];
-        let (sw, ne, ne_h, se) = avg_irradiance_in_window(
-            &sparse,
-            dt(2024, 6, 21, 10, 10),
-            dt(2024, 6, 21, 13, 50),
-        );
+        let (sw, ne, ne_h, se) =
+            avg_irradiance_in_window(&sparse, dt(2024, 6, 21, 10, 10), dt(2024, 6, 21, 13, 50));
 
-        assert!((sw - 600.0).abs() < 1e-10, "expected midpoint-nearest SW tuple, got {sw}");
-        assert!((ne - 300.0).abs() < 1e-10, "expected midpoint-nearest NE tuple, got {ne}");
-        assert!((ne_h - 225.0).abs() < 1e-10, "expected midpoint-nearest NE horizontal tuple, got {ne_h}");
-        assert!((se - 110.0).abs() < 1e-10, "expected midpoint-nearest SE tuple, got {se}");
+        assert!(
+            (sw - 600.0).abs() < 1e-10,
+            "expected midpoint-nearest SW tuple, got {sw}"
+        );
+        assert!(
+            (ne - 300.0).abs() < 1e-10,
+            "expected midpoint-nearest NE tuple, got {ne}"
+        );
+        assert!(
+            (ne_h - 225.0).abs() < 1e-10,
+            "expected midpoint-nearest NE horizontal tuple, got {ne_h}"
+        );
+        assert!(
+            (se - 110.0).abs() < 1e-10,
+            "expected midpoint-nearest SE tuple, got {se}"
+        );
     }
 
     #[test]

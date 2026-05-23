@@ -34,8 +34,7 @@ All ad-hoc data analysis must push filtering, aggregation, windowing, and arithm
 - **Return only the columns you need**: project the exact output columns instead of selecting wide rows and discarding half the data in Python.
 - **Compute derived values in SQL where possible**: COP (`yield / elec`), ΔT (`flow - return`), rates of change, lag/lead comparisons, and bucketed summaries should stay in the database query.
 - **Client code is for presentation only**: formatting tables, adding markers, and printing summaries. If you're writing a client-side loop that filters or aggregates fetched rows, move that logic into SQL.
-- **Why**: PostgreSQL is the migration target and the durable query surface. Keeping work server-side avoids transport-specific parser contracts, reduces bandwidth, and makes the final cutover path reproducible.
-- **Migration tail rule**: if a diagnostic still needs raw Flux or profiler output, treat it as explicit migration-tail work tracked in [[tsdb-migration]] rather than the default operator path.
+- **Why**: PostgreSQL is the durable query surface. Keeping work server-side avoids transport-specific parser contracts and reduces bandwidth.
 
 ## Timestamp Semantics and Required Precision
 

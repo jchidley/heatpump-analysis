@@ -11,7 +11,7 @@ Four hosts: three emon monitors and one central data hub.
 | **emonpi** | 10.0.1.117 | EmonPi2 (3× CT), DS18B20, Zigbee2MQTT (21 devices) |
 | **emonhp** | 10.0.1.169 | Heat meter (MBUS) + SDM120 electricity meter → emoncms.org |
 | **emondhw** | 10.0.1.46 | Multical 403 DHW meter (T1, T2, flow, volume) |
-| **Serial hardware note** | — | `emondhw` and `emonhp` both currently use QinHeng/WCH `1a86:55d3` USB CDC ACM adapters on one measurement path. `emondhw` uses it for the Multical 403 Modbus link; `emonhp` uses the same adapter family for the SDM120 path, while its MBUS path is a separate Prolific USB serial device and its emonTxV5 path is Silicon Labs CP2102N. |
+| **Serial hardware note** | — | `emondhw` and `emonhp` both currently use QinHeng/WCH `1a86:55d3` USB CDC ACM adapters on one measurement path. `emondhw` uses adapter serial `586D012855` for the Multical 403 Modbus link, exposed by udev as `/dev/ttyMULTICAL`; `emonhp` uses the same adapter family for the SDM120 path, while its MBUS path is a separate Prolific USB serial device and its emonTxV5 path is Silicon Labs CP2102N. |
 | **pi5data** | 10.0.1.230 | Central hub: Docker/system services for Mosquitto, TimescaleDB/PostgreSQL, Grafana, ebusd, `z2m-hub` (:3030), and `adaptive-heating-mvp` (:3031) |
 
 emonpi also runs `energy-hub-tesla.service` — a Python collector that polls the local Powerwall Gateway API every 10s and publishes raw metrics plus derived signals to MQTT as `emon/tesla/+`.
@@ -29,13 +29,13 @@ emonpi  ──bridge──┘           │
                               └── ebusd (Docker) → ebusd-poll.sh (systemd)
 ```
 
-The shared `energy-hub-timescaledb-ingest` service subscribes to `emon/+/+` and other MQTT topics and feeds the shared ingest path on pi5data. `heatpump-analysis` is now PostgreSQL-first by command/config path, while any remaining Influx-era compatibility code belongs in [[tsdb-migration]]. `z2m-hub` polls eBUS via TCP and MQTT for DHW tracking.
+The shared `energy-hub-timescaledb-ingest` service subscribes to `emon/+/+` and other MQTT topics and feeds the shared ingest path on pi5data. `heatpump-analysis` uses PostgreSQL/TimescaleDB for command, history, and controller paths. `z2m-hub` polls eBUS via TCP and MQTT for DHW tracking.
 
 ### Multical outage boundary and recovery
 
 `multical` gaps can originate upstream on `emondhw`, not just in TimescaleDB migration plumbing.
 
-The 2026-04-16 → 2026-04-23 DHW gap proved that if `emondhw` loses `/dev/ttyMULTICAL`, both PostgreSQL and legacy Influx stop receiving fresh `emon/multical/*` data. That outage window cannot be backfilled from local TSDB sources because the source data never reached either store. Treat any future stale `multical` window the same way unless another external archive is known to exist.
+The 2026-04-16 → 2026-04-23 DHW gap proved that if `emondhw` loses `/dev/ttyMULTICAL`, PostgreSQL stops receiving fresh `emon/multical/*` data. That outage window cannot be backfilled from local TSDB sources because the source data never reached the store. Treat any future stale `multical` window the same way unless another external archive is known to exist.
 
 #### Multical stale-data checks
 
@@ -58,20 +58,24 @@ Use these checks in order when DHW data looks stale.
 
 #### Multical recovery action
 
-If `/dev/ttyMULTICAL` is missing and `emonhub` is logging `Not connected to modbus device` / `Could not find Modbus device`, reboot `emondhw` first.
+`/dev/ttyMULTICAL` is the stable Multical device path; `ttyACM0` / `ttyACM1` renumbering should not matter.
+
+It is a udev symlink matched by the QinHeng adapter serial `586D012855`. A udev-triggered `emonhub-multical-reconnect.service` restarts `emonhub` when that adapter appears, because emonhub can otherwise keep a stale Modbus connection after USB disconnect/re-enumeration.
+
+If `emonhub` is logging `Not connected to modbus device` / `Could not find Modbus device`, restart `emonhub` first and verify fresh rows. If `/dev/ttyMULTICAL` is missing or the restart does not recover polling, reboot `emondhw`.
 
 ```bash
+ssh pi@emondhw 'sudo systemctl restart emonhub && sleep 8 && ls -l /dev/ttyMULTICAL && tail -30 /var/log/emonhub/emonhub.log'
+ssh pi5data "docker exec timescaledb psql -U energy -d energy -Atc \"SELECT max(time), now()-max(time) FROM multical;\""
+# Escalate only if the stable symlink is absent or polling still fails:
 ssh pi@emondhw 'sudo reboot'
-sleep 35
-ssh pi@emondhw 'ls -l /dev/ttyMULTICAL && tail -30 /var/log/emonhub/emonhub.log'
-ssh pi5data "docker exec timescaledb psql -U energy -d energy -Atc \"SELECT max(time) FROM multical;\""
 ```
 
-On the recovered system the QinHeng adapter should re-enumerate as `/dev/ttyACM0`, `/dev/ttyMULTICAL` should point back to it, `emonhub` should resume publishing `emon/multical/*`, and fresh `multical` rows should start appearing again in PostgreSQL.
+On the recovered system `/dev/ttyMULTICAL` may point to either `/dev/ttyACM0` or `/dev/ttyACM1`, but emonhub should always connect via `/dev/ttyMULTICAL`, resume publishing `emon/multical/*`, and fresh `multical` rows should start appearing again in PostgreSQL.
 
 ### Tesla MQTT Topics
 
-Published by `energy-hub-tesla.service` on emonpi every ~10s. Telegraf captures them via the `emon/+/+` subscription.
+Published by `energy-hub-tesla.service` on emonpi every ~10s. The TimescaleDB ingest service captures them via the `emon/+/+` subscription.
 
 **Raw Powerwall metrics**: `emon/tesla/soc_pct`, `battery_W`, `home_W`, `grid_W`, `solar_W`, `voltage_V`, `frequency_Hz`, plus cumulative `_Wh` and `_import_Wh` / `_export_Wh` counters.
 
@@ -110,8 +114,9 @@ Planned replacement: xyzroe eBus-TTL adapter → Pico W (Rust/Embassy firmware) 
 Temperature and humidity from separate sources.
 
 - **Temperature** (real-time): `ebusd/poll/OutsideTemp` — VRC 700 OAT sensor on shaded SE wall (well-sited, no compressor or solar influence), 30s interval
-- **Temperature** (cross-check): emoncms feed 503093 — Met Office hourly
-- **Humidity** (live): `outside_temp_humid` SNZB-02P on shaded SE wall near OAT sensor. Paired 7 Apr 2026. Provides: (a) direct AH_out for absolute ACH in all occupied bedrooms, (b) before/after evidence for Elvina trickle vent closure. **Note**: link quality low (6) at initial pairing — monitor for dropouts. **Microclimate**: runs ~5–9°C warmer than ebusd OAT during afternoon (different wall position, less exposed to airflow) — these are two distinct microclimates. **AH analysis rule**: always use SNZB-02P's own (T, RH) pair together to compute AH_out — never combine ebusd OAT temperature with SNZB-02P humidity, as they measure different points.
+- **Temperature** (emoncms outside feed): feed 503093 / tag `metoffice` / name `outside_temperature` — synced into PostgreSQL `metoffice.outside_temperature` by the `energy-hub-emoncms-metoffice-sync` systemd timer; showed 5.76°C at 2026-04-24 04:00 UTC
+- **Temperature + humidity** (live cross-check): `outside_temp_humid` SNZB-02P on shaded SE wall near OAT sensor. Paired 7 Apr 2026. Provides: (a) direct AH_out for absolute ACH in all occupied bedrooms, (b) before/after evidence for Elvina trickle vent closure. **Note**: link quality low (6) at initial pairing — monitor for dropouts. **Microclimate**: runs ~5–9°C warmer than ebusd OAT during afternoon (different wall position, less exposed to airflow) — these are two distinct microclimates. **AH analysis rule**: always use SNZB-02P's own (T, RH) pair together to compute AH_out — never combine ebusd OAT temperature with SNZB-02P humidity, as they measure different points.
+- **Grafana**: `emonhp Heat Pump PostgreSQL` has `Outside Temperature` for eBUS/Zigbee/Met Office cross-checking and `Absolute Humidity` for outdoor-vs-room AH. `DHW Hot Water PostgreSQL` also has `Bathroom/Shower Absolute Humidity` for DHW-use moisture spikes and uses shared crosshair plus fixed left-axis width so panel timing aligns visually. Do not use `sensors.t` as outside temperature; it is not the 5.8°C emoncms outside feed. `Heat Pump eBUS PostgreSQL` also has `Outside Temperature & Air Inlet` with eBUS, Zigbee, and air-inlet series.
 - **Conservatory temperature**: `ebusd/poll/Z2RoomTemp` — VRC 700 Zone 2 room sensor, mounted in conservatory. Reads ~1°C below the former SNZB-02P position. Updated in `thermal_geometry.json`.
 - **Leather humidity**: `emon/emonth2_23/humidity` — emonth2 in Leather. Provides 4th occupied-room data point for overnight moisture network (Parson Russell Terrier, ~10 g/h).
 
@@ -119,9 +124,9 @@ Temperature and humidity from separate sources.
 
 Secrets follow device class and trust boundary.
 
-Pi/Linux services should hold stronger runtime secrets in systemd-managed credentials where practical, but the current `adaptive-heating-mvp` production deployment on pi5data uses a root-only environment file (`/etc/adaptive-heating-mvp.env`) for `TIMESCALEDB_CONNINFO` plus Octopus credentials. It no longer loads any Influx token or systemd Influx credential. Do not store secrets in TOML, pass them on command lines, or check them into the repo.
+Pi/Linux services should hold stronger runtime secrets in systemd-managed credentials where practical, but the current `adaptive-heating-mvp` production deployment on pi5data uses a root-only environment file (`/etc/adaptive-heating-mvp.env`) for `TIMESCALEDB_CONNINFO` plus Octopus credentials. Do not store secrets in TOML, pass them on command lines, or check them into the repo.
 
-Dev/test may use one-shot `ak`-sourced environment injection on the trusted machine only, e.g. `PGPASSWORD=$(ak get timescaledb) ...` or `export TIMESCALEDB_CONNINFO=...`. This is a local operator convenience for verification, not a production secret-distribution mechanism. Legacy ad-hoc Influx access likewise uses `ak get influxdb` only while migration-tail diagnostics still exist. See `deploy/SECRETS.md`.
+Dev/test may use one-shot `ak`-sourced environment injection on the trusted machine only, e.g. `PGPASSWORD=$(ak get timescaledb) ...` or `export TIMESCALEDB_CONNINFO=...`. This is a local operator convenience for verification, not a production secret-distribution mechanism. See `deploy/SECRETS.md`.
 
 MCUs should prefer a gateway pattern via MQTT or a Pi-owned API and should not hold database or cloud secrets unless unavoidable. Any device that must access PostgreSQL, MQTT, or another backend directly gets its own least-privilege credential. Assume MCU secrets may be extractable, so use per-device rotation and revocation.
 
@@ -159,8 +164,6 @@ psql "$TIMESCALEDB_CONNINFO" -c "
 Representative tables: `ebusd` (heat pump / VRC 700), `ebusd_poll` (numeric polled registers), `ebusd_poll_text` (string-valued polled registers), `zigbee` (room sensors), `adaptive_heating_mvp` (controller decisions), `multical` (heat meter + DHW meter fields), `dhw_inflection`, and `dhw_capacity`.
 
 For DHW investigations, check `multical` freshness first. A stale `multical` table with current `ebusd` / `adaptive_heating_mvp` usually means an upstream `emondhw` source outage rather than a PostgreSQL-wide ingest failure.
-
-If a verification task still requires raw Flux or profiler output, treat that as migration-tail work tracked in [[tsdb-migration]] rather than the default operator path.
 
 ## VRC 700 Baseline Settings
 

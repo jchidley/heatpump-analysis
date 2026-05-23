@@ -101,7 +101,7 @@ WWHR on shower drain: 41% effectiveness, +9°C steady-state lift. ~3 min delay. 
 
 The [[src/thermal/dhw_sessions.rs]] CLI analyses draws at 2s Multical resolution with HWC state tracking.
 
-Classifies draws by type (bath/shower/tap), detects draws during HP charging, and treats PostgreSQL/TimescaleDB as the target store for migrated consumers. Legacy InfluxDB writes remain only as migration compatibility; any final removal or proof work belongs in [[tsdb-migration]]. The Multical `dhw_flow` is tap-side (independent of HP circuit) — draws must be tracked regardless of charging state.
+Classifies draws by type (bath/shower/tap), detects draws during HP charging, and persists analysis outputs directly to PostgreSQL/TimescaleDB. The Multical `dhw_flow` is tap-side (independent of HP circuit) — draws must be tracked regardless of charging state.
 
 ### DHW Scheduling
 
@@ -154,7 +154,7 @@ Key emoncms feed IDs and their meanings. All defined in `config.toml` `[[emoncms
 
 | Feed ID | Name | Notes |
 |---------|------|-------|
-| 503093 | outside_temp | Met Office hourly. For real-time prefer `ebusd/poll/OutsideTemp` (30s) |
+| 503093 | outside_temp | Emoncms `metoffice/outside_temperature`; synced to PostgreSQL `metoffice` by energy-hub. For real-time local control prefer `ebusd/poll/OutsideTemp` (30s) |
 | 503101 | indoor_temp | emonth2 in **Leather only**, not whole-house |
 | 512889 | DHW_flag | Dead since Dec 2024 — do not use |
 

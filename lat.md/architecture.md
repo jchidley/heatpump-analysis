@@ -54,9 +54,9 @@ SQLite → [[src/db.rs#load_dataframe]] → [[src/analysis.rs#enrich]] → analy
 
 ### Thermal Model Path
 
-The thermal model reads through `thermal/influx.rs`, a shared TSDB seam that preserves typed contracts while PostgreSQL replaces the old Influx-first paths.
+The thermal model now reads through `thermal/tsdb.rs`, the PostgreSQL-only TSDB seam used by calibration, validation, diagnostics, operational checks, and CLI snapshots.
 
-On pi5data the path is TSDB store → `thermal/influx.rs` → calibration/validation/operational → `artifacts/thermal/*.json`. Room temps come from Zigbee, outside from eBUS, HP state from BuildingCircuitFlow, MWT from FlowTemp/ReturnTemp, and PV from P3 CT.
+On pi5data the path is TSDB store → `thermal/tsdb.rs` → calibration/validation/operational → `artifacts/thermal/*.json`. Room temps come from Zigbee, outside from eBUS, HP state from BuildingCircuitFlow, MWT from FlowTemp/ReturnTemp, and PV from P3 CT.
 
 ### Live Control Path
 
@@ -68,9 +68,9 @@ Mobile controls: phone → z2m-hub (:3030) `/api/heating/*` → HTTP proxy → a
 
 ### History Evidence Path
 
-`thermal/history.rs` now uses the shared TSDB seam, with PostgreSQL as the intended path for representative history reads when `[postgres]` is configured.
+`thermal/history.rs` uses PostgreSQL-first history readers fed by the shared TSDB seam and the thermal config's `[postgres]` conninfo.
 
-`history-review` ([[src/main.rs#run_history_review]]) adds heuristic verdicts and optional day-rounded `dhw_sessions` context. History evidence remains PostgreSQL-first; any remaining Flux compatibility or parity tail work stays tracked in [[tsdb-migration]] rather than the default operator path.
+`history-review` ([[src/main.rs#run_history_review]]) adds heuristic verdicts and optional day-rounded `dhw_sessions` context. History evidence is an operator-facing PostgreSQL path.
 
 ## Configuration
 
@@ -79,7 +79,7 @@ Four active config artifacts define four separate concerns.
 | File | Used by | Concern |
 |------|---------|---------|
 | `config.toml` | CLI analysis modules | Domain constants, thresholds, feed IDs, radiators, battery coverage assumption, Octopus data path |
-| `model/thermal-config.toml` | Thermal model + history commands | Influx connection plus PostgreSQL conninfo for the TSDB seam, test nights, calibration bounds |
+| `model/thermal-config.toml` | Thermal model + history commands | PostgreSQL conninfo for the TSDB seam, test nights, calibration bounds |
 | `model/adaptive-heating-mvp.toml` | Adaptive controller | eBUS host, PostgreSQL conninfo, fallback Cosy windows, baseline, inner loop tuning |
 | `artifacts/thermal/regression-thresholds.toml` | `thermal-regression-check` | Artifact regression gates |
 
@@ -108,9 +108,9 @@ ebusd must be running on localhost:8888. If down: reads error → `missing_core 
 
 ### TSDB Topic and Field Naming
 
-Room temperature topics must match between Telegraf/MQTT ingest, `adaptive-heating-mvp.toml` `[topics]`, and `thermal-config.toml` sensor_topics.
+Room temperature topics must match between MQTT ingest, `adaptive-heating-mvp.toml` `[topics]`, and `thermal-config.toml` sensor_topics.
 
-The emonth2 uses the `value` field while Zigbee sensors use `temperature`; PostgreSQL routing preserves that distinction from the legacy Influx schema.
+The emonth2 uses the `value` field while Zigbee sensors use `temperature`; PostgreSQL routing preserves that distinction.
 
 ### VRC 700 Baseline Safety
 

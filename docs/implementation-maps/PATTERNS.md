@@ -18,7 +18,7 @@ All domain constants live in `config.toml` and are accessed via `config::config(
 
 ## Configuration: Separate TOML (adaptive heating MVP)
 
-`adaptive-heating-mvp` loads its own `Config` from `model/adaptive-heating-mvp.toml`. Fully independent of both `config.rs` and `ThermalConfig`. Includes baseline values, eBUS host, PostgreSQL connection, room topics, inner loop tuning parameters, and configurable Cosy windows for DHW scheduling/logging, plus a remaining legacy Influx compatibility tail where still present in code.
+`adaptive-heating-mvp` loads its own `Config` from `model/adaptive-heating-mvp.toml`. Fully independent of both `config.rs` and `ThermalConfig`. Includes baseline values, eBUS host, PostgreSQL connection, room topics, inner loop tuning parameters, and configurable Cosy windows for DHW scheduling/logging.
 
 **Cost to break**: Config remains separate, but the binary now depends on the thermal solver via `src/lib.rs`. Changing thermal module APIs (especially `bisect_mwt_for_room` signature or `thermal_geometry.json` schema) requires updating both the analysis CLI and the adaptive controller.
 
@@ -93,7 +93,7 @@ Structured documentation in `lat.md/` validated by `lat check`. Sections cross-l
 
 ## Logging: Dual Sink (PostgreSQL + JSONL)
 
-Every control decision is logged to PostgreSQL (for dashboards/analysis) and local JSONL (for agent inspection/audit/replay). Legacy Influx decision logging has been removed from the live stack.
+Every control decision is logged to PostgreSQL (for dashboards/analysis) and local JSONL (for agent inspection/audit/replay).
 
 **Cost to break**: Low — the two sinks are independent. Either can be removed or replaced.
 

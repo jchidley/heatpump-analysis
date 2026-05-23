@@ -9,14 +9,14 @@ use super::artifact::{config_sha256, git_meta, ArtifactCalibrationParams, GitMet
 use super::calibration::{
     avg_room_temps_in_window, avg_series_in_window, build_room_series, calibrate_model,
 };
-use super::config::{resolve_influx_token, resolve_postgres_conninfo};
+use super::config::resolve_postgres_conninfo;
 use super::error::{ThermalError, ThermalResult};
 use super::geometry::build_doorways;
-use super::influx;
 use super::physics::{
     compute_thermal_masses, full_room_energy_balance, pv_to_sw_vertical_irradiance, radiator_output,
 };
 use super::solar::{avg_irradiance_in_window, fetch_surface_irradiance};
+use super::tsdb;
 use super::validation::{whole_house_metrics, RoomResidual, WholeHouseMetrics};
 
 // ---------------------------------------------------------------------------
@@ -151,66 +151,24 @@ pub fn operational_validate(config_path: &Path) -> ThermalResult<()> {
     let range_start = fit_cfg
         .start
         .as_deref()
-        .map(influx::parse_dt)
+        .map(tsdb::parse_dt)
         .transpose()?
         .unwrap_or_else(|| setup.night1_start - chrono::Duration::hours(24));
     let range_end = fit_cfg
         .end
         .as_deref()
-        .map(influx::parse_dt)
+        .map(tsdb::parse_dt)
         .transpose()?
         .unwrap_or_else(|| Utc::now().fixed_offset());
 
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
-    let token = resolve_influx_token(cfg)?;
     let pg_conninfo = resolve_postgres_conninfo(cfg)?;
 
-    let room_rows = influx::query_room_temps(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &sensor_topics,
-        &range_start,
-        &range_end,
-    )?;
-    let outside_rows = influx::query_outside_temp(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &range_start,
-        &range_end,
-    )?;
-    let bcf_rows = influx::query_building_circuit_flow(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &range_start,
-        &range_end,
-    )?;
-    let mwt_rows = influx::query_mwt(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &range_start,
-        &range_end,
-    )?;
-    let pv_rows = influx::query_pv_power(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &range_start,
-        &range_end,
-    )?;
+    let room_rows = tsdb::query_room_temps(&pg_conninfo, &sensor_topics, &range_start, &range_end)?;
+    let outside_rows = tsdb::query_outside_temp(&pg_conninfo, &range_start, &range_end)?;
+    let bcf_rows = tsdb::query_building_circuit_flow(&pg_conninfo, &range_start, &range_end)?;
+    let mwt_rows = tsdb::query_mwt(&pg_conninfo, &range_start, &range_end)?;
+    let pv_rows = tsdb::query_pv_power(&pg_conninfo, &range_start, &range_end)?;
 
     let solar_irradiance = fetch_surface_irradiance(51.60, -0.11, range_start, range_end);
 

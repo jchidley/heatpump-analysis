@@ -1219,13 +1219,31 @@ mod tests {
 
         let enriched = enrich(&df).expect("enrich should succeed");
 
-        let states: Vec<Option<&str>> = enriched.column("state").unwrap().str().unwrap().into_iter().collect();
+        let states: Vec<Option<&str>> = enriched
+            .column("state")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_iter()
+            .collect();
         assert_eq!(states, vec![Some("idle"), Some("heating")]);
 
-        let delta_t: Vec<Option<f64>> = enriched.column("delta_t").unwrap().f64().unwrap().into_iter().collect();
+        let delta_t: Vec<Option<f64>> = enriched
+            .column("delta_t")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .into_iter()
+            .collect();
         assert_eq!(delta_t, vec![Some(5.0), Some(8.0)]);
 
-        let cop: Vec<Option<f64>> = enriched.column("cop").unwrap().f64().unwrap().into_iter().collect();
+        let cop: Vec<Option<f64>> = enriched
+            .column("cop")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .into_iter()
+            .collect();
         assert_eq!(cop[0], None);
         assert_eq!(cop[1], Some(running_heat / running_elec));
     }
@@ -1269,7 +1287,13 @@ mod tests {
         .expect("test dataframe");
 
         let enriched = enrich(&df).expect("enrich should succeed");
-        let delta_t: Vec<Option<f64>> = enriched.column("delta_t").unwrap().f64().unwrap().into_iter().collect();
+        let delta_t: Vec<Option<f64>> = enriched
+            .column("delta_t")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .into_iter()
+            .collect();
 
         assert_eq!(delta_t, vec![None, None]);
     }

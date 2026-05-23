@@ -27,26 +27,10 @@ pub enum ThermalError {
         value: String,
         source: chrono::ParseError,
     },
-    #[error("influx request failed: {0}")]
-    InfluxRequest(reqwest::Error),
-    #[error("failed to read influx response body: {0}")]
-    InfluxResponseRead(reqwest::Error),
-    #[error("influx query failed ({status}): {body}")]
-    InfluxQueryFailed {
-        status: reqwest::StatusCode,
-        body: String,
-    },
     #[error("postgres connect failed: {0}")]
     PostgresConnect(postgres::Error),
     #[error("postgres query failed: {0}")]
     PostgresQuery(postgres::Error),
-    #[error("csv parse error: {0}")]
-    CsvParse(#[from] csv::Error),
-    #[error("missing column '{column}' in row for {context}")]
-    MissingColumn {
-        column: &'static str,
-        context: &'static str,
-    },
     #[error("failed to parse float in {context} from '{value}'")]
     FloatParse {
         context: &'static str,

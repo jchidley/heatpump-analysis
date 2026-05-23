@@ -3,11 +3,11 @@ use std::path::Path;
 
 use chrono::Utc;
 
-use super::config::{load_thermal_config, resolve_influx_token, resolve_postgres_conninfo};
+use super::config::{load_thermal_config, resolve_postgres_conninfo};
 use super::error::ThermalResult;
 use super::geometry::{build_connections, build_doorways, build_rooms};
-use super::influx;
 use super::physics::{estimate_thermal_mass, full_room_energy_balance_components};
+use super::tsdb;
 
 /// Print room summary table (equivalent to Python `cmd_rooms`).
 pub fn print_rooms() -> ThermalResult<()> {
@@ -84,13 +84,12 @@ pub fn print_connections() -> ThermalResult<()> {
     Ok(())
 }
 
-/// Live energy balance from InfluxDB (equivalent to Python `analyse`).
+/// Live energy balance from TimescaleDB (equivalent to Python `analyse`).
 ///
 /// Queries the latest room temperatures, outside temperature, and MWT from
-/// InfluxDB, then computes and prints the per-room energy balance.
+/// TimescaleDB, then computes and prints the per-room energy balance.
 pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
     let (_, cfg) = load_thermal_config(config_path)?;
-    let token = resolve_influx_token(&cfg)?;
     let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let rooms = build_rooms()?;
     let connections = build_connections()?;
@@ -104,36 +103,11 @@ pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
     // Collect sensor topics
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
 
-    let room_rows = influx::query_room_temps(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &sensor_topics,
-        &start,
-        &now,
-    )?;
+    let room_rows = tsdb::query_room_temps(&pg_conninfo, &sensor_topics, &start, &now)?;
 
-    let outside_rows = influx::query_outside_temp(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &start,
-        &now,
-    )?;
+    let outside_rows = tsdb::query_outside_temp(&pg_conninfo, &start, &now)?;
 
-    let mwt_rows = influx::query_mwt(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &start,
-        &now,
-    )?;
+    let mwt_rows = tsdb::query_mwt(&pg_conninfo, &start, &now)?;
 
     // Build topic → room name map
     let topic_to_room: HashMap<&str, &str> =
@@ -160,24 +134,12 @@ pub fn print_analyse(config_path: &Path) -> ThermalResult<()> {
     let ne_horiz = 0.0;
 
     // Query HP heat output and electrical consumption
-    let hp_heat = influx::query_latest_topic_value(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        "ebusd/hmu/CurrentYieldPower",
-        &start,
-        &now,
-    )?
-    .unwrap_or(0.0)
-        * 1000.0; // kW → W
-    let hp_elec = influx::query_latest_topic_value(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
+    let hp_heat =
+        tsdb::query_latest_topic_value(&pg_conninfo, "ebusd/hmu/CurrentYieldPower", &start, &now)?
+            .unwrap_or(0.0)
+            * 1000.0; // kW → W
+    let hp_elec = tsdb::query_latest_topic_value(
+        &pg_conninfo,
         "ebusd/hmu/RunDataElectricPowerConsumption",
         &start,
         &now,
@@ -467,13 +429,12 @@ pub fn print_equilibrium(
     irr_ne: f64,
 ) -> ThermalResult<()> {
     let (_, cfg) = load_thermal_config(config_path)?;
-    let token = resolve_influx_token(&cfg)?;
     let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let rooms = build_rooms()?;
     let connections = build_connections()?;
     let doorways = build_doorways()?;
 
-    // Get current conditions from InfluxDB if not overridden
+    // Get current conditions from TimescaleDB if not overridden
     let utc = chrono::FixedOffset::east_opt(0).unwrap();
     let now = Utc::now().with_timezone(&utc);
     let start = now - chrono::Duration::minutes(30);
@@ -481,30 +442,14 @@ pub fn print_equilibrium(
     let outside_temp = if let Some(v) = outside_temp_override {
         v
     } else {
-        let rows = influx::query_outside_temp(
-            &cfg.influx.url,
-            &cfg.influx.org,
-            &cfg.influx.bucket,
-            &token,
-            pg_conninfo.as_deref(),
-            &start,
-            &now,
-        )?;
+        let rows = tsdb::query_outside_temp(&pg_conninfo, &start, &now)?;
         rows.last().map(|(_, v)| *v).unwrap_or(10.0)
     };
 
     let mwt = if let Some(v) = mwt_override {
         v
     } else {
-        let rows = influx::query_mwt(
-            &cfg.influx.url,
-            &cfg.influx.org,
-            &cfg.influx.bucket,
-            &token,
-            pg_conninfo.as_deref(),
-            &start,
-            &now,
-        )?;
+        let rows = tsdb::query_mwt(&pg_conninfo, &start, &now)?;
         rows.last().map(|(_, v)| *v).unwrap_or(0.0)
     };
 
@@ -702,7 +647,6 @@ fn fetch_outside_humidity(avg_outside: f64) -> (f64, f64) {
 /// Moisture analysis: current snapshot + overnight moisture balance.
 pub fn print_moisture(config_path: &Path) -> ThermalResult<()> {
     let (_, cfg) = load_thermal_config(config_path)?;
-    let token = resolve_influx_token(&cfg)?;
     let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let rooms = build_rooms()?;
 
@@ -714,38 +658,12 @@ pub fn print_moisture(config_path: &Path) -> ThermalResult<()> {
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
 
     // Query room temps (includes humidity for _temp_humid sensors)
-    let room_rows = influx::query_room_temps(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &sensor_topics,
-        &start_24h,
-        &now,
-    )?;
+    let room_rows = tsdb::query_room_temps(&pg_conninfo, &sensor_topics, &start_24h, &now)?;
 
     // Also query humidity — need to build humidity queries
-    let humidity_rows = influx::query_room_humidity(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &sensor_topics,
-        &start_24h,
-        &now,
-    )?;
+    let humidity_rows = tsdb::query_room_humidity(&pg_conninfo, &sensor_topics, &start_24h, &now)?;
 
-    let outside_rows = influx::query_outside_temp(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &start_24h,
-        &now,
-    )?;
+    let outside_rows = tsdb::query_outside_temp(&pg_conninfo, &start_24h, &now)?;
 
     let avg_outside = if outside_rows.is_empty() {
         10.0

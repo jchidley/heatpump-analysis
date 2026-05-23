@@ -7,9 +7,7 @@ use super::error::{ThermalError, ThermalResult};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ThermalConfig {
-    pub influx: InfluxCfg,
-    #[serde(default)]
-    pub postgres: Option<PostgresCfg>,
+    pub postgres: PostgresCfg,
     pub test_nights: TestNights,
     pub objective: ObjectiveCfg,
     pub priors: PriorsCfg,
@@ -20,14 +18,6 @@ pub(crate) struct ThermalConfig {
     pub validation: ValidationCfg,
     #[serde(default)]
     pub fit_diagnostics: FitDiagnosticsCfg,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct InfluxCfg {
-    pub url: String,
-    pub org: String,
-    pub bucket: String,
-    pub token_env: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,20 +190,10 @@ fn default_off_codes() -> Vec<i32> {
     vec![100, 101, 102, 103, 104, 105, 106, 107, 108, 110, 134]
 }
 
-/// Resolve the InfluxDB token from the environment variable named in config.
-pub(crate) fn resolve_influx_token(cfg: &ThermalConfig) -> ThermalResult<String> {
-    std::env::var(&cfg.influx.token_env)
-        .map_err(|_| ThermalError::MissingEnv(cfg.influx.token_env.clone()))
-}
-
-/// Resolve optional PostgreSQL conninfo from the environment variable named in config.
-pub(crate) fn resolve_postgres_conninfo(cfg: &ThermalConfig) -> ThermalResult<Option<String>> {
-    let Some(pg) = &cfg.postgres else {
-        return Ok(None);
-    };
-    std::env::var(&pg.conninfo_env)
-        .map(Some)
-        .map_err(|_| ThermalError::MissingEnv(pg.conninfo_env.clone()))
+/// Resolve PostgreSQL conninfo from the environment variable named in config.
+pub(crate) fn resolve_postgres_conninfo(cfg: &ThermalConfig) -> ThermalResult<String> {
+    std::env::var(&cfg.postgres.conninfo_env)
+        .map_err(|_| ThermalError::MissingEnv(cfg.postgres.conninfo_env.clone()))
 }
 
 pub(crate) fn load_thermal_config(config_path: &Path) -> ThermalResult<(String, ThermalConfig)> {

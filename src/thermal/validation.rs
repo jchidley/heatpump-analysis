@@ -7,12 +7,12 @@ use super::artifact::{build_artifact, write_artifact};
 use super::calibration::{
     calibrate_model, measured_rates, parse_validation_windows, predict_rates,
 };
-use super::config::{resolve_influx_token, resolve_postgres_conninfo};
+use super::config::resolve_postgres_conninfo;
 use super::error::{ThermalError, ThermalResult};
 use super::geometry::build_doorways;
-use super::influx;
 use super::physics::{compute_thermal_masses, doors_all_closed_except_chimney};
 use super::report;
+use super::tsdb;
 use super::wind::{fetch_open_meteo_wind, wind_multiplier_for_window};
 
 // ---------------------------------------------------------------------------
@@ -116,29 +116,12 @@ pub fn validate(config_path: &Path) -> ThermalResult<()> {
     };
 
     let sensor_topics: Vec<&str> = rooms.values().map(|r| r.sensor_topic).collect();
-    let token = resolve_influx_token(cfg)?;
     let pg_conninfo = resolve_postgres_conninfo(cfg)?;
 
-    let room_rows = influx::query_room_temps(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &sensor_topics,
-        &earliest_val,
-        &latest_val,
-    )?;
+    let room_rows =
+        tsdb::query_room_temps(&pg_conninfo, &sensor_topics, &earliest_val, &latest_val)?;
 
-    let outside_rows = influx::query_outside_temp(
-        &cfg.influx.url,
-        &cfg.influx.org,
-        &cfg.influx.bucket,
-        &token,
-        pg_conninfo.as_deref(),
-        &earliest_val,
-        &latest_val,
-    )?;
+    let outside_rows = tsdb::query_outside_temp(&pg_conninfo, &earliest_val, &latest_val)?;
 
     let room_series = super::calibration::build_room_series(&room_rows, rooms)?;
     let doors_normal = build_doorways()?;

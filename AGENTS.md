@@ -172,6 +172,6 @@ Use `lat.md/` for current project truth and `lat.md/src/` plus the source tree f
 - Secrets and tokens: `deploy/SECRETS.md`
 - **PostgreSQL queries from dev machine**: use `TIMESCALEDB_CONNINFO` with `psql`. See `lat.md/infrastructure.md#Ad-hoc PostgreSQL Queries from Dev Machine`.
 - **PostgreSQL-first analysis**: push all filtering, aggregation, windowing, and arithmetic into SQL/TimescaleDB queries. Client-side code (Python/shell) is for final formatting only. See `lat.md/constraints.md#PostgreSQL-First Analysis`.
-- **Legacy Flux/Influx diagnostics**: only use them when explicitly working on the migration tail tracked in `lat.md/tsdb-migration.md`.
+- **TSDB verification**: use PostgreSQL/TimescaleDB for thermal/history/controller verification.
 
 For operational facts, gotchas, and hard boundaries, prefer `lat.md/` instead of duplicating them here.

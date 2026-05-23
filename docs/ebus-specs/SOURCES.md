@@ -63,7 +63,7 @@ This firmware and protocol library are the primary reference for our Pico W eBUS
 | [john30/ebusd](https://github.com/john30/ebusd) | C++ | GPL-3.0 | **What we use.** The standard daemon. Talks to adapters over TCP/serial, decodes messages via CSV definitions. |
 | [john30/ebusd-configuration](https://github.com/john30/ebusd-configuration) | TypeSpec/CSV | CC BY-SA 4.0 | Community-maintained device register definitions. Reverse-engineered. |
 | [yuhu-/ebus](https://github.com/yuhu-/ebus) | C++ | Open source | Standalone C++ library with full protocol engine: FSM, arbitration, scheduler, bus health metrics. Platform abstraction for POSIX/FreeRTOS. Could run directly on embedded. |
-| [yvesf/ebus](https://github.com/yvesf/ebus) | **Rust** + Racket | Open source | eBUS protocol parser in Rust (`ebus-rust`). Includes XML protocol definitions and InfluxDB integration. Parser only, not a full daemon. |
+| [yvesf/ebus](https://github.com/yvesf/ebus) | **Rust** + Racket | Open source | eBUS protocol parser in Rust (`ebus-rust`). Includes XML protocol definitions. Parser only, not a full daemon. |
 | [csowada/ebus](https://github.com/csowada/ebus) | Java | Open source | Java eBUS library. Uses nrjavaserial. |
 
 ### Comparison (inspected locally, cloned to `~/github/ebus-reference/`)

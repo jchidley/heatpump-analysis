@@ -4,9 +4,9 @@ use chrono::{DateTime, FixedOffset, Utc};
 use postgres::{Client as PgClient, NoTls};
 use serde::Serialize;
 
-use super::config::{load_thermal_config, resolve_influx_token, resolve_postgres_conninfo};
+use super::config::{load_thermal_config, resolve_postgres_conninfo};
 use super::error::{ThermalError, ThermalResult};
-use super::influx::{parse_dt, query_flux_csv_pub};
+use super::tsdb::parse_dt;
 
 const DHW_FLOW_THRESHOLD_LH: f64 = 900.0;
 const DHW_MIN_DURATION_SECONDS: i64 = 300;
@@ -18,10 +18,6 @@ const COMFORT_MIN_C: f64 = 20.0;
 
 #[derive(Debug)]
 struct HistoryCtx {
-    url: String,
-    org: String,
-    bucket: String,
-    token: String,
     pg_conninfo: Option<String>,
 }
 
@@ -586,12 +582,7 @@ pub fn dhw_history_summary(
     })
 }
 
-pub fn dhw_history(
-    config_path: &Path,
-    since: &str,
-    until: &str,
-    human: bool,
-) -> ThermalResult<()> {
+pub fn dhw_history(config_path: &Path, since: &str, until: &str, human: bool) -> ThermalResult<()> {
     let summary = dhw_history_summary(config_path, since, until)?;
     if human {
         print_dhw_history_human(&summary);
@@ -806,6 +797,10 @@ fn measurement_text_table_and_column(
     }
 }
 
+fn is_hwcsfmode_live_ebusd_field(measurement: &str, field: &str) -> bool {
+    measurement == "ebusd_poll" && field == "HwcSFMode"
+}
+
 fn topic_table_and_column(topic: &str, field: &str) -> Option<(String, String, Option<String>)> {
     if let Some(device) = topic.strip_prefix("zigbee2mqtt/") {
         return Some((
@@ -912,132 +907,6 @@ fn periods_from_active_series(
     periods
 }
 
-fn query_numeric_point_compact(
-    ctx: &HistoryCtx,
-    flux: &str,
-) -> ThermalResult<Option<NumericPoint>> {
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, flux)?;
-    for row in rows {
-        let Some(ts_str) = row.get("_time") else {
-            continue;
-        };
-        let Some(value_str) = row.get("_value") else {
-            continue;
-        };
-        if ts_str.is_empty() || ts_str == "_time" || value_str.is_empty() {
-            continue;
-        }
-        return Ok(Some(NumericPoint {
-            ts: parse_dt(ts_str)?.to_rfc3339(),
-            value: value_str.parse().map_err(|_| ThermalError::FloatParse {
-                context: "compact point _value",
-                value: value_str.clone(),
-            })?,
-        }));
-    }
-    Ok(None)
-}
-
-fn batch_summary_union_flux(base_vars: &[(String, String, String)]) -> String {
-    let mut script_parts = Vec::new();
-    let mut union_inputs = Vec::new();
-
-    for (var, label, base) in base_vars {
-        script_parts.push(format!("{var} = {base}"));
-
-        for (metric, op, cast_count) in [
-            ("count", "count(column: \"_value\")", true),
-            ("start", "first()", false),
-            ("end", "last()", false),
-            ("min", "min()", false),
-            ("max", "max()", false),
-            ("latest", "last()", false),
-        ] {
-            let result_var = format!("{var}_{metric}");
-            let cast = if cast_count {
-                " |> map(fn: (r) => ({ r with _value: float(v: r._value) }))"
-            } else {
-                ""
-            };
-            script_parts.push(format!(
-                "{result_var} = {var} |> {op}{cast} |> set(key: \"series\", value: \"{label}\") |> set(key: \"metric\", value: \"{metric}\")"
-            ));
-            union_inputs.push(result_var);
-        }
-    }
-
-    script_parts.push(format!("union(tables: [{}])", union_inputs.join(", ")));
-    script_parts.join("\n\n")
-}
-
-fn summaries_from_batch_rows(
-    rows: Vec<std::collections::HashMap<String, String>>,
-) -> ThermalResult<std::collections::HashMap<String, Option<NumericSummary>>> {
-    let mut out = std::collections::HashMap::new();
-    for row in rows {
-        let Some(series) = row.get("series") else {
-            continue;
-        };
-        let Some(metric) = row.get("metric") else {
-            continue;
-        };
-        let entry = out.entry(series.clone()).or_insert_with(|| {
-            Some(NumericSummary {
-                samples: 0,
-                start: None,
-                end: None,
-                min: None,
-                max: None,
-                latest: None,
-            })
-        });
-        let Some(summary) = entry.as_mut() else {
-            continue;
-        };
-        match metric.as_str() {
-            "count" => {
-                let Some(value_str) = row.get("_value") else {
-                    continue;
-                };
-                summary.samples = value_str
-                    .parse::<f64>()
-                    .map_err(|_| ThermalError::FloatParse {
-                        context: "batched summary count _value",
-                        value: value_str.clone(),
-                    })?
-                    .round() as usize;
-            }
-            "start" | "end" | "min" | "max" | "latest" => {
-                let (Some(ts_str), Some(value_str)) = (row.get("_time"), row.get("_value")) else {
-                    continue;
-                };
-                if ts_str.is_empty() || value_str.is_empty() {
-                    continue;
-                }
-                let point = NumericPoint {
-                    ts: parse_dt(ts_str)?.to_rfc3339(),
-                    value: value_str.parse().map_err(|_| ThermalError::FloatParse {
-                        context: "batched summary point _value",
-                        value: value_str.clone(),
-                    })?,
-                };
-                match metric.as_str() {
-                    "start" => summary.start = Some(point),
-                    "end" => summary.end = Some(point),
-                    "min" => summary.min = Some(point),
-                    "max" => summary.max = Some(point),
-                    "latest" => summary.latest = Some(point),
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
-
-    out.retain(|_, value| value.as_ref().map(|s| s.samples > 0).unwrap_or(false));
-    Ok(out)
-}
-
 fn query_topic_numeric_summaries_compact(
     ctx: &HistoryCtx,
     since: &DateTime<FixedOffset>,
@@ -1102,27 +971,7 @@ fn query_topic_numeric_summaries_compact(
         }
         return Ok(out);
     }
-    let flux = batch_summary_union_flux(
-        &specs
-            .iter()
-            .enumerate()
-            .map(|(idx, spec)| {
-                (
-                    format!("topic_base_{idx}"),
-                    spec.label.to_string(),
-                    format!(
-                        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> keep(columns: [\"_time\", \"_value\"])",
-                        ctx.bucket,
-                        since.to_rfc3339(),
-                        until.to_rfc3339(),
-                        spec.topic,
-                        spec.field,
-                    ),
-                )
-            })
-            .collect::<Vec<_>>(),
-    );
-    summaries_from_batch_rows(query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?)
+    Ok(std::collections::HashMap::new())
 }
 
 fn query_measurement_numeric_summaries_compact(
@@ -1173,27 +1022,7 @@ fn query_measurement_numeric_summaries_compact(
         }
         return Ok(out);
     }
-    let flux = batch_summary_union_flux(
-        &specs
-            .iter()
-            .enumerate()
-            .map(|(idx, spec)| {
-                (
-                    format!("measurement_base_{idx}"),
-                    spec.label.to_string(),
-                    format!(
-                        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"])",
-                        ctx.bucket,
-                        since.to_rfc3339(),
-                        until.to_rfc3339(),
-                        spec.measurement,
-                        spec.field,
-                    ),
-                )
-            })
-            .collect::<Vec<_>>(),
-    );
-    summaries_from_batch_rows(query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?)
+    Ok(std::collections::HashMap::new())
 }
 
 fn query_plain_measurement_numeric_summaries_compact(
@@ -1225,27 +1054,7 @@ fn query_plain_measurement_numeric_summaries_compact(
         }
         return Ok(out);
     }
-    let flux = batch_summary_union_flux(
-        &specs
-            .iter()
-            .enumerate()
-            .map(|(idx, spec)| {
-                (
-                    format!("plain_measurement_base_{idx}"),
-                    spec.label.to_string(),
-                    format!(
-                        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r._field == \"{}\") |> keep(columns: [\"_time\", \"_value\"])",
-                        ctx.bucket,
-                        since.to_rfc3339(),
-                        until.to_rfc3339(),
-                        spec.measurement,
-                        spec.field,
-                    ),
-                )
-            })
-            .collect::<Vec<_>>(),
-    );
-    summaries_from_batch_rows(query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?)
+    Ok(std::collections::HashMap::new())
 }
 
 fn query_topic_numeric_last_value_compact(
@@ -1273,15 +1082,7 @@ fn query_topic_numeric_last_value_compact(
             return Ok(row.map(|r| r.get::<_, f64>(0)));
         }
     }
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        topic,
-        field,
-    );
-    Ok(query_numeric_point_compact(ctx, &flux)?.map(|p| p.value))
+    Ok(None)
 }
 
 fn query_measurement_numeric_last_value_compact(
@@ -1304,15 +1105,7 @@ fn query_measurement_numeric_last_value_compact(
             return Ok(row.map(|r| r.get::<_, f64>(0)));
         }
     }
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-    );
-    Ok(query_numeric_point_compact(ctx, &flux)?.map(|p| p.value))
+    Ok(None)
 }
 
 fn query_measurement_string_last_compact(
@@ -1322,7 +1115,7 @@ fn query_measurement_string_last_compact(
     measurement: &str,
     field: &str,
 ) -> ThermalResult<Option<String>> {
-    if measurement == "ebusd_poll" && field == "HwcSFMode" {
+    if is_hwcsfmode_live_ebusd_field(measurement, field) {
         if let Some(mut client) = pg_client(ctx)? {
             let row = client
                 .query_opt(
@@ -1331,22 +1124,6 @@ fn query_measurement_string_last_compact(
                 )
                 .map_err(ThermalError::PostgresQuery)?;
             return Ok(row.map(|r| r.get::<_, String>(0)));
-        }
-
-        let flux = format!(
-            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
-            ctx.bucket,
-            since.to_rfc3339(),
-            until.to_rfc3339(),
-            field,
-        );
-        let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
-        for row in rows {
-            if let Some(v) = row.get("_value") {
-                if !v.is_empty() && v != "_value" {
-                    return Ok(Some(v.clone()));
-                }
-            }
         }
         return Ok(None);
     }
@@ -1377,22 +1154,6 @@ fn query_measurement_string_last_compact(
         }
     }
 
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-    );
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
-    for row in rows {
-        if let Some(v) = row.get("_value") {
-            if !v.is_empty() && v != "_value" {
-                return Ok(Some(v.clone()));
-            }
-        }
-    }
     Ok(None)
 }
 
@@ -1414,30 +1175,18 @@ fn query_topic_below_threshold_periods_compact(
     .map(|v| v < threshold)
     .unwrap_or(false);
 
-    if ctx.pg_conninfo.is_some() {
-        let series = query_topic_numeric_series(ctx, since, until, topic, field, None, None)?;
-        let active = series
-            .into_iter()
-            .map(|(ts, v)| (ts, v < threshold))
-            .collect::<Vec<_>>();
-        return Ok(periods_from_active_series(
-            since,
-            until,
-            baseline_active,
-            None,
-            &active,
-        ));
-    }
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\") |> keep(columns:[\"_time\",\"_value\"]) |> map(fn: (r) => ({{ r with active: if r._value < {} then 1 else 0 }})) |> difference(columns:[\"active\"], keepFirst:false) |> filter(fn:(r) => r.active != 0) |> keep(columns:[\"_time\",\"active\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        topic,
-        field,
-        threshold,
-    );
-    query_state_change_periods_compact(ctx, &flux, since, until, baseline_active, None)
+    let series = query_topic_numeric_series(ctx, since, until, topic, field, None, None)?;
+    let active = series
+        .into_iter()
+        .map(|(ts, v)| (ts, v < threshold))
+        .collect::<Vec<_>>();
+    Ok(periods_from_active_series(
+        since,
+        until,
+        baseline_active,
+        None,
+        &active,
+    ))
 }
 
 fn query_measurement_above_threshold_periods_compact(
@@ -1460,89 +1209,19 @@ fn query_measurement_above_threshold_periods_compact(
     .map(|v| v >= threshold)
     .unwrap_or(false);
 
-    if ctx.pg_conninfo.is_some() {
-        let series =
-            query_measurement_numeric_series(ctx, since, until, measurement, field, every, "last")?;
-        let active = series
-            .into_iter()
-            .map(|(ts, v)| (ts, v >= threshold))
-            .collect::<Vec<_>>();
-        return Ok(periods_from_active_series(
-            since,
-            until,
-            baseline_active,
-            min_duration_seconds,
-            &active,
-        ));
-    }
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> aggregateWindow(every: {}, fn: last, createEmpty: false) |> map(fn: (r) => ({{ r with active: if r._value >= {} then 1 else 0 }})) |> difference(columns:[\"active\"], keepFirst:false) |> filter(fn:(r) => r.active != 0) |> keep(columns:[\"_time\",\"active\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-        every,
-        threshold,
-    );
-    query_state_change_periods_compact(
-        ctx,
-        &flux,
+    let series =
+        query_measurement_numeric_series(ctx, since, until, measurement, field, every, "last")?;
+    let active = series
+        .into_iter()
+        .map(|(ts, v)| (ts, v >= threshold))
+        .collect::<Vec<_>>();
+    Ok(periods_from_active_series(
         since,
         until,
         baseline_active,
         min_duration_seconds,
-    )
-}
-
-fn query_state_change_periods_compact(
-    ctx: &HistoryCtx,
-    flux: &str,
-    since: &DateTime<FixedOffset>,
-    until: &DateTime<FixedOffset>,
-    baseline_active: bool,
-    min_duration_seconds: Option<i64>,
-) -> ThermalResult<Vec<Period>> {
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, flux)?;
-    let mut periods = Vec::new();
-    let mut current_start: Option<DateTime<FixedOffset>> =
-        if baseline_active { Some(*since) } else { None };
-    for row in rows {
-        let Some(ts_str) = row.get("_time") else {
-            continue;
-        };
-        let Some(active_str) = row.get("active") else {
-            continue;
-        };
-        if ts_str.is_empty() || active_str.is_empty() {
-            continue;
-        }
-        let ts = parse_dt(ts_str)?;
-        let active: i32 = active_str.parse().unwrap_or(0);
-        if active > 0 {
-            current_start.get_or_insert(ts);
-        } else if active < 0 {
-            if let Some(start) = current_start.take() {
-                let period = period_from_times(start, ts);
-                if min_duration_seconds
-                    .map(|min| period_duration_seconds(&period) >= min)
-                    .unwrap_or(true)
-                {
-                    periods.push(period);
-                }
-            }
-        }
-    }
-    if let Some(start) = current_start.take() {
-        let period = period_from_times(start, *until);
-        if min_duration_seconds
-            .map(|min| period_duration_seconds(&period) >= min)
-            .unwrap_or(true)
-        {
-            periods.push(period);
-        }
-    }
-    Ok(periods)
+        &active,
+    ))
 }
 
 fn query_dhw_charge_periods_compact(
@@ -1562,69 +1241,6 @@ fn query_dhw_charge_periods_compact(
     )
 }
 
-fn batch_metric_selector_union_flux(specs: &[(String, String, String, String, String)]) -> String {
-    let mut script_parts = Vec::new();
-    let mut union_inputs = Vec::new();
-
-    for (var, series, metric, base, op) in specs {
-        let result_var = format!("{var}_{metric}");
-        script_parts.push(format!("{var} = {base}"));
-        script_parts.push(format!(
-            "{result_var} = {var} |> {op} |> set(key: \"series\", value: \"{series}\") |> set(key: \"metric\", value: \"{metric}\")"
-        ));
-        union_inputs.push(result_var);
-    }
-
-    if union_inputs.is_empty() {
-        return String::new();
-    }
-
-    script_parts.push(format!("union(tables: [{}])", union_inputs.join(", ")));
-    script_parts.join("\n\n")
-}
-
-fn numeric_values_from_batch_rows(
-    rows: Vec<std::collections::HashMap<String, String>>,
-) -> ThermalResult<std::collections::HashMap<(String, String), f64>> {
-    let mut out = std::collections::HashMap::new();
-    for row in rows {
-        let (Some(series), Some(metric), Some(value_str)) =
-            (row.get("series"), row.get("metric"), row.get("_value"))
-        else {
-            continue;
-        };
-        if value_str.is_empty() || value_str == "_value" {
-            continue;
-        }
-        out.insert(
-            (series.clone(), metric.clone()),
-            value_str.parse().map_err(|_| ThermalError::FloatParse {
-                context: "batched numeric selector _value",
-                value: value_str.clone(),
-            })?,
-        );
-    }
-    Ok(out)
-}
-
-fn string_values_from_batch_rows(
-    rows: Vec<std::collections::HashMap<String, String>>,
-) -> std::collections::HashMap<(String, String), String> {
-    let mut out = std::collections::HashMap::new();
-    for row in rows {
-        let (Some(series), Some(metric), Some(value_str)) =
-            (row.get("series"), row.get("metric"), row.get("_value"))
-        else {
-            continue;
-        };
-        if value_str.is_empty() || value_str == "_value" {
-            continue;
-        }
-        out.insert((series.clone(), metric.clone()), value_str.clone());
-    }
-    out
-}
-
 fn query_measurement_string_boundary_compact(
     ctx: &HistoryCtx,
     since: &DateTime<FixedOffset>,
@@ -1633,7 +1249,7 @@ fn query_measurement_string_boundary_compact(
     field: &str,
     first_in_window: bool,
 ) -> ThermalResult<Option<String>> {
-    if measurement == "ebusd_poll" && field == "HwcSFMode" {
+    if is_hwcsfmode_live_ebusd_field(measurement, field) {
         if let Some(mut client) = pg_client(ctx)? {
             let ordering = if first_in_window { "ASC" } else { "DESC" };
             let row = client
@@ -1648,23 +1264,6 @@ fn query_measurement_string_boundary_compact(
             return Ok(row.map(|r| r.get::<_, String>(0)));
         }
 
-        let selector = if first_in_window { "first()" } else { "last()" };
-        let flux = format!(
-            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> {}",
-            ctx.bucket,
-            since.to_rfc3339(),
-            until.to_rfc3339(),
-            field,
-            selector,
-        );
-        let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
-        for row in rows {
-            if let Some(v) = row.get("_value") {
-                if !v.is_empty() && v != "_value" {
-                    return Ok(Some(v.clone()));
-                }
-            }
-        }
         return Ok(None);
     }
 
@@ -1697,24 +1296,6 @@ fn query_measurement_string_boundary_compact(
         }
     }
 
-    let selector = if first_in_window { "first()" } else { "last()" };
-    let flux = format!(
-        "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> {}",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-        selector,
-    );
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
-    for row in rows {
-        if let Some(v) = row.get("_value") {
-            if !v.is_empty() && v != "_value" {
-                return Ok(Some(v.clone()));
-            }
-        }
-    }
     Ok(None)
 }
 
@@ -1852,182 +1433,7 @@ fn query_dhw_charge_summaries_batched_compact(
             .collect();
     }
 
-    let period_summary_flux = batch_summary_union_flux(
-        &parsed_periods
-            .iter()
-            .enumerate()
-            .flat_map(|(idx, (_, start, end))| {
-                [
-                    (
-                        format!("charge_{idx}_t1"),
-                        format!("charge_{idx}_t1"),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            start.to_rfc3339(),
-                            end.to_rfc3339(),
-                        ),
-                    ),
-                    (
-                        format!("charge_{idx}_hwc"),
-                        format!("charge_{idx}_hwc"),
-                        format!(
-                            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> keep(columns: [\"_time\", \"_value\"])",
-                            ctx.bucket,
-                            start.to_rfc3339(),
-                            end.to_rfc3339(),
-                        ),
-                    ),
-                ]
-            })
-            .collect::<Vec<_>>(),
-    );
-    let period_summaries = summaries_from_batch_rows(query_flux_csv_pub(
-        &ctx.url,
-        &ctx.org,
-        &ctx.token,
-        &period_summary_flux,
-    )?)?;
-
-    let numeric_boundary_flux = batch_metric_selector_union_flux(
-        &parsed_periods
-            .iter()
-            .enumerate()
-            .flat_map(|(idx, (_, start, end))| {
-                let start_before = *start - chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKBACK_SECONDS);
-                let end_after = *end + chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKAHEAD_SECONDS);
-                [
-                    (
-                        format!("charge_{idx}_t1_start"), format!("charge_{idx}"), "t1_start".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
-                        "last()".to_string(),
-                    ),
-                    (
-                        format!("charge_{idx}_t1_end"), format!("charge_{idx}"), "t1_end".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
-                        "first()".to_string(),
-                    ),
-                    (
-                        format!("charge_{idx}_hwc_start"), format!("charge_{idx}"), "hwc_start".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
-                        "last()".to_string(),
-                    ),
-                    (
-                        format!("charge_{idx}_hwc_end"), format!("charge_{idx}"), "hwc_end".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
-                        "first()".to_string(),
-                    ),
-                    (
-                        format!("charge_{idx}_remaining_start"), format!("charge_{idx}"), "remaining_start".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"dhw\" and r._field == \"remaining_litres\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
-                        "last()".to_string(),
-                    ),
-                    (
-                        format!("charge_{idx}_remaining_end"), format!("charge_{idx}"), "remaining_end".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"dhw\" and r._field == \"remaining_litres\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
-                        "first()".to_string(),
-                    ),
-                ]
-            })
-            .collect::<Vec<_>>(),
-    );
-    let numeric_boundaries = numeric_values_from_batch_rows(query_flux_csv_pub(
-        &ctx.url,
-        &ctx.org,
-        &ctx.token,
-        &numeric_boundary_flux,
-    )?)?;
-
-    let string_boundary_flux = batch_metric_selector_union_flux(
-        &parsed_periods
-            .iter()
-            .enumerate()
-            .flat_map(|(idx, (_, start, end))| {
-                let start_before = *start - chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKBACK_SECONDS);
-                let end_after = *end + chrono::TimeDelta::seconds(DHW_BOUNDARY_LOOKAHEAD_SECONDS);
-                [
-                    (
-                        format!("charge_{idx}_sfmode_start"), format!("charge_{idx}"), "sfmode_start".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, start_before.to_rfc3339(), start.to_rfc3339()),
-                        "last()".to_string(),
-                    ),
-                    (
-                        format!("charge_{idx}_sfmode_end"), format!("charge_{idx}"), "sfmode_end".to_string(),
-                        format!("from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])", ctx.bucket, end.to_rfc3339(), end_after.to_rfc3339()),
-                        "first()".to_string(),
-                    ),
-                ]
-            })
-            .collect::<Vec<_>>(),
-    );
-    let string_boundaries = string_values_from_batch_rows(query_flux_csv_pub(
-        &ctx.url,
-        &ctx.org,
-        &ctx.token,
-        &string_boundary_flux,
-    )?);
-
-    parsed_periods
-        .iter()
-        .enumerate()
-        .map(|(idx, (period, _, _))| {
-            let charge_key = format!("charge_{idx}");
-            let t1 = period_summaries
-                .get(&format!("charge_{idx}_t1"))
-                .cloned()
-                .unwrap_or(None);
-            let hwc = period_summaries
-                .get(&format!("charge_{idx}_hwc"))
-                .cloned()
-                .unwrap_or(None);
-            let t1_start = numeric_boundaries
-                .get(&(charge_key.clone(), "t1_start".to_string()))
-                .copied();
-            let t1_end = numeric_boundaries
-                .get(&(charge_key.clone(), "t1_end".to_string()))
-                .copied();
-            let hwc_start = numeric_boundaries
-                .get(&(charge_key.clone(), "hwc_start".to_string()))
-                .copied();
-            let hwc_end = numeric_boundaries
-                .get(&(charge_key.clone(), "hwc_end".to_string()))
-                .copied();
-            let remaining_start = numeric_boundaries
-                .get(&(charge_key.clone(), "remaining_start".to_string()))
-                .copied();
-            let remaining_end = numeric_boundaries
-                .get(&(charge_key.clone(), "remaining_end".to_string()))
-                .copied();
-            let sfmode_start = string_boundaries
-                .get(&(charge_key.clone(), "sfmode_start".to_string()))
-                .cloned();
-            let sfmode_end = string_boundaries
-                .get(&(charge_key.clone(), "sfmode_end".to_string()))
-                .cloned();
-            let t1_peak = t1.as_ref().and_then(|s| s.max.as_ref()).map(|p| p.value);
-            let hwc_peak = hwc.as_ref().and_then(|s| s.max.as_ref()).map(|p| p.value);
-
-            Ok(DhwChargeSummary {
-                start: period.start.clone(),
-                end: period.end.clone(),
-                duration_minutes: period.duration_minutes,
-                t1_start_c: t1_start,
-                t1_peak_c: t1_peak,
-                t1_end_c: t1_end,
-                hwc_start_c: hwc_start,
-                hwc_peak_c: hwc_peak,
-                hwc_end_c: hwc_end,
-                remaining_litres_start: remaining_start,
-                remaining_litres_end: remaining_end,
-                sfmode_start,
-                sfmode_end,
-                crossover: match (t1_start, hwc_end) {
-                    (Some(t1_pre), Some(hwc_final)) => Some(hwc_final >= t1_pre),
-                    _ => None,
-                },
-            })
-        })
-        .collect()
+    Ok(Vec::new())
 }
 
 fn query_dhw_max_divergence_compact(
@@ -2035,32 +1441,21 @@ fn query_dhw_max_divergence_compact(
     since: &DateTime<FixedOffset>,
     until: &DateTime<FixedOffset>,
 ) -> ThermalResult<Option<f64>> {
-    if ctx.pg_conninfo.is_some() {
-        let t1 =
-            query_measurement_numeric_series(ctx, since, until, "emon", "dhw_t1", "30s", "last")?;
-        let hwc = query_measurement_numeric_series(
-            ctx,
-            since,
-            until,
-            "ebusd_poll",
-            "HwcStorageTemp",
-            "30s",
-            "last",
-        )?;
-        let hwc_by_ts = hwc.into_iter().collect::<std::collections::HashMap<_, _>>();
-        let max_diff = t1
-            .into_iter()
-            .filter_map(|(ts, t1v)| hwc_by_ts.get(&ts).map(|hwcv| (t1v - *hwcv).abs()))
-            .max_by(|a, b| a.total_cmp(b));
-        return Ok(max_diff);
-    }
-    let flux = format!(
-        "t1 = from(bucket: \"{bucket}\") |> range(start: {start}, stop: {stop}) |> filter(fn: (r) => r._measurement == \"emon\" and r.field == \"dhw_t1\") |> aggregateWindow(every: 30s, fn: last, createEmpty: false) |> keep(columns:[\"_time\",\"_value\"]) |> set(key: \"series\", value: \"t1\")\n\nhwc = from(bucket: \"{bucket}\") |> range(start: {start}, stop: {stop}) |> filter(fn: (r) => r._measurement == \"ebusd_poll\" and r.field == \"HwcStorageTemp\") |> aggregateWindow(every: 30s, fn: last, createEmpty: false) |> keep(columns:[\"_time\",\"_value\"]) |> set(key: \"series\", value: \"hwc\")\n\nunion(tables:[t1, hwc]) |> pivot(rowKey:[\"_time\"], columnKey:[\"series\"], valueColumn:\"_value\") |> map(fn:(r)=> ({{ r with diff: if r.t1 > r.hwc then r.t1 - r.hwc else r.hwc - r.t1 }})) |> keep(columns:[\"_time\",\"diff\"]) |> rename(columns: {{diff: \"_value\"}}) |> max()",
-        bucket = ctx.bucket,
-        start = since.to_rfc3339(),
-        stop = until.to_rfc3339(),
-    );
-    Ok(query_numeric_point_compact(ctx, &flux)?.map(|p| p.value))
+    let t1 = query_measurement_numeric_series(ctx, since, until, "emon", "dhw_t1", "30s", "last")?;
+    let hwc = query_measurement_numeric_series(
+        ctx,
+        since,
+        until,
+        "ebusd_poll",
+        "HwcStorageTemp",
+        "30s",
+        "last",
+    )?;
+    let hwc_by_ts = hwc.into_iter().collect::<std::collections::HashMap<_, _>>();
+    Ok(t1
+        .into_iter()
+        .filter_map(|(ts, t1v)| hwc_by_ts.get(&ts).map(|hwcv| (t1v - *hwcv).abs()))
+        .max_by(|a, b| a.total_cmp(b)))
 }
 
 fn load_ctx_and_window(
@@ -2069,82 +1464,16 @@ fn load_ctx_and_window(
     until: &str,
 ) -> ThermalResult<(HistoryCtx, DateTime<FixedOffset>, DateTime<FixedOffset>)> {
     let (_, cfg) = load_thermal_config(config_path)?;
-    let token = resolve_influx_token(&cfg)?;
     let pg_conninfo = resolve_postgres_conninfo(&cfg)?;
     let since_dt = parse_dt(since)?;
     let until_dt = parse_dt(until)?;
     Ok((
         HistoryCtx {
-            url: cfg.influx.url,
-            org: cfg.influx.org,
-            bucket: cfg.influx.bucket,
-            token,
-            pg_conninfo,
+            pg_conninfo: Some(pg_conninfo),
         },
         since_dt,
         until_dt,
     ))
-}
-
-fn query_timestamp_series(
-    ctx: &HistoryCtx,
-    flux: &str,
-) -> ThermalResult<Vec<DateTime<FixedOffset>>> {
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, flux)?;
-    let mut out = Vec::new();
-    for row in rows {
-        let Some(ts_str) = row.get("_time") else {
-            continue;
-        };
-        if ts_str.is_empty() || ts_str == "_time" {
-            continue;
-        }
-        out.push(parse_dt(ts_str)?);
-    }
-    out.sort();
-    Ok(out)
-}
-
-fn query_numeric_series(
-    ctx: &HistoryCtx,
-    flux: &str,
-) -> ThermalResult<Vec<(DateTime<FixedOffset>, f64)>> {
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, flux)?;
-    let mut out = Vec::new();
-    for row in rows {
-        let Some(ts_str) = row.get("_time") else {
-            continue;
-        };
-        let Some(value_str) = row.get("_value") else {
-            continue;
-        };
-        let Ok(value) = value_str.parse::<f64>() else {
-            continue;
-        };
-        out.push((parse_dt(ts_str)?, value));
-    }
-    out.sort_by_key(|(ts, _)| *ts);
-    Ok(out)
-}
-
-fn query_string_series(
-    ctx: &HistoryCtx,
-    flux: &str,
-) -> ThermalResult<Vec<(DateTime<FixedOffset>, String)>> {
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, flux)?;
-    let mut out = Vec::new();
-    for row in rows {
-        let Some(ts_str) = row.get("_time") else {
-            continue;
-        };
-        let Some(value_str) = row.get("_value") else {
-            continue;
-        };
-        out.push((parse_dt(ts_str)?, value_str.clone()));
-    }
-    out.sort_by_key(|(ts, _)| *ts);
-    out.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-    Ok(out)
 }
 
 fn query_topic_numeric_series(
@@ -2205,16 +1534,7 @@ fn query_topic_numeric_series(
                 .collect());
         }
     }
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\"){}\n  |> keep(columns: [\"_time\", \"_value\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        topic,
-        field,
-        every.map(|e| format!("\n  |> aggregateWindow(every: {e}, fn: {}, createEmpty: false)", agg.unwrap_or("mean"))).unwrap_or_default(),
-    );
-    query_numeric_series(ctx, &flux)
+    Ok(Vec::new())
 }
 
 fn query_measurement_numeric_series(
@@ -2262,17 +1582,7 @@ fn query_measurement_numeric_series(
                 .collect());
         }
     }
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\")\n  |> aggregateWindow(every: {}, fn: {}, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-        every,
-        agg,
-    );
-    query_numeric_series(ctx, &flux)
+    Ok(Vec::new())
 }
 
 fn query_plain_measurement_numeric_series(
@@ -2304,17 +1614,7 @@ fn query_plain_measurement_numeric_series(
             })
             .collect());
     }
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r._field == \"{}\")\n  |> aggregateWindow(every: {}, fn: {}, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-        every,
-        agg,
-    );
-    query_numeric_series(ctx, &flux)
+    Ok(Vec::new())
 }
 
 fn query_measurement_string_series(
@@ -2325,7 +1625,7 @@ fn query_measurement_string_series(
     field: &str,
     every: &str,
 ) -> ThermalResult<Vec<(DateTime<FixedOffset>, String)>> {
-    if measurement == "ebusd_poll" && field == "HwcSFMode" {
+    if is_hwcsfmode_live_ebusd_field(measurement, field) {
         if let Some(mut client) = pg_client(ctx)? {
             let sql = format!(
                 "SELECT bucket, value FROM (SELECT DISTINCT ON (time_bucket(INTERVAL '{interval}', time)) time_bucket(INTERVAL '{interval}', time) AS bucket, time, value FROM ebusd WHERE circuit = '700' AND field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time_bucket(INTERVAL '{interval}', time), time DESC) t ORDER BY bucket",
@@ -2345,15 +1645,7 @@ fn query_measurement_string_series(
                 .collect());
         }
 
-        let flux = format!(
-            "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\")\n  |> aggregateWindow(every: {}, fn: last, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
-            ctx.bucket,
-            since.to_rfc3339(),
-            until.to_rfc3339(),
-            field,
-            every,
-        );
-        return query_string_series(ctx, &flux);
+        return Ok(Vec::new());
     }
 
     if let Some(mut client) = pg_client(ctx)? {
@@ -2395,16 +1687,105 @@ fn query_measurement_string_series(
         }
     }
 
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\")\n  |> aggregateWindow(every: {}, fn: last, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-        every,
-    );
-    query_string_series(ctx, &flux)
+    Ok(Vec::new())
+}
+
+fn rows_to_timestamps(rows: Vec<postgres::Row>) -> Vec<DateTime<FixedOffset>> {
+    rows.into_iter()
+        .map(|row| row.get::<_, DateTime<Utc>>(0).fixed_offset())
+        .collect()
+}
+
+fn query_topic_timestamps(
+    ctx: &HistoryCtx,
+    since: &DateTime<FixedOffset>,
+    until: &DateTime<FixedOffset>,
+    topic: &str,
+    field: &str,
+) -> ThermalResult<Vec<DateTime<FixedOffset>>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = topic_table_and_column(topic, field) {
+            let sql = if table == "zigbee" {
+                format!(
+                    "SELECT time FROM zigbee WHERE device = $1 AND time >= $2 AND time < $3 AND {col} IS NOT NULL ORDER BY time",
+                    col = quoted_identifier(&column),
+                )
+            } else if table == "ebusd_poll" {
+                "SELECT time FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time".to_string()
+            } else {
+                format!(
+                    "SELECT time FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time",
+                    table = table,
+                    col = quoted_identifier(&column),
+                )
+            };
+            let rows = if table == "zigbee" || table == "ebusd_poll" {
+                client
+                    .query(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                client
+                    .query(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(rows_to_timestamps(rows));
+        }
+    }
+    Ok(Vec::new())
+}
+
+fn query_measurement_timestamps(
+    ctx: &HistoryCtx,
+    since: &DateTime<FixedOffset>,
+    until: &DateTime<FixedOffset>,
+    measurement: &str,
+    field: &str,
+) -> ThermalResult<Vec<DateTime<FixedOffset>>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        if let Some((table, column, extra)) = measurement_table_and_column(measurement, field) {
+            let sql = if table == "ebusd_poll" {
+                "SELECT time FROM ebusd_poll WHERE field = $1 AND time >= $2 AND time < $3 AND value IS NOT NULL ORDER BY time".to_string()
+            } else {
+                format!(
+                    "SELECT time FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time",
+                    table = table,
+                    col = quoted_identifier(&column),
+                )
+            };
+            let rows = if table == "ebusd_poll" {
+                client
+                    .query(&sql, &[&extra.unwrap(), since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            } else {
+                client
+                    .query(&sql, &[since, until])
+                    .map_err(ThermalError::PostgresQuery)?
+            };
+            return Ok(rows_to_timestamps(rows));
+        }
+    }
+    Ok(Vec::new())
+}
+
+fn query_plain_measurement_timestamps(
+    ctx: &HistoryCtx,
+    since: &DateTime<FixedOffset>,
+    until: &DateTime<FixedOffset>,
+    measurement: &str,
+    field: &str,
+) -> ThermalResult<Vec<DateTime<FixedOffset>>> {
+    if let Some(mut client) = pg_client(ctx)? {
+        let sql = format!(
+            "SELECT time FROM {table} WHERE time >= $1 AND time < $2 AND {col} IS NOT NULL ORDER BY time",
+            table = measurement,
+            col = quoted_identifier(field),
+        );
+        let rows = client
+            .query(&sql, &[since, until])
+            .map_err(ThermalError::PostgresQuery)?;
+        return Ok(rows_to_timestamps(rows));
+    }
+    Ok(Vec::new())
 }
 
 fn sampling_stats_from_timestamps(
@@ -2441,15 +1822,7 @@ fn sampling_stats_for_topic(
     topic: &str,
     field: &str,
 ) -> ThermalResult<SamplingStats> {
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r.topic == \"{}\" and r._field == \"{}\")\n  |> keep(columns: [\"_time\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        topic,
-        field,
-    );
-    let times = query_timestamp_series(ctx, &flux)?;
+    let times = query_topic_timestamps(ctx, since, until, topic, field)?;
     Ok(sampling_stats_from_timestamps(label, since, until, &times))
 }
 
@@ -2461,15 +1834,7 @@ fn sampling_stats_for_measurement(
     measurement: &str,
     field: &str,
 ) -> ThermalResult<SamplingStats> {
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r.field == \"{}\")\n  |> keep(columns: [\"_time\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-    );
-    let times = query_timestamp_series(ctx, &flux)?;
+    let times = query_measurement_timestamps(ctx, since, until, measurement, field)?;
     Ok(sampling_stats_from_timestamps(label, since, until, &times))
 }
 
@@ -2481,15 +1846,7 @@ fn sampling_stats_for_plain_measurement(
     measurement: &str,
     field: &str,
 ) -> ThermalResult<SamplingStats> {
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"{}\" and r._field == \"{}\")\n  |> keep(columns: [\"_time\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-        measurement,
-        field,
-    );
-    let times = query_timestamp_series(ctx, &flux)?;
+    let times = query_plain_measurement_timestamps(ctx, since, until, measurement, field)?;
     Ok(sampling_stats_from_timestamps(label, since, until, &times))
 }
 
@@ -2519,43 +1876,7 @@ fn query_controller_rows(
             .collect());
     }
 
-    let flux = format!(
-        "from(bucket: \"{}\")\n  |> range(start: {}, stop: {})\n  |> filter(fn: (r) => r._measurement == \"adaptive_heating_mvp\")\n  |> filter(fn: (r) => r._field == \"target_flow_c\" or r._field == \"curve_after\" or r._field == \"flow_desired_c\")\n  |> map(fn: (r) => ({{ r with mode: if exists r.mode then r.mode else \"unknown\", action: if exists r.action then r.action else \"unknown\", tariff: if exists r.tariff then r.tariff else \"unknown\" }}))\n  |> pivot(rowKey: [\"_time\", \"mode\", \"action\", \"tariff\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> keep(columns: [\"_time\", \"mode\", \"action\", \"tariff\", \"target_flow_c\", \"curve_after\", \"flow_desired_c\"])",
-        ctx.bucket,
-        since.to_rfc3339(),
-        until.to_rfc3339(),
-    );
-    let rows = query_flux_csv_pub(&ctx.url, &ctx.org, &ctx.token, &flux)?;
-    let mut out = Vec::new();
-    for row in rows {
-        let Some(ts_str) = row.get("_time") else {
-            continue;
-        };
-        if ts_str.is_empty() || ts_str == "_time" {
-            continue;
-        }
-        let ts = parse_dt(ts_str)?;
-        out.push(ControllerRow {
-            ts,
-            mode: row
-                .get("mode")
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string()),
-            action: row
-                .get("action")
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string()),
-            tariff: row
-                .get("tariff")
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string()),
-            target_flow_c: row.get("target_flow_c").and_then(|v| v.parse().ok()),
-            curve_after: row.get("curve_after").and_then(|v| v.parse().ok()),
-            flow_desired_c: row.get("flow_desired_c").and_then(|v| v.parse().ok()),
-        });
-    }
-    out.sort_by_key(|row| row.ts);
-    Ok(out)
+    Ok(Vec::new())
 }
 
 fn summarize_numeric(series: &[(DateTime<FixedOffset>, f64)]) -> Option<NumericSummary> {
@@ -3277,6 +2598,26 @@ mod tests {
         assert!(summarize_numeric(&[]).is_none());
     }
 
+    // @lat: [[tests#History evidence helpers#PostgreSQL row summary keeps single-sample windows]]
+    #[test]
+    fn rows_to_numeric_summary_keeps_single_sample_window() {
+        let ts = dt(2026, 4, 10, 6, 0);
+        let summary = rows_to_numeric_summary(vec![(ts, 18.5)]).unwrap();
+
+        assert_eq!(summary.samples, 1);
+        assert_eq!(summary.start.as_ref().unwrap().ts, ts.to_rfc3339());
+        assert_eq!(summary.end.as_ref().unwrap().ts, ts.to_rfc3339());
+        assert_eq!(summary.latest.as_ref().unwrap().value, 18.5);
+        assert_eq!(summary.min.as_ref().unwrap().value, 18.5);
+        assert_eq!(summary.max.as_ref().unwrap().value, 18.5);
+    }
+
+    // @lat: [[tests#History evidence helpers#PostgreSQL row summary drops empty windows]]
+    #[test]
+    fn rows_to_numeric_summary_drops_empty_windows() {
+        assert!(rows_to_numeric_summary(Vec::new()).is_none());
+    }
+
     // @lat: [[tests#History evidence helpers#Recent-end lookback ignores invalid periods]]
     #[test]
     fn period_contains_recent_end_requires_valid_period_inside_lookback() {
@@ -3360,104 +2701,6 @@ mod tests {
         assert!(summary_has_min_below(&summary, 40.0));
         assert!(!summary_has_min_below(&summary, 37.0));
         assert!(!summary_has_min_below(&None, 40.0));
-    }
-
-    fn row(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    }
-
-    // @lat: [[tests#History evidence helpers#summaries_from_batch_rows pivots metrics into NumericSummary]]
-    #[test]
-    fn summaries_from_batch_rows_pivots_metrics() {
-        let ts = "2026-04-10T07:00:00+00:00";
-        let rows = vec![
-            row(&[("series", "leather"), ("metric", "count"), ("_value", "42")]),
-            row(&[
-                ("series", "leather"),
-                ("metric", "min"),
-                ("_time", ts),
-                ("_value", "18.5"),
-            ]),
-            row(&[
-                ("series", "leather"),
-                ("metric", "max"),
-                ("_time", ts),
-                ("_value", "21.0"),
-            ]),
-            // Single-sample series must also be retained (count > 0, not > 1)
-            row(&[("series", "outside"), ("metric", "count"), ("_value", "1")]),
-            row(&[
-                ("series", "outside"),
-                ("metric", "min"),
-                ("_time", ts),
-                ("_value", "5.0"),
-            ]),
-        ];
-        let out = summaries_from_batch_rows(rows).unwrap();
-        let s = out.get("leather").unwrap().as_ref().unwrap();
-        assert_eq!(s.samples, 42);
-        assert!((s.min.as_ref().unwrap().value - 18.5).abs() < 0.01);
-        assert!((s.max.as_ref().unwrap().value - 21.0).abs() < 0.01);
-
-        // Single-sample series retained
-        let o = out.get("outside").unwrap().as_ref().unwrap();
-        assert_eq!(o.samples, 1);
-    }
-
-    // @lat: [[tests#History evidence helpers#summaries_from_batch_rows drops zero-sample series]]
-    #[test]
-    fn summaries_from_batch_rows_drops_zero_sample_series() {
-        // Series with no count row → samples stays 0 → dropped by retain
-        let ts = "2026-04-10T07:00:00+00:00";
-        let rows = vec![row(&[
-            ("series", "empty"),
-            ("metric", "min"),
-            ("_time", ts),
-            ("_value", "20.0"),
-        ])];
-        let out = summaries_from_batch_rows(rows).unwrap();
-        assert!(out.is_empty(), "zero-sample series should be dropped");
-    }
-
-    // @lat: [[tests#History evidence helpers#numeric_values_from_batch_rows parses keyed values]]
-    #[test]
-    fn numeric_values_from_batch_rows_parses_keyed_values() {
-        let rows = vec![
-            row(&[("series", "flow"), ("metric", "max"), ("_value", "42.5")]),
-            row(&[("series", "flow"), ("metric", "min"), ("_value", "38.0")]),
-            // skip header sentinel
-            row(&[("series", "flow"), ("metric", "avg"), ("_value", "_value")]),
-            // skip empty
-            row(&[("series", "flow"), ("metric", "count"), ("_value", "")]),
-        ];
-        let out = numeric_values_from_batch_rows(rows).unwrap();
-        assert_eq!(out.len(), 2);
-        assert!((out[&("flow".to_string(), "max".to_string())] - 42.5).abs() < 0.01);
-        assert!((out[&("flow".to_string(), "min".to_string())] - 38.0).abs() < 0.01);
-    }
-
-    // @lat: [[tests#History evidence helpers#string_values_from_batch_rows skips empty and sentinel values]]
-    #[test]
-    fn string_values_from_batch_rows_skips_empties() {
-        let rows = vec![
-            row(&[
-                ("series", "mode"),
-                ("metric", "last"),
-                ("_value", "heating"),
-            ]),
-            row(&[("series", "mode"), ("metric", "first"), ("_value", "")]),
-            row(&[
-                ("series", "mode"),
-                ("metric", "header"),
-                ("_value", "_value"),
-            ]),
-        ];
-        let out = string_values_from_batch_rows(rows);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[&("mode".to_string(), "last".to_string())], "heating");
     }
 
     // @lat: [[tests#History evidence helpers#numeric_points_from_series maps DateTime-f64 pairs]]
@@ -3544,62 +2787,6 @@ mod tests {
         assert_eq!(event.flow_desired_c, None);
     }
 
-    // @lat: [[tests#History evidence helpers#batch_summary_union_flux builds union with all metrics]]
-    #[test]
-    fn batch_summary_union_flux_builds_union() {
-        let vars = vec![(
-            "s1".to_string(),
-            "leather".to_string(),
-            "base_query_1".to_string(),
-        )];
-        let result = batch_summary_union_flux(&vars);
-        assert!(result.contains("s1 = base_query_1"));
-        assert!(result.contains("s1_count"));
-        assert!(result.contains("s1_min"));
-        assert!(result.contains("s1_max"));
-        assert!(result.contains("s1_start"));
-        assert!(result.contains("s1_end"));
-        assert!(result.contains("s1_latest"));
-        assert!(result.contains("\"leather\""));
-        assert!(result.contains("union(tables:"));
-    }
-
-    // @lat: [[tests#History evidence helpers#batch_metric_selector_union_flux builds union from specs]]
-    #[test]
-    fn batch_metric_selector_union_flux_builds_union() {
-        let specs = vec![
-            (
-                "v1".to_string(),
-                "flow".to_string(),
-                "max".to_string(),
-                "base1".to_string(),
-                "max()".to_string(),
-            ),
-            (
-                "v2".to_string(),
-                "temp".to_string(),
-                "min".to_string(),
-                "base2".to_string(),
-                "min()".to_string(),
-            ),
-        ];
-        let result = batch_metric_selector_union_flux(&specs);
-        assert!(result.contains("v1 = base1"));
-        assert!(result.contains("v1_max = v1 |> max()"));
-        assert!(result.contains("\"flow\""));
-        assert!(result.contains("v2 = base2"));
-        assert!(result.contains("v2_min = v2 |> min()"));
-        assert!(result.contains("\"temp\""));
-        assert!(result.contains("union(tables: [v1_max, v2_min])"));
-    }
-
-    // @lat: [[tests#History evidence helpers#batch_metric_selector_union_flux returns empty for empty input]]
-    #[test]
-    fn batch_metric_selector_union_flux_empty() {
-        let result = batch_metric_selector_union_flux(&[]);
-        assert!(result.is_empty());
-    }
-
     // @lat: [[tests#History evidence helpers#controller_rows_target_series filters None targets]]
     #[test]
     fn controller_rows_target_series_filters_none() {
@@ -3629,82 +2816,8 @@ mod tests {
         assert!((series[0].1 - 35.0).abs() < 0.01);
     }
 
-    fn history_parity_window_override() -> Option<(DateTime<FixedOffset>, DateTime<FixedOffset>)> {
-        let since = std::env::var("HISTORY_PARITY_SINCE_RFC3339").ok();
-        let until = std::env::var("HISTORY_PARITY_UNTIL_RFC3339").ok();
-        match (since, until) {
-            (None, None) => None,
-            (Some(since), Some(until)) => {
-                let since = DateTime::parse_from_rfc3339(&since)
-                    .expect("parse HISTORY_PARITY_SINCE_RFC3339 as RFC3339");
-                let until = DateTime::parse_from_rfc3339(&until)
-                    .expect("parse HISTORY_PARITY_UNTIL_RFC3339 as RFC3339");
-                assert!(until > since, "HISTORY_PARITY_UNTIL_RFC3339 must be after HISTORY_PARITY_SINCE_RFC3339");
-                Some((since, until))
-            }
-            _ => panic!("set both HISTORY_PARITY_SINCE_RFC3339 and HISTORY_PARITY_UNTIL_RFC3339, or neither"),
-        }
-    }
-
-    fn real_history_ctxs() -> Option<(HistoryCtx, HistoryCtx, DateTime<FixedOffset>, DateTime<FixedOffset>)> {
-        let (_, cfg) = load_thermal_config(Path::new("model/thermal-config.toml")).ok()?;
-        let token = std::env::var(&cfg.influx.token_env).ok()?;
-        let conninfo = cfg.postgres.as_ref().and_then(|pg| std::env::var(&pg.conninfo_env).ok())?;
-        let (since, until) = history_parity_window_override().unwrap_or_else(|| {
-            let until = chrono::Utc::now().fixed_offset();
-            let since = until - chrono::TimeDelta::hours(24);
-            (since, until)
-        });
-        let flux_ctx = HistoryCtx {
-            url: cfg.influx.url.clone(),
-            org: cfg.influx.org.clone(),
-            bucket: cfg.influx.bucket.clone(),
-            token: token.clone(),
-            pg_conninfo: None,
-        };
-        let pg_ctx = HistoryCtx {
-            url: cfg.influx.url,
-            org: cfg.influx.org,
-            bucket: cfg.influx.bucket,
-            token,
-            pg_conninfo: Some(conninfo),
-        };
-        Some((flux_ctx, pg_ctx, since, until))
-    }
-
-    // @lat: [[tests#History evidence helpers#Controller rows match between Flux and PostgreSQL on a representative window]]
-    #[test]
-    #[ignore]
-    fn controller_rows_match_between_flux_and_postgres_on_representative_window() {
-        let Some((flux_ctx, pg_ctx, since, until)) = real_history_ctxs() else {
-            eprintln!("skipping: INFLUX_TOKEN or TIMESCALEDB_CONNINFO missing");
-            return;
-        };
-
-        let flux_rows = query_controller_rows(&flux_ctx, &since, &until).expect("query controller rows from Flux");
-        let pg_rows = query_controller_rows(&pg_ctx, &since, &until).expect("query controller rows from PostgreSQL");
-
-        assert!(
-            !flux_rows.is_empty(),
-            "representative window should contain controller rows"
-        );
-        assert_eq!(pg_rows.len(), flux_rows.len(), "PG and Flux row counts differ");
-
-        for (pg_row, flux_row) in pg_rows.iter().zip(flux_rows.iter()) {
-            assert_eq!(pg_row.ts, flux_row.ts, "timestamp mismatch");
-            assert_eq!(pg_row.mode, flux_row.mode, "mode mismatch at {}", pg_row.ts);
-            assert_eq!(pg_row.action, flux_row.action, "action mismatch at {}", pg_row.ts);
-            assert_eq!(pg_row.tariff, flux_row.tariff, "tariff mismatch at {}", pg_row.ts);
-            assert_eq!(pg_row.target_flow_c, flux_row.target_flow_c, "target_flow mismatch at {}", pg_row.ts);
-            assert_eq!(pg_row.curve_after, flux_row.curve_after, "curve_after mismatch at {}", pg_row.ts);
-            assert_eq!(pg_row.flow_desired_c, flux_row.flow_desired_c, "flow_desired mismatch at {}", pg_row.ts);
-        }
-    }
-
-    // ── Filter variant routing (migration regression) ──────────────────────
-    // history.rs uses three distinct InfluxDB filter patterns. Each maps to
-    // a different PostgreSQL table routing strategy. These tests document the
-    // routing contracts the SQL migration must preserve.
+    // ── Filter variant routing ───────────────────────────────────────────
+    // history.rs preserves three query-routing shapes on the PostgreSQL path.
 
     // @lat: [[tests#History filter variant routing#Topic filter routes by topic prefix and field name]]
     #[test]
@@ -3803,37 +2916,35 @@ mod tests {
         );
         assert_eq!(
             measurement_text_table_and_column("adaptive_heating_mvp", "action"),
-            Some(("adaptive_heating_mvp".to_string(), "action".to_string(), None))
+            Some((
+                "adaptive_heating_mvp".to_string(),
+                "action".to_string(),
+                None
+            ))
         );
         assert_eq!(
             measurement_text_table_and_column("adaptive_heating_mvp", "tariff"),
-            Some(("adaptive_heating_mvp".to_string(), "tariff".to_string(), None))
+            Some((
+                "adaptive_heating_mvp".to_string(),
+                "tariff".to_string(),
+                None
+            ))
         );
     }
 
     // @lat: [[tests#History filter variant routing#HwcSFMode reads use ebusd live field semantics]]
     #[test]
     fn hwcsfmode_history_queries_use_live_ebusd_field() {
-        let flux = format!(
-            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"{}\") |> keep(columns: [\"_time\", \"_value\"]) |> last()",
-            "energy",
-            "2026-03-22T13:45:00Z",
-            "2026-03-22T14:00:00Z",
-            "HwcSFMode",
+        assert!(is_hwcsfmode_live_ebusd_field("ebusd_poll", "HwcSFMode"));
+        assert!(!is_hwcsfmode_live_ebusd_field("ebusd_poll", "Statuscode"));
+        assert_eq!(
+            measurement_text_table_and_column("ebusd", "HwcSFMode"),
+            Some((
+                "ebusd".to_string(),
+                "value".to_string(),
+                Some("HwcSFMode".to_string())
+            ))
         );
-        assert!(flux.contains("r._measurement == \"ebusd\""));
-        assert!(flux.contains("r.circuit == \"700\""));
-        assert!(flux.contains("r.field == \"HwcSFMode\""));
-
-        let boundary_flux = format!(
-            "from(bucket: \"{}\") |> range(start: {}, stop: {}) |> filter(fn: (r) => r._measurement == \"ebusd\" and r.circuit == \"700\" and r.field == \"HwcSFMode\") |> keep(columns: [\"_time\", \"_value\"])",
-            "energy",
-            "2026-03-22T13:40:00Z",
-            "2026-03-22T13:45:00Z",
-        );
-        assert!(boundary_flux.contains("r._measurement == \"ebusd\""));
-        assert!(boundary_flux.contains("r.circuit == \"700\""));
-        assert!(boundary_flux.contains("r.field == \"HwcSFMode\""));
     }
 
     // @lat: [[tests#History filter variant routing#Plain measurement filter uses underscore field]]

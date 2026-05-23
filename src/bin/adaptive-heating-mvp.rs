@@ -365,10 +365,12 @@ const CURVE_FLOOR: f64 = 0.10;
 const CURVE_CEILING: f64 = 4.00;
 /// Warn if curve exceeds this
 const CURVE_WARN_THRESHOLD: f64 = 1.50;
-/// Above the VRC setpoint the inverse heat-curve formula becomes ill-conditioned.
-/// In that region the outer loop seeds a known-safe baseline curve and lets the
-/// inner loop/black-box readback handle any real residual demand.
-const WARM_END_FORMULA_DISABLE_MARGIN_C: f64 = 0.0;
+/// Near the VRC setpoint the inverse heat-curve formula becomes ill-conditioned.
+/// In that warm low-load region, a tiny outside-temperature gap can imply a
+/// very high curve for a modest target flow. Seed the known-safe baseline curve
+/// and suppress inner-loop flow chasing instead.
+const WARM_END_FORMULA_DISABLE_MARGIN_C: f64 = 5.0;
+const WARM_END_LOW_LOAD_MAX_FLOW_C: f64 = 28.5;
 
 fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
@@ -584,7 +586,10 @@ struct DecisionWriteRow {
 
 fn decision_write_row(entry: &DecisionLog) -> DecisionWriteRow {
     DecisionWriteRow {
-        ts: entry.ts.with_nanosecond(0).expect("truncate decision timestamp to whole seconds"),
+        ts: entry
+            .ts
+            .with_nanosecond(0)
+            .expect("truncate decision timestamp to whole seconds"),
         mode: format!("{:?}", entry.mode).to_lowercase(),
         action: entry.action.replace(' ', "_"),
         tariff: entry.tariff_period.replace(' ', "_"),
@@ -701,8 +706,12 @@ fn save_runtime_state(path: &Path, state: &RuntimeState) -> Result<()> {
 }
 
 fn resolve_postgres_conninfo(config: &Config) -> Result<String> {
-    std::env::var(&config.postgres.conninfo_env)
-        .map_err(|_| anyhow!("missing postgres conninfo env {}", config.postgres.conninfo_env))
+    std::env::var(&config.postgres.conninfo_env).map_err(|_| {
+        anyhow!(
+            "missing postgres conninfo env {}",
+            config.postgres.conninfo_env
+        )
+    })
 }
 
 fn pg_client(conninfo: &str) -> Result<PgClient> {
@@ -845,7 +854,7 @@ fn parse_f64(s: Result<String>) -> Option<f64> {
 }
 
 // ---------------------------------------------------------------------------
-// InfluxDB queries
+// Latest-value PostgreSQL queries
 // ---------------------------------------------------------------------------
 
 fn query_latest_topic_value(
@@ -907,8 +916,8 @@ fn query_latest_room_temp(client: &Client, config: &Config, topic: &str) -> Resu
     query_latest_topic_value(client, config, topic, latest_topic_field(topic), "-2h")
 }
 
-/// Query latest DHW T1 (cylinder top) from InfluxDB Multical data.
-/// Uses _field="value" (emon measurement format, not zigbee).
+/// Query latest DHW T1 (cylinder top) from TimescaleDB Multical data.
+/// Uses the emon-style value-field semantics, not zigbee temperature routing.
 fn query_latest_dhw_t1(client: &Client, config: &Config) -> Result<Option<f64>> {
     query_latest_topic_value(client, config, &config.topics.dhw_t1, "value", "-2h")
 }
@@ -1043,7 +1052,8 @@ fn write_postgres_decision(conninfo: &str, entry: &DecisionLog) -> Result<()> {
 }
 
 fn write_decision_log(_client: &Client, config: &Config, entry: &DecisionLog) -> Result<()> {
-    let conninfo = resolve_postgres_conninfo(config).context("resolve postgres decision log conninfo")?;
+    let conninfo =
+        resolve_postgres_conninfo(config).context("resolve postgres decision log conninfo")?;
     write_postgres_decision(&conninfo, entry).context("postgres decision log")
 }
 
@@ -1368,6 +1378,7 @@ struct ModelCalculation {
     required_mwt: Option<f64>,
     required_flow: Option<f64>,
     required_curve: Option<f64>,
+    suppress_inner_flow_chase: bool,
     reason: String,
 }
 
@@ -1417,7 +1428,9 @@ fn calculate_required_curve_for_target(
     let mut warm_end_curve_fallback = false;
     let required_curve = required_flow.map(|flow| {
         let outside_gap_c = model.setpoint_c - effective_outside;
-        let curve = if outside_gap_c <= WARM_END_FORMULA_DISABLE_MARGIN_C {
+        let warm_low_load = outside_gap_c <= WARM_END_FORMULA_DISABLE_MARGIN_C
+            && flow <= WARM_END_LOW_LOAD_MAX_FLOW_C;
+        let curve = if warm_low_load {
             warm_end_curve_fallback = true;
             config.baseline.hc1_heat_curve
         } else {
@@ -1448,8 +1461,8 @@ fn calculate_required_curve_for_target(
             .unwrap_or("N/A".into()),
         if warm_end_curve_fallback {
             format!(
-                " (warm-end fallback: outside {:.1}°C ≥ setpoint {:.1}°C, using baseline seed)",
-                effective_outside, model.setpoint_c
+                " (warm-end fallback: outside {:.1}°C within {:.1}°C of setpoint {:.1}°C and low-load flow, using baseline seed without inner flow chase)",
+                effective_outside, WARM_END_FORMULA_DISABLE_MARGIN_C, model.setpoint_c
             )
         } else {
             String::new()
@@ -1462,6 +1475,7 @@ fn calculate_required_curve_for_target(
         required_mwt,
         required_flow,
         required_curve,
+        suppress_inner_flow_chase: warm_end_curve_fallback,
         reason,
     }
 }
@@ -1943,7 +1957,11 @@ fn run_outer_cycle(
                     // target_flow populated so the inner loop can resume
                     // immediately when DHW finishes.
                     if let Some(target_flow) = calc.required_flow {
-                        state.target_flow_c = Some(target_flow);
+                        state.target_flow_c = if calc.suppress_inner_flow_chase {
+                            None
+                        } else {
+                            Some(target_flow)
+                        };
                     }
                     action = "dhw_active".to_string();
                     reason = format!(
@@ -1980,7 +1998,11 @@ fn run_outer_cycle(
                     }
 
                     if let Some(target_flow) = calc.required_flow {
-                        state.target_flow_c = Some(target_flow);
+                        state.target_flow_c = if calc.suppress_inner_flow_chase {
+                            None
+                        } else {
+                            Some(target_flow)
+                        };
 
                         if let Some(target_curve) = calc.required_curve {
                             let change = (target_curve - current_curve).abs();
@@ -2725,7 +2747,23 @@ mod tests {
         let calc = calculate_required_curve_for_target(&config, 20.5, 24.0, None, None);
 
         assert_eq!(calc.required_curve, Some(config.baseline.hc1_heat_curve));
+        assert!(calc.suppress_inner_flow_chase);
         assert!(calc.reason.contains("warm-end fallback"));
+    }
+
+    // @lat: [[tests#Adaptive heating controller#Warm low-load curve fallback suppresses inner flow chase]]
+    #[test]
+    fn warm_low_load_curve_fallback_suppresses_inner_flow_chase() {
+        let config = test_config();
+        let mut forecast = sample_forecast_hour(14, 16.8);
+        forecast.direct_radiation_w_m2 = 700.0;
+
+        let calc = calculate_required_curve_for_target(&config, 20.5, 10.0, None, Some(&forecast));
+
+        assert!(calc.required_flow.expect("flow") <= WARM_END_LOW_LOAD_MAX_FLOW_C);
+        assert_eq!(calc.required_curve, Some(config.baseline.hc1_heat_curve));
+        assert!(calc.suppress_inner_flow_chase);
+        assert!(calc.reason.contains("without inner flow chase"));
     }
 
     #[test]
@@ -3706,8 +3744,13 @@ mod tests {
         }
 
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-        rt.block_on(set_mode(&state, Mode::Occupied, None, "resume from monitor-only"))
-            .expect("set active mode");
+        rt.block_on(set_mode(
+            &state,
+            Mode::Occupied,
+            None,
+            "resume from monitor-only",
+        ))
+        .expect("set active mode");
 
         let runtime = state.runtime.lock().unwrap();
         assert_eq!(runtime.mode, Mode::Occupied);
@@ -3733,8 +3776,13 @@ mod tests {
         }
 
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-        rt.block_on(set_mode(&state, Mode::ShortAbsence, None, "occupied to short absence"))
-            .expect("set active mode");
+        rt.block_on(set_mode(
+            &state,
+            Mode::ShortAbsence,
+            None,
+            "occupied to short absence",
+        ))
+        .expect("set active mode");
 
         let runtime = state.runtime.lock().unwrap();
         assert_eq!(runtime.mode, Mode::ShortAbsence);
@@ -3782,15 +3830,14 @@ mod tests {
         none_entry.battery_adequate_to_next_cosy = None;
         let none_row = decision_write_row(&none_entry);
         assert_eq!(
-            none_row.battery_adequate_to_next_cosy,
-            None,
+            none_row.battery_adequate_to_next_cosy, None,
             "missing battery adequacy must stay NULL rather than being coerced"
         );
     }
 
-    // @lat: [[tests#Adaptive heating write contracts#Decision PostgreSQL row keeps line-protocol second precision]]
+    // @lat: [[tests#Adaptive heating write contracts#Decision PostgreSQL row keeps whole-second precision]]
     #[test]
-    fn decision_postgres_row_keeps_line_protocol_second_precision() {
+    fn decision_postgres_row_keeps_whole_second_precision() {
         let entry = sample_decision_log();
 
         let row = decision_write_row(&entry);
@@ -3923,9 +3970,9 @@ mod tests {
         pg.batch_execute("ROLLBACK").expect("rollback transaction");
     }
 
-    // @lat: [[tests#Adaptive heating write contracts#Room temp field routing matches influx.rs contract]]
+    // @lat: [[tests#Adaptive heating write contracts#Room temp field routing matches TSDB reader contract]]
     #[test]
-    fn room_temp_field_routing_matches_influx() {
+    fn room_temp_field_routing_matches_tsdb_reader_contract() {
         assert_eq!(latest_topic_field("emon/emonth2_23/temperature"), "value");
         assert_eq!(latest_topic_field("zigbee2mqtt/Leather"), "temperature");
         assert_eq!(
@@ -4090,8 +4137,9 @@ mod tests {
     // @lat: [[tests#Adaptive heating write contracts#Unsupported latest topic routes fail before PostgreSQL connect]]
     #[test]
     fn unsupported_latest_topic_route_fails_before_postgres_connect() {
-        let err = query_latest_topic_value_pg("host=definitely-invalid", "unsupported/topic", "-2h")
-            .expect_err("unsupported topic should fail before any PostgreSQL connect attempt");
+        let err =
+            query_latest_topic_value_pg("host=definitely-invalid", "unsupported/topic", "-2h")
+                .expect_err("unsupported topic should fail before any PostgreSQL connect attempt");
         let message = format!("{err:#}");
 
         assert!(message.contains("unsupported PostgreSQL topic route"));
@@ -4112,7 +4160,6 @@ mod tests {
         assert!(message.contains(topic));
         assert!(message.contains("unsupported PostgreSQL topic route"));
     }
-
 }
 
 // ---------------------------------------------------------------------------
