@@ -109,8 +109,7 @@ The second example is invalid because `Bad Section` has no leading paragraph. `l
 
 Rust CLI + Python thermal model for heat pump analysis. Vaillant Arotherm Plus 5kW at 6 Rhodes Avenue, London N22 7UT.
 
-- emoncms dashboard: `https://emoncms.org/app/view?name=MyHeatpump&readkey=1b00410c57d5df343ede7c09e6aab34f`
-- Read API key (read-only): `1b00410c57d5df343ede7c09e6aab34f`
+- EmonCMS read access: retrieve the key at runtime with `ak get emoncms-read`.
 
 `AGENTS.md` is now intentionally compact. The canonical current-state architecture, domain rules, infrastructure inventory, controller behaviour, and gotchas live in `lat.md/`.
 
