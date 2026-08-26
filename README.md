@@ -138,7 +138,7 @@ Start with **[docs/README.md](docs/README.md)** for the human docs map.
 
 ### Operations and implementation maps
 - **[lat.md/tsdb-migration.md](lat.md/tsdb-migration.md)** — sole repo-local TSDB migration tracker for heatpump-analysis cutover work
-- **`~/github/energy-hub/lat.md/tsdb-migration.md`** — shared platform TSDB migration tracker for schema, ingest, gap-fill, and final decommission
+- **`~/git/energy-hub/lat.md/tsdb-migration.md`** — shared platform TSDB migration tracker for schema, ingest, gap-fill, and final decommission
 - **[heating-monitoring-setup.md](heating-monitoring-setup.md)** — operational setup/runbook detail beyond the lat summary
 - **[docs/emon-installation-runbook.md](docs/emon-installation-runbook.md)** — rebuild/provisioning procedures for emon devices
 - **[docs/implementation-maps/](docs/implementation-maps/)** — preserved implementation snapshots for onboarding and file discovery

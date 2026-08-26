@@ -22,7 +22,7 @@ Three main functions:
 3. **Adaptive heating V2** — live model-predictive controller on `pi5data`. Two-loop architecture: outer loop (15 min) uses forecast + **live thermal solver** (`bisect_mwt_for_room`) → target flow temp; inner loop (60s) nudges VRC 700 heat curve until `Hc1ActualFlowTempDesired` matches target. Reads eBUS + PostgreSQL-backed latest values, writes to VRC 700 via eBUS, logs to PostgreSQL and JSONL. Mobile controls via z2m-hub.
 
 Beyond this repo:
-- **z2m-hub** (`~/github/z2m-hub/`) — Zigbee automations, DHW tracking/boost, mobile dashboard, and heating mode control proxy
+- **z2m-hub** (`~/git/z2m-hub/`) — Zigbee automations, DHW tracking/boost, mobile dashboard, and heating mode control proxy
 - **Monitoring infrastructure** — emonpi, emonhp, emondhw, pi5data (current summary in `../../lat.md/infrastructure.md`, deeper runbooks in `../../heating-monitoring-setup.md`)
 
 ## Key Technologies

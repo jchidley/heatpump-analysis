@@ -2,7 +2,7 @@
 
 This file keeps only the current migration state, the actions still required to complete migration, and the repo-local backlog that remains after migration is complete.
 
-Shared platform shutdown work lives in `~/github/energy-hub/lat.md/tsdb-migration.md`.
+Shared platform shutdown work lives in `~/git/energy-hub/lat.md/tsdb-migration.md`.
 
 ## Current state
 
@@ -11,7 +11,7 @@ The repo-local PostgreSQL cutover is complete, and the shared platform shutdown 
 `heatpump-analysis` now runs PostgreSQL-first on its migrated paths, the live `adaptive-heating-mvp` path reads and writes through TimescaleDB/PostgreSQL, and the shared Phase 5 shutdown on `pi5data` was completed on 2026-04-23 by `energy-hub`.
 
 Current accepted PostgreSQL behaviour:
-- controller decision rows keep whole-second precision; the shared rationale lives in `~/github/energy-hub/lat.md/infrastructure.md#Timestamp semantics and required precision`
+- controller decision rows keep whole-second precision; the shared rationale lives in `~/git/energy-hub/lat.md/infrastructure.md#Timestamp semantics and required precision`
 - history and DHW outputs use PostgreSQL/TimescaleDB bucket and table semantics directly
 - `ebusd_poll_text` remains the correct sibling table for text values rather than folding text back into `ebusd_poll`
 
@@ -19,7 +19,7 @@ Current accepted PostgreSQL behaviour:
 
 No migration-critical actions remain for this repo.
 
-The shared Phase 5 shutdown is complete; use `~/github/energy-hub/lat.md/tsdb-migration.md` and `~/github/energy-hub/docs/timescaledb-cutover-runbook.md` only as the completion record.
+The shared Phase 5 shutdown is complete; use `~/git/energy-hub/lat.md/tsdb-migration.md` and `~/git/energy-hub/docs/timescaledb-cutover-runbook.md` only as the completion record.
 
 ## Post-migration backlog
 

@@ -1608,7 +1608,7 @@ fn assess_battery_headroom(
 
 /// Map current time to a DHW scheduling slot.
 /// Cosy windows: 04-07, 13-16, 22-00 (Octopus Cosy tariff, UK local time).
-/// Non-Cosy overnight: 00-04. Verify: ~/github/energy-hub/scripts/octopus-tariff-windows.sh
+/// Non-Cosy overnight: 00-04. Verify: ~/git/energy-hub/scripts/octopus-tariff-windows.sh
 fn current_dhw_slot(config: &Config, now: NaiveTime) -> Option<&'static str> {
     let windows = sorted_cosy_windows(config);
     let morning = windows.first()?;

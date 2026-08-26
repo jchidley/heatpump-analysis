@@ -6,7 +6,7 @@
 //!   2. ERA5-Land from octopus weather.json (Apr 2020+) — bias-corrected using
 //!      the overlap period (+1.0°C systematic offset vs emoncms)
 //!
-//! Consumption data lives at `~/github/octopus/data/usage_merged.csv`.
+//! Consumption data lives at `~/git/octopus/data/usage_merged.csv`.
 //! Gas values are stored in m³ and converted to kWh here using the calorific
 //! value and correction factor from the octopus project's config.json.
 

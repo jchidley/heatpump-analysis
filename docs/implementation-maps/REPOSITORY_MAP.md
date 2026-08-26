@@ -42,11 +42,11 @@ Core HP analysis. `classify_states()` implements the hysteresis state machine. A
 
 ### `src/octopus.rs` — Octopus Energy consumption + weather integration (818 lines)
 
-Reads from `~/github/octopus/data/`. Gas-vs-HP comparison, baseload analysis, consumption/weather summaries.
+Reads from `~/git/octopus/data/`. Gas-vs-HP comparison, baseload analysis, consumption/weather summaries.
 
 ### `src/octopus_tariff.rs` — Re-export of shared `octopus-tariff` crate (11 lines)
 
-Thin re-export of the shared `octopus-tariff` crate (`~/github/octopus-tariff`). The 627-line local implementation was replaced with an 11-line module that re-exports the crate's public API.
+Thin re-export of the shared `octopus-tariff` crate (`~/git/octopus-tariff`). The 627-line local implementation was replaced with an 11-line module that re-exports the crate's public API.
 
 ### `src/overnight.rs` — Overnight strategy optimizer (1,578 lines)
 
@@ -180,10 +180,10 @@ Validated by `lat check`. Cross-linked with `[[wiki refs]]` to source code.
 | **Heating strategy + constraints** | `lat.md/heating-control.md` + `lat.md/constraints.md`, then `docs/heating-plan.md` / `docs/heating-reference.md` for human context |
 | **DHW scheduling + duration model** | `lat.md/domain.md` + `lat.md/heating-control.md`, then `docs/dhw-plan.md` / `docs/dhw-reference.md` for human context |
 | **DHW session analysis** | `src/thermal/dhw_sessions.rs` |
-| **Mobile dashboard** | `~/github/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
+| **Mobile dashboard** | `~/git/z2m-hub/src/main.rs` (HOME_PAGE + proxy routes) |
 | eBUS polling | `scripts/ebusd-poll.sh` on pi5data |
-| Octopus data refresh | `~/github/octopus/` — `npm run cli -- refresh` |
-| Octopus tariff account truth | `src/octopus_tariff.rs` + `~/github/octopus/.envrc` |
+| Octopus data refresh | `~/git/octopus/` — `npm run cli -- refresh` |
+| Octopus tariff account truth | `src/octopus_tariff.rs` + `~/git/octopus/.envrc` |
 | Controller deploy to pi5data | `scripts/sync-to-pi5data.sh`, then native `cargo build --release` on `pi5data` |
 | VRC 700 settings | `docs/vrc700-settings-audit.md` |
 | Monitoring infrastructure | `heating-monitoring-setup.md`, `docs/emon-installation-runbook.md` |

@@ -6,7 +6,7 @@ set -euo pipefail
 LOCAL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REMOTE="pi5data"
 REMOTE_DIR="/home/jack/adaptive-heating-mvp"
-OCTOPUS_TARIFF_SRC="${HOME}/github/octopus-tariff"
+OCTOPUS_TARIFF_SRC="${HOME}/git/octopus-tariff"
 OCTOPUS_TARIFF_REMOTE="/home/jack/github/octopus-tariff"
 
 echo "=== Syncing sources to ${REMOTE}:${REMOTE_DIR} ==="

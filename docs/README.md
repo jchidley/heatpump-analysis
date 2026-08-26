@@ -11,7 +11,7 @@ Choose the question you are trying to answer.
 | What does the system currently do? | [`../lat.md/`](../lat.md/) |
 | Why was a control or DHW decision made? | [Heating plan](heating-plan.md), [DHW plan](dhw-plan.md) |
 | How do I perform an operational task? | [History evidence workflows](history-evidence-workflows.md), [emon installation runbook](emon-installation-runbook.md), [`../deploy/SECRETS.md`](../deploy/SECRETS.md) |
-| Where is TSDB migration tracked? | [`../lat.md/tsdb-migration.md`](../lat.md/tsdb-migration.md) for repo-local cutover, `~/github/energy-hub/lat.md/tsdb-migration.md` for shared platform phases |
+| Where is TSDB migration tracked? | [`../lat.md/tsdb-migration.md`](../lat.md/tsdb-migration.md) for repo-local cutover, `~/git/energy-hub/lat.md/tsdb-migration.md` for shared platform phases |
 | Where is this implemented in code? | [`implementation-maps/`](implementation-maps/), [`../lat.md/src/`](../lat.md/src/), and the source tree |
 | What should an agent remember while working? | [`../AGENTS.md`](../AGENTS.md) |
 

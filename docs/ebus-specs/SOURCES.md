@@ -66,7 +66,7 @@ This firmware and protocol library are the primary reference for our Pico W eBUS
 | [yvesf/ebus](https://github.com/yvesf/ebus) | **Rust** + Racket | Open source | eBUS protocol parser in Rust (`ebus-rust`). Includes XML protocol definitions. Parser only, not a full daemon. |
 | [csowada/ebus](https://github.com/csowada/ebus) | Java | Open source | Java eBUS library. Uses nrjavaserial. |
 
-### Comparison (inspected locally, cloned to `~/github/ebus-reference/`)
+### Comparison (inspected locally, cloned to `~/git/ebus-reference/`)
 
 | Project | Language | Source LOC | Tests | Last commit | Scope | Portable? |
 |---|---|---|---|---|---|---|

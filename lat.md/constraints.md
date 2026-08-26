@@ -15,7 +15,7 @@ Invariants that protect system integrity. Violating these risks silent data corr
 - Don't change operating state thresholds without re-validating the full dataset
 - Don't mix simulated and real data by default
 - Don't commit `heatpump.db` or API keys
-- Don't modify `~/github/octopus/` from this project
+- Don't modify `~/git/octopus/` from this project
 - Don't modify monitoring infrastructure from here — use SSH to devices directly
 - Don't tune Cd or landing ACH independently — they are jointly calibrated
 - `thermal_geometry.json` is source of truth for rooms/geometry (consumed by Rust + Python). `config.toml` radiators must match.
@@ -43,19 +43,19 @@ Most telemetry and controller events in this repo only justify whole-second prec
 - Multical is 2s, Tesla is ~10s, eBUS polling is 30s, the controller inner loop is 60s, and the outer decision loop is 900s.
 - Host clocks, polling jitter, MQTT/ingest delay, and write-time stamping dominate any microsecond-looking timestamp digits, so treat sub-second precision as bookkeeping unless a series proves otherwise.
 - Keep controller summary/event rows at whole-second precision unless a new consumer demonstrates a real need for finer event ordering.
-- The notable exception is cross-board electricity calibration in `~/github/energy-hub/lat.md/calibration.md#Calibration Method#Step-change calibration (energy balance)`, where sub-second lag between emon MCU sampling windows materially affects the signal-processing result.
-- The shared platform rationale now lives in `~/github/energy-hub/lat.md/infrastructure.md#Timestamp semantics and required precision`.
+- The notable exception is cross-board electricity calibration in `~/git/energy-hub/lat.md/calibration.md#Calibration Method#Step-change calibration (energy balance)`, where sub-second lag between emon MCU sampling windows materially affects the signal-processing result.
+- The shared platform rationale now lives in `~/git/energy-hub/lat.md/infrastructure.md#Timestamp semantics and required precision`.
 
 ## Code Gotchas
 
 Non-obvious code behaviours that have caused bugs or confusion.
 
-- Static domain constants belong in `config.toml` — edit there, not in code. Exception: Octopus unit rates AND tariff window times are both derived at runtime from the account API via the shared `octopus-tariff` crate (`~/github/octopus-tariff`); only `battery_coverage` remains in `config.toml`. The controller caches windows at `tariff_cache_path` and refreshes them every 12 h. TOML fallback windows in `model/adaptive-heating-mvp.toml` are used only when the API is unreachable. Credentials resolve in order: env vars → `~/.octopus-api-key` file → `~/github/octopus/.envrc`. See [[infrastructure#Secrets#Octopus API Credentials]].
+- Static domain constants belong in `config.toml` — edit there, not in code. Exception: Octopus unit rates AND tariff window times are both derived at runtime from the account API via the shared `octopus-tariff` crate (`~/git/octopus-tariff`); only `battery_coverage` remains in `config.toml`. The controller caches windows at `tariff_cache_path` and refreshes them every 12 h. TOML fallback windows in `model/adaptive-heating-mvp.toml` are used only when the API is unreachable. Credentials resolve in order: env vars → `~/.octopus-api-key` file → `~/git/octopus/.envrc`. See [[infrastructure#Secrets#Octopus API Credentials]].
 - `gaps.rs` bypasses `db.rs` and writes to SQLite directly. `fill_gap_interpolate()` has hardcoded feed IDs
 - `ERA5_BIAS_CORRECTION_C` is a Rust constant in `octopus.rs`, not in `config.toml`
 - `--all-data` start timestamp is hardcoded in `resolve_time_range()`, duplicating the `config.toml` value
 - Polars pinned to 0.46 (0.53 available) — untested on newer versions
-- `octopus.rs` data path comes from `config.toml` `[octopus] data_dir` (default `~/github/octopus/data`); tilde is expanded at runtime
+- `octopus.rs` data path comes from `config.toml` `[octopus] data_dir` (default `~/git/octopus/data`); tilde is expanded at runtime
 - Two HDD base temps exist: 15.5°C (UK standard, in config) vs 17°C (gas-era regression)
 - Two binaries — use `cargo run --bin heatpump-analysis -- ...` for thermal commands
 - `ebusd-poll.sh` uses `nc | head -1` to avoid ebusd TCP hanging

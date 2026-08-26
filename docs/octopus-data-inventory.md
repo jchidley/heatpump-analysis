@@ -4,7 +4,7 @@ Audited: 2026-03-18
 
 ## Sources
 
-### 1. `~/github/OctopusEnergyMonitor/` (legacy parquet)
+### 1. `~/git/OctopusEnergyMonitor/` (legacy parquet)
 
 | File | Rows | Coverage | Granularity | Total kWh | Non-zero % | Notes |
 |------|------|----------|-------------|-----------|------------|-------|
@@ -18,7 +18,7 @@ Audited: 2026-03-18
 - Index: `interval_start` (datetime64[ns, UTC])
 - Columns: `consumption` (float64), `interval_end` (datetime64[ns, UTC])
 
-**Gas unit note:** Values are in m³. Convert to kWh: `m³ × volume_correction (1.02264) × calorific_value (39.2) ÷ 3.6`. This gives ~1 kWh per 0.092 m³. The `heat_context.example.toml` in `~/github/octopus/data/` documents these conversion factors.
+**Gas unit note:** Values are in m³. Convert to kWh: `m³ × volume_correction (1.02264) × calorific_value (39.2) ÷ 3.6`. This gives ~1 kWh per 0.092 m³. The `heat_context.example.toml` in `~/git/octopus/data/` documents these conversion factors.
 
 **Other files in repo:**
 - `app.py`, `main.py` — legacy FastAPI + Plotly dashboard (not maintained)
@@ -26,7 +26,7 @@ Audited: 2026-03-18
 - `octopus.ipynb`, `arrow-octopus.ipynb` — Jupyter exploration notebooks
 - `file.json`, `consumption_example.json`, `iris.json` — test/example data
 
-### 2. `~/github/octopus/` (active REST scripts)
+### 2. `~/git/octopus/` (active REST scripts)
 
 | File | Rows | Coverage | Granularity | Notes |
 |------|------|----------|-------------|-------|
@@ -87,7 +87,7 @@ API key stored in `ak` (GPG-encrypted). All steps done 2026-03-18.
 3. **Full REST history fetched** — `usage_full.csv` (Mar 2024 → Mar 2026, 40,313 rows) ✅
 4. **Legacy parquet converted** — `data/legacy_usage.csv` (Apr 2020 → Dec 2023, 125,997 rows) ✅
 5. **Merged** — `data/usage_merged.csv` (166,310 rows, Apr 2020 → Mar 2026) ✅
-6. **Integrated** — `octopus.rs` in heatpump-analysis reads `usage_merged.csv` + `weather.json` + `config.json` directly from `~/github/octopus/data/` ✅
+6. **Integrated** — `octopus.rs` in heatpump-analysis reads `usage_merged.csv` + `weather.json` + `config.json` directly from `~/git/octopus/data/` ✅
 7. **Tariff integration** — current + historical import unit rates now come from the Octopus account API at runtime via `src/octopus_tariff.rs`; tariff snapshots are no longer hardcoded in repo config or analysis code ✅
 
 ### Remaining gap
@@ -97,7 +97,7 @@ API key stored in `ak` (GPG-encrypted). All steps done 2026-03-18.
 ### To refresh data
 
 ```bash
-cd ~/github/octopus && npm run cli -- refresh
+cd ~/git/octopus && npm run cli -- refresh
 ```
 
 ## Integration with heatpump-analysis

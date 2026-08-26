@@ -1,6 +1,6 @@
 //! Octopus Energy tariff rate lookup and window discovery.
 //!
-//! Re-exports the shared `octopus-tariff` crate (`~/github/octopus-tariff`).
+//! Re-exports the shared `octopus-tariff` crate (`~/git/octopus-tariff`).
 //! All implementation lives in that crate; this module exists so that
 //! `crate::octopus_tariff::*` paths remain stable inside heatpump-analysis.
 

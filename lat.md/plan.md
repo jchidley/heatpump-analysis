@@ -2,7 +2,7 @@
 
 Open items, next steps, and links to the detailed human-readable plan documents in `docs/`. Last status refresh: **2026-05-23 13:14 BST**.
 
-The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and should stay aligned with the shared platform plan in `~/github/energy-hub/lat.md/tsdb-migration.md`.
+The repo-local PostgreSQL cutover plan now lives in [[tsdb-migration]] and should stay aligned with the shared platform plan in `~/git/energy-hub/lat.md/tsdb-migration.md`.
 
 ## Latest Data Review
 

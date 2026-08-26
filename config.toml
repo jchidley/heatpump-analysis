@@ -90,15 +90,15 @@ dhw_exit_flow_rate = 14.7
 defrost_dt_threshold = -0.5
 
 # --- Octopus Energy data files ---
-# Path to the ~/github/octopus/data/ directory that holds usage_merged.csv,
+# Path to the ~/git/octopus/data/ directory that holds usage_merged.csv,
 # weather.json, and config.json.  Tilde is expanded at runtime.
 [octopus]
-data_dir = "~/github/octopus/data"
+data_dir = "~/git/octopus/data"
 
 # --- Octopus import tariff model ---
 # Current and historical unit rates are fetched at runtime from the Octopus
 # account API using OCTOPUS_API_KEY / OCTOPUS_ACCOUNT_NUMBER (or
-# ~/github/octopus/.envrc). Only the battery-coverage assumption lives here.
+# ~/git/octopus/.envrc). Only the battery-coverage assumption lives here.
 [tariff]
 battery_coverage = 0.95
 

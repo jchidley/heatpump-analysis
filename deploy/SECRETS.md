@@ -2,7 +2,7 @@
 
 Referenced by `docs/heating-plan.md` and `docs/dhw-plan.md` for the controller's current production secret handling.
 
-The live controller now reads and writes via PostgreSQL. Repo-local migration state is tracked in `../lat.md/tsdb-migration.md`; shared-platform sequencing remains in `~/github/energy-hub/lat.md/tsdb-migration.md`.
+The live controller now reads and writes via PostgreSQL. Repo-local migration state is tracked in `../lat.md/tsdb-migration.md`; shared-platform sequencing remains in `~/git/energy-hub/lat.md/tsdb-migration.md`.
 
 ## Production (pi5data systemd service)
 
